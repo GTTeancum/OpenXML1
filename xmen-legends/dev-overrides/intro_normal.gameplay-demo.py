@@ -1,0 +1,1 @@
+beginmissionhack("demo")

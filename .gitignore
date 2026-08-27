@@ -1,0 +1,49 @@
+# Proprietary game media and extracted data
+*.iso
+*.rar
+xmen-legends/SLUS_206.56
+xmen-legends/disc/
+xmen-legends/analysis-extract/
+xmen-legends/asset-inspect/
+
+# Generated recompilation output and runtime state
+xmen-legends/output/
+xmen-legends/output_*/
+xmen-legends/mc0/
+xmen-legends/mc1/
+mc0/
+mc1/
+
+# Nested source and reference checkouts have their own history
+/.codex-ps2sdk-ref/
+/.tools/
+/alchemy-2.5-ref/
+/OpenH3M/
+/PS2Recomp/
+
+# Build, probe, and diagnostic artifacts
+**/build/
+**/out/
+*.log
+*.err
+*.exit
+*.zip
+*.ppm
+*.png
+*.exe
+*.dll
+*.lib
+*.obj
+*.pdb
+*.ilk
+*.exp
+
+# Generated analysis listings
+*.disasm.txt
+
+# Editor and OS metadata
+.vs/
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
