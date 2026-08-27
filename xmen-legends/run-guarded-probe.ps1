@@ -6,7 +6,15 @@ param(
 
     [switch]$ContinueAfterNonBlack,
 
-    [switch]$ContinueAfterMissing
+    [switch]$ContinueAfterMissing,
+
+    [switch]$CleanupOnly,
+
+    [ValidateRange(1, 100)]
+    [int]$RetainProbeCount = 8,
+
+    [ValidateRange(16, 4096)]
+    [int]$MaxCombinedLogMiB = 128
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,6 +27,84 @@ $expectedDisc = [System.IO.Path]::GetFullPath(
 
 if (-not $disc.Equals($expectedDisc, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Unexpected disc path: $disc"
+}
+
+function Remove-StaleProbeArtifacts {
+    param([int]$CurrentProbe)
+
+    $pinnedProbeIds = [System.Collections.Generic.HashSet[int]]::new()
+    $retentionPath = Join-Path $PSScriptRoot 'probe-retain.txt'
+    if (Test-Path -LiteralPath $retentionPath) {
+        foreach ($line in Get-Content -LiteralPath $retentionPath) {
+            $value = $line.Trim()
+            if (-not $value -or $value.StartsWith('#')) {
+                continue
+            }
+
+            $probeId = 0
+            if (-not [int]::TryParse($value, [ref]$probeId)) {
+                throw "Invalid probe ID in ${retentionPath}: $value"
+            }
+
+            [void]$pinnedProbeIds.Add($probeId)
+        }
+    }
+
+    $trackedNames = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($trackedPath in git -C $root ls-files -- 'xmen-legends/probe*') {
+        [void]$trackedNames.Add([System.IO.Path]::GetFileName($trackedPath))
+    }
+
+    $artifacts = @(
+        Get-ChildItem -LiteralPath $PSScriptRoot -File -Filter 'probe*' |
+            Where-Object { $_.Name -match '^probe(?<id>\d+).*\.(?:log|zip|ppm|png)$' } |
+            ForEach-Object {
+                [pscustomobject]@{
+                    File = $_
+                    ProbeId = [int]$Matches.id
+                }
+            }
+    )
+
+    $keepProbeIds = [System.Collections.Generic.HashSet[int]]::new()
+    [void]$keepProbeIds.Add($CurrentProbe)
+    foreach ($probeId in $pinnedProbeIds) {
+        [void]$keepProbeIds.Add($probeId)
+    }
+    foreach ($probeId in $artifacts.ProbeId | Sort-Object -Descending -Unique |
+        Select-Object -First $RetainProbeCount) {
+        [void]$keepProbeIds.Add($probeId)
+    }
+
+    $removedCount = 0
+    [long]$removedBytes = 0
+    foreach ($artifact in $artifacts) {
+        if ($keepProbeIds.Contains($artifact.ProbeId) -or
+            $trackedNames.Contains($artifact.File.Name)) {
+            continue
+        }
+
+        $parent = [System.IO.Path]::GetDirectoryName($artifact.File.FullName).TrimEnd('\')
+        if (-not $parent.Equals($PSScriptRoot.TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to remove unexpected path: $($artifact.File.FullName)"
+        }
+
+        $removedBytes += $artifact.File.Length
+        Remove-Item -LiteralPath $artifact.File.FullName -Force
+        $removedCount++
+    }
+
+    if ($removedCount -gt 0) {
+        "CLEANUP FILES=$removedCount MIB=$([math]::Round($removedBytes / 1MB, 1))"
+    }
+}
+
+Remove-StaleProbeArtifacts -CurrentProbe $Probe
+
+if ($CleanupOnly) {
+    exit 0
 }
 
 Get-ChildItem -LiteralPath $disc -Filter 'gs-present-*.ppm' -File | ForEach-Object {
@@ -50,6 +136,7 @@ $process = Start-Process `
 
 try {
     $process.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
+    $process.ProcessorAffinity = [IntPtr]0xF
 }
 catch {
     Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
@@ -70,6 +157,7 @@ $knownBlack = '00C470B9619BB218650748690CD9DE4A6D885656DEAF8D573A1468B394F3DB4A'
 $seen = @{}
 $seenMissing = @{}
 $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+$maxCombinedLogBytes = [long]$MaxCombinedLogMiB * 1MB
 
 while ([DateTime]::UtcNow -lt $deadline) {
     $process.Refresh()
@@ -111,6 +199,18 @@ while ([DateTime]::UtcNow -lt $deadline) {
                 exit 43
             }
         }
+    }
+
+    [long]$combinedLogBytes = 0
+    foreach ($log in @($outLog, $errLog)) {
+        if (Test-Path -LiteralPath $log) {
+            $combinedLogBytes += (Get-Item -LiteralPath $log).Length
+        }
+    }
+    if ($combinedLogBytes -gt $maxCombinedLogBytes) {
+        "LOG_LIMIT PID=$($process.Id) MIB=$([math]::Round($combinedLogBytes / 1MB, 1))"
+        Stop-ProbeProcess
+        exit 44
     }
 
     if ($process.HasExited) {

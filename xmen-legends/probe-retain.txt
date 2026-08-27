@@ -1,0 +1,6 @@
+# Probe IDs whose artifacts are diagnostic checkpoints and must survive rotation.
+1811
+1832
+1834
+1835
+1836
