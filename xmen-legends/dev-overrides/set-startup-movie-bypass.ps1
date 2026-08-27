@@ -6,7 +6,6 @@ param(
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $zipPath = Join-Path $root "disc\Z\ASSETSFB.ZIP"
-$entryName = "scripts/menus/intro_normal.py"
 $sourceName = switch ($Mode) {
     "Bypass" { "intro_normal.skip-movies.py" }
     "TitleGameplayFirst" { "intro_normal.skip-movies.py" }
@@ -20,11 +19,29 @@ $missionSourceName = if ($Mode -in @("TitleGameplayFirst", "GameplayFirst")) {
 } else {
     "mission_alison.original.py"
 }
-$replacements = @(
+$startupReplacements = @(
     @{
-        EntryName = $entryName
-        SourcePath = Join-Path $PSScriptRoot $sourceName
+        EntryName = "scripts/menus/intro_normal.py"
+        RestoreSource = "intro_normal.original.py"
     },
+    @{
+        EntryName = "scripts/menus/intro_demo.py"
+        RestoreSource = "intro_demo.original.py"
+    },
+    @{
+        EntryName = "scripts/menus/intro_e3.py"
+        RestoreSource = "intro_e3.original.py"
+    }
+) | ForEach-Object {
+    @{
+        EntryName = $_.EntryName
+        SourcePath = Join-Path $PSScriptRoot $(
+            if ($Mode -eq "Restore") { $_.RestoreSource } else { $sourceName }
+        )
+    }
+}
+$replacements = @(
+    $startupReplacements
     @{
         EntryName = "scripts/missions/alison.py"
         SourcePath = Join-Path $PSScriptRoot $missionSourceName

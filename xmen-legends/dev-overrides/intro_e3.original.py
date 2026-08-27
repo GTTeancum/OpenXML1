@@ -1,0 +1,10 @@
+startMovie("i102", "afterMovie2")
+waitsignal("afterMovie2")
+startMovie("i101", "afterMovie1")
+waitsignal("afterMovie1")
+startMovie("i103", "afterMovie3")
+waitsignal("afterMovie3")
+startMovie("i107", "afterMovie7")
+waitsignal("afterMovie7")
+beginMissionHack("demo")
+

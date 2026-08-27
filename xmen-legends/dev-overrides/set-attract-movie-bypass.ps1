@@ -5,49 +5,108 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$movieDirectory = [System.IO.Path]::GetFullPath(
-    (Join-Path $root "disc\MOVIES\NTSC\I\1"))
-$enabledPath = [System.IO.Path]::GetFullPath(
-    (Join-Path $movieDirectory "I107.SFD"))
-$disabledPath = [System.IO.Path]::GetFullPath(
-    (Join-Path $movieDirectory "I107.SFD.dev-disabled"))
-$directoryPrefix = $movieDirectory.TrimEnd('\') + '\'
+$sourcePath = [System.IO.Path]::GetFullPath(
+    (Join-Path $root "SLUS_206.56"))
+$targetPath = [System.IO.Path]::GetFullPath(
+    (Join-Path $root "disc\SLUS_206.56"))
+$expectedTarget = [System.IO.Path]::GetFullPath(
+    (Join-Path $root "disc\SLUS_206.56"))
+$stringOffset = 6125408
+$enabledBytes = [System.Text.Encoding]::ASCII.GetBytes("startMovie('i107', '')")
+$disabledBytes = [byte[]]::new($enabledBytes.Length)
+$disabledBytes[0] = [byte][char]'#'
 
-foreach ($path in @($enabledPath, $disabledPath)) {
-    if (-not $path.StartsWith(
-            $directoryPrefix,
-            [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Refusing to move a path outside $movieDirectory`: $path"
+if (-not $targetPath.Equals(
+        $expectedTarget,
+        [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Unexpected executable path: $targetPath"
+}
+if ($enabledBytes.Length -ne $disabledBytes.Length) {
+    throw "The replacement must preserve the executable layout"
+}
+
+function Read-BytesAtOffset {
+    param(
+        [string]$Path,
+        [long]$Offset,
+        [int]$Count
+    )
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        if ($stream.Length -lt ($Offset + $Count)) {
+            throw "Executable is too small for the CMenuMain command patch: $Path"
+        }
+        $stream.Position = $Offset
+        $bytes = [byte[]]::new($Count)
+        if ($stream.Read($bytes, 0, $Count) -ne $Count) {
+            throw "Unable to read CMenuMain command bytes from $Path"
+        }
+        return $bytes
+    } finally {
+        $stream.Dispose()
     }
 }
 
-$sourcePath = if ($Mode -eq "Bypass") { $enabledPath } else { $disabledPath }
-$destinationPath = if ($Mode -eq "Bypass") { $disabledPath } else { $enabledPath }
+function Format-Bytes {
+    param([byte[]]$Bytes)
+    return [System.BitConverter]::ToString($Bytes)
+}
 
-if ((Test-Path -LiteralPath $destinationPath) -and
-    -not (Test-Path -LiteralPath $sourcePath)) {
-    Write-Output "Attract movie mode already set: $Mode"
+$sourceBytes = Read-BytesAtOffset `
+    -Path $sourcePath `
+    -Offset $stringOffset `
+    -Count $enabledBytes.Length
+if ((Format-Bytes $sourceBytes) -ne (Format-Bytes $enabledBytes)) {
+    throw "Reference executable does not contain the I107 command at offset $stringOffset"
+}
+
+$currentBytes = Read-BytesAtOffset `
+    -Path $targetPath `
+    -Offset $stringOffset `
+    -Count $enabledBytes.Length
+$replacementBytes = if ($Mode -eq "Bypass") {
+    $disabledBytes
+} else {
+    $enabledBytes
+}
+
+if ((Format-Bytes $currentBytes) -eq (Format-Bytes $replacementBytes)) {
+    Write-Output "Main-menu I107 command mode already set: $Mode"
     exit 0
 }
-if (Test-Path -LiteralPath $destinationPath) {
-    throw "Both attract movie paths exist; refusing to overwrite $destinationPath"
+
+$expectedCurrentBytes = if ($Mode -eq "Bypass") {
+    $enabledBytes
+} else {
+    $disabledBytes
 }
-if (-not (Test-Path -LiteralPath $sourcePath)) {
-    throw "Attract movie source not found: $sourcePath"
+if ((Format-Bytes $currentBytes) -ne (Format-Bytes $expectedCurrentBytes)) {
+    throw "Unexpected CMenuMain command bytes at offset $stringOffset"
 }
 
-$sourceItem = Get-Item -LiteralPath $sourcePath
-$wasReadOnly = $sourceItem.IsReadOnly
+$targetItem = Get-Item -LiteralPath $targetPath
+$wasReadOnly = $targetItem.IsReadOnly
 if ($wasReadOnly) {
-    $sourceItem.IsReadOnly = $false
+    $targetItem.IsReadOnly = $false
 }
 
 try {
-    Move-Item -LiteralPath $sourcePath -Destination $destinationPath
+    $stream = [System.IO.File]::Open(
+        $targetPath,
+        [System.IO.FileMode]::Open,
+        [System.IO.FileAccess]::Write,
+        [System.IO.FileShare]::None)
+    try {
+        $stream.Position = $stringOffset
+        $stream.Write($replacementBytes, 0, $replacementBytes.Length)
+    } finally {
+        $stream.Dispose()
+    }
 } finally {
-    if ($wasReadOnly -and (Test-Path -LiteralPath $destinationPath)) {
-        (Get-Item -LiteralPath $destinationPath).IsReadOnly = $true
+    if ($wasReadOnly) {
+        (Get-Item -LiteralPath $targetPath).IsReadOnly = $true
     }
 }
 
-Write-Output "Attract movie mode: $Mode"
+Write-Output "Main-menu I107 command mode: $Mode"
