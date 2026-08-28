@@ -3,19 +3,19 @@
 An experimental static recompilation of the North American PlayStation 2 release of **X-Men Legends** (`SLUS_206.56`) for PC, built with [PS2Recomp](https://github.com/ran-j/PS2Recomp).
 
 > [!IMPORTANT]
-> This is active bring-up work, not a playable release. A legal disc dump is required, generated code is not distributed, and normal retail startup does not yet complete every Sofdec movie or reach gameplay without development overrides.
+> This is active bring-up work, not a playable release. A legal disc dump is required, generated code is not distributed, and normal retail startup does not yet complete the Sofdec sequence or reach gameplay without development overrides.
 
 ## Current Status
 
 The game now executes far beyond initial boot and has reached each of these milestones in the native PC runtime:
 
 - Stable legal and memory-card screens.
-- X-Men Legends logo and menu layers.
-- Title-stream audio through the ZAUDIO path.
+- X-Men Legends logo and menu layers through a reversible startup-movie override.
+- ZAUDIO stream creation, buffering, and playback service calls.
 - Level loading and first in-engine gameplay through a reversible development override.
-- Host decoding of the retail Sofdec SFD video stream into guest-visible MPEG frames.
+- Retail SFD file I/O, PSS demux, MPEG/IPU submission, and ADX block transport.
 
-The current retail-path blocker is the movie manager remaining in its preroll state after decoded frames become ready. The full acceptance target remains: legal screen, all startup SFD movies with audio, the complete 3D Cerebro title scene, and playable gameplay without graphical or audio defects.
+The current retail-path blocker is producing and presenting correct Sofdec video frames. The demux advances through the movie and its ADX audio header and blocks arrive intact, but the visible video output is still invalid. The full acceptance target remains: legal screen, all startup SFD movies with audio, the complete 3D Cerebro title scene, and playable gameplay without graphical or audio defects.
 
 ## Bring-up Screenshots
 
@@ -116,8 +116,8 @@ Input is implemented, but the complete retail flow is not yet ready for normal p
 
 ## Known Issues
 
-- Sofdec SFD video demux and MPEG decode are active, but decoded startup frames are not yet presented by the retail movie state machine.
-- SFD audio playback is not yet verified end to end.
+- Sofdec SFD file reads and demux advance, but startup movies do not yet produce correct presented video frames.
+- The ADX header and compressed blocks traverse the movie audio ring correctly; audible SFD playback is not yet verified end to end.
 - The full animated 3D Cerebro chamber behind the title menu is not yet rendered correctly.
 - Gameplay is reachable through development overrides, with outstanding world, material, HUD, and texture defects.
 - Performance is diagnostic-build quality; timing and resource use have not been optimized for release.
@@ -127,10 +127,12 @@ Input is implemented, but the complete retail flow is not yet ready for normal p
 
 Runtime and recompiler changes are developed in the public [GTTeancum/PS2Recomp fork](https://github.com/GTTeancum/PS2Recomp). General fixes are split into focused submissions to upstream PS2Recomp:
 
+- [#225: Support configurable callable entry points](https://github.com/ran-j/PS2Recomp/pull/225)
 - [#226: Delay GIF DMA completion interrupts](https://github.com/ran-j/PS2Recomp/pull/226)
 - [#227: Preserve framebuffer rows in interlaced presentation](https://github.com/ran-j/PS2Recomp/pull/227)
+- [#228: Support profile-defined SJRMT UNI storage](https://github.com/ran-j/PS2Recomp/pull/228)
 
-Game-specific diagnostics and unfinished compatibility work remain on `codex/xmen-legends-bringup` until they can be reduced to reusable changes with focused tests.
+All four submissions are open and mergeable as of August 28, 2026. Game-specific diagnostics and unfinished compatibility work remain on `codex/xmen-legends-bringup` until they can be reduced to reusable changes with focused tests.
 
 ## Legal
 
