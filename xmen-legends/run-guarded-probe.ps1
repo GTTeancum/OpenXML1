@@ -13,6 +13,9 @@ param(
     [ValidateRange(1, 100)]
     [int]$RetainProbeCount = 8,
 
+    [ValidateRange(1, 100)]
+    [int]$RetainBuildCount = 8,
+
     [ValidateRange(16, 4096)]
     [int]$MaxCombinedLogMiB = 128
 )
@@ -101,7 +104,66 @@ function Remove-StaleProbeArtifacts {
     }
 }
 
+function Remove-StaleBuildArtifacts {
+    $trackedNames = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($trackedPath in git -C $root ls-files -- 'xmen-legends/*') {
+        [void]$trackedNames.Add([System.IO.Path]::GetFileName($trackedPath))
+    }
+
+    $artifacts = @(
+        Get-ChildItem -LiteralPath $PSScriptRoot -File |
+            Where-Object {
+                $_.Name -match '^(?:build|configure|recomp|tests).*?(?<id>\d{3,}).*\.(?:log|err|exit)$'
+            } |
+            ForEach-Object {
+                [pscustomobject]@{
+                    File = $_
+                    BuildId = [int]$Matches.id
+                }
+            }
+    )
+
+    $keepBuildIds = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($buildId in $artifacts.BuildId | Sort-Object -Descending -Unique |
+        Select-Object -First $RetainBuildCount) {
+        [void]$keepBuildIds.Add($buildId)
+    }
+
+    $recentCutoff = [DateTime]::UtcNow.AddMinutes(-10)
+    foreach ($artifact in $artifacts) {
+        if ($keepBuildIds.Contains($artifact.BuildId) -or
+            $trackedNames.Contains($artifact.File.Name) -or
+            $artifact.File.LastWriteTimeUtc -ge $recentCutoff) {
+            continue
+        }
+
+        $parent = [System.IO.Path]::GetDirectoryName($artifact.File.FullName).TrimEnd('\')
+        if (-not $parent.Equals($PSScriptRoot.TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to remove unexpected path: $($artifact.File.FullName)"
+        }
+        Remove-Item -LiteralPath $artifact.File.FullName -Force
+    }
+
+    $releaseDirectory = Join-Path $root 'PS2Recomp\out\xmen-final3-build\ps2xRuntime\Release'
+    if (Test-Path -LiteralPath $releaseDirectory -PathType Container) {
+        Get-ChildItem -LiteralPath $releaseDirectory -File -Filter 'ps2EntryRunner.exe.*' |
+            Where-Object { $_.Name -ne 'ps2EntryRunner.exe' } |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -Skip 1 |
+            ForEach-Object {
+                $parent = [System.IO.Path]::GetDirectoryName($_.FullName).TrimEnd('\')
+                if (-not $parent.Equals($releaseDirectory.TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)) {
+                    throw "Refusing to remove unexpected path: $($_.FullName)"
+                }
+                Remove-Item -LiteralPath $_.FullName -Force
+            }
+    }
+}
+
 Remove-StaleProbeArtifacts -CurrentProbe $Probe
+Remove-StaleBuildArtifacts
 
 if ($CleanupOnly) {
     exit 0
