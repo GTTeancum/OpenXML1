@@ -189,13 +189,19 @@ function Remove-StaleBuildArtifacts {
 Remove-StaleProbeArtifacts -CurrentProbe $Probe
 Remove-StaleBuildArtifacts
 
-Get-ChildItem -LiteralPath $disc -Filter 'gs-present-*.ppm' -File | ForEach-Object {
-    $parent = [System.IO.Path]::GetDirectoryName($_.FullName).TrimEnd('\')
-    if (-not $parent.Equals($disc, [System.StringComparison]::OrdinalIgnoreCase)) {
-        throw "Refusing to remove unexpected path: $($_.FullName)"
-    }
+foreach ($framebufferRoot in @($disc, (Join-Path $root 'PS2Recomp'))) {
+    $resolvedFramebufferRoot = [System.IO.Path]::GetFullPath($framebufferRoot).TrimEnd('\')
+    Get-ChildItem -LiteralPath $resolvedFramebufferRoot -Filter 'gs-present-*.ppm' -File |
+        ForEach-Object {
+            $parent = [System.IO.Path]::GetDirectoryName($_.FullName).TrimEnd('\')
+            if (-not $parent.Equals(
+                    $resolvedFramebufferRoot,
+                    [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "Refusing to remove unexpected path: $($_.FullName)"
+            }
 
-    Remove-Item -LiteralPath $_.FullName -Force
+            Remove-Item -LiteralPath $_.FullName -Force
+        }
 }
 
 if ($CleanupOnly) {

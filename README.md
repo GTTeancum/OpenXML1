@@ -70,7 +70,8 @@ Configure and build the recompiler:
 
 ```powershell
 cmake -S PS2Recomp -B PS2Recomp/out/xmen-final3-build
-cmake --build PS2Recomp/out/xmen-final3-build --config Release --target ps2_recomp --parallel 1
+powershell -ExecutionPolicy Bypass -File xmen-legends/build-below-normal.ps1 `
+  -Target ps2_recomp
 ```
 
 Generate the game C++ and configure the runtime against it:
@@ -83,8 +84,8 @@ cmake -S PS2Recomp -B PS2Recomp/out/xmen-final3-build `
   -DPS2X_RECOMPILED_OUTPUT_DIR="$PWD/xmen-legends/output_mapped_final3" `
   -DPS2X_DEFAULT_BOOT_ELF="$PWD/xmen-legends/disc/SLUS_206.56"
 
-cmake --build PS2Recomp/out/xmen-final3-build --config Release `
-  --target ps2EntryRunner --parallel 1
+powershell -ExecutionPolicy Bypass -File xmen-legends/build-below-normal.ps1 `
+  -Target ps2EntryRunner
 ```
 
 Run from the extracted disc directory so the original relative asset paths resolve:
