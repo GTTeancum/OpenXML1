@@ -10,12 +10,12 @@ An experimental static recompilation of the North American PlayStation 2 release
 The game now executes far beyond initial boot and has reached each of these milestones in the native PC runtime:
 
 - Stable legal and memory-card screens.
-- X-Men Legends logo and menu layers through a reversible startup-movie override.
+- Complete title UI and the 3D Cerebro chamber through a reversible startup-movie override.
 - ZAUDIO stream creation, buffering, and playback service calls.
 - Level loading and first in-engine gameplay through a reversible development override.
 - Retail SFD file I/O, PSS demux, MPEG/IPU submission, and ADX block transport.
 
-The current retail-path blocker is producing and presenting correct Sofdec video frames. The demux advances through the movie and its ADX audio header and blocks arrive intact, but the visible video output is still invalid. The full acceptance target remains: legal screen, all startup SFD movies with audio, the complete 3D Cerebro title scene, and playable gameplay without graphical or audio defects.
+The current retail-path blocker is producing and presenting correct Sofdec video frames. The demux advances through the movie and its ADX audio header and blocks arrive intact, but the visible video output is still invalid. The Cerebro scene now renders with its textures and animated camera, although one moving object or material can still show rainbow/chrome corruption. The full acceptance target remains: legal screen, all startup SFD movies with audio, an issue-free title scene, and playable gameplay without graphical or audio defects.
 
 ## Bring-up Screenshots
 
@@ -23,8 +23,8 @@ These are direct runtime framebuffer captures, not emulator or desktop captures.
 
 | Title UI | New York loading screen |
 | --- | --- |
-| ![X-Men Legends logo and menu panels rendered by the recompiled runtime](docs/screenshots/title-menu.png) | ![New York loading screen rendered by the recompiled runtime](docs/screenshots/new-york-loading.png) |
-| The title logo and menu layers render; menu text and the 3D Cerebro background remain incomplete. | The first-level loading artwork and text render from the retail game data. |
+| ![Complete X-Men Legends title menu and 3D Cerebro chamber rendered by the recompiled runtime](docs/screenshots/title-menu.png) | ![New York loading screen rendered by the recompiled runtime](docs/screenshots/new-york-loading.png) |
+| The complete title UI and textured 3D Cerebro chamber render through the startup-movie override. A moving material still corrupts intermittently in later frames. | The first-level loading artwork and text render from the retail game data. |
 
 ### First Gameplay Frame
 
@@ -118,7 +118,7 @@ Input is implemented, but the complete retail flow is not yet ready for normal p
 
 - Sofdec SFD file reads and demux advance, but startup movies do not yet produce correct presented video frames.
 - The ADX header and compressed blocks traverse the movie audio ring correctly; audible SFD playback is not yet verified end to end.
-- The full animated 3D Cerebro chamber behind the title menu is not yet rendered correctly.
+- The animated 3D Cerebro chamber renders, but one moving object or material intermittently shows rainbow/chrome corruption.
 - Gameplay is reachable through development overrides, with outstanding world, material, HUD, and texture defects.
 - Performance is diagnostic-build quality; timing and resource use have not been optimized for release.
 - The current TOML contains workspace-specific absolute paths.
