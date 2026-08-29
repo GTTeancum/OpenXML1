@@ -15,7 +15,7 @@ The game now executes far beyond initial boot and has reached each of these mile
 - Level loading and first in-engine gameplay through a reversible development override.
 - Retail SFD file I/O, PSS demux, MPEG/IPU submission, and ADX block transport.
 
-The current retail-path blocker is producing and presenting correct Sofdec video frames. The demux advances through the movie and its ADX audio header and blocks arrive intact, but the visible video output is still invalid. The title level now reaches a clean, complete Cerebro scene using the game's own GIF transfers; coalescing duplicate pending DMAC completion events fixed the skipped texture upload that previously required a diagnostic repair. The full acceptance target remains: legal screen, all startup SFD movies with audio, an issue-free title scene, and playable gameplay without graphical or audio defects.
+The current retail-path blocker is producing and presenting correct Sofdec video frames. The demux advances through the movie and its ADX audio header and blocks arrive intact, but the visible video output is still invalid. The title level now reaches a clean, complete Cerebro scene using the game's own GIF transfers; coalescing duplicate pending DMAC completion events fixed the skipped texture upload that previously required a diagnostic repair. In gameplay, a focused VU/GIF/GS trace confirmed that the visible left-edge geometry is HUD data and that world-scene geometry is absent before VU submission, narrowing the next investigation to scene traversal and render-list construction. The full acceptance target remains: legal screen, all startup SFD movies with audio, an issue-free title scene, and playable gameplay without graphical or audio defects.
 
 ## Bring-up Screenshots
 
@@ -30,7 +30,7 @@ These are direct runtime framebuffer captures, not emulator or desktop captures.
 
 ![First in-engine gameplay frame rendered by the recompiled runtime](docs/screenshots/first-gameplay.png)
 
-The first level has entered its gameplay loop and begun drawing HUD elements. The world is still black and the HUD is corrupted, so this is a bring-up milestone, not evidence of playable graphics yet.
+The first level has entered its gameplay loop and begun drawing HUD elements. The world is still black and the HUD is corrupted. A focused trace verified that these packets are HUD geometry rather than a collapsed world mesh; level geometry is not yet reaching the VU/GIF/GS pipeline, so this is a bring-up milestone, not evidence of playable graphics yet.
 
 ## Repository Layout
 
@@ -70,7 +70,7 @@ Configure and build the recompiler:
 
 ```powershell
 cmake -S PS2Recomp -B PS2Recomp/out/xmen-final3-build
-cmake --build PS2Recomp/out/xmen-final3-build --config Release --target ps2_recomp --parallel 4
+cmake --build PS2Recomp/out/xmen-final3-build --config Release --target ps2_recomp --parallel 1
 ```
 
 Generate the game C++ and configure the runtime against it:
@@ -84,7 +84,7 @@ cmake -S PS2Recomp -B PS2Recomp/out/xmen-final3-build `
   -DPS2X_DEFAULT_BOOT_ELF="$PWD/xmen-legends/disc/SLUS_206.56"
 
 cmake --build PS2Recomp/out/xmen-final3-build --config Release `
-  --target ps2EntryRunner --parallel 4
+  --target ps2EntryRunner --parallel 1
 ```
 
 Run from the extracted disc directory so the original relative asset paths resolve:
@@ -118,7 +118,7 @@ Input is implemented, but the complete retail flow is not yet ready for normal p
 
 - Sofdec SFD file reads and demux advance, but startup movies do not yet produce correct presented video frames.
 - The ADX header and compressed blocks traverse the movie audio ring correctly; audible SFD playback is not yet verified end to end.
-- Gameplay is reachable through development overrides, with outstanding world, material, HUD, and texture defects.
+- Gameplay is reachable through development overrides. HUD geometry reaches GS, but world-scene geometry is currently missing before VU submission; HUD, material, and texture defects also remain.
 - Performance is diagnostic-build quality; timing and resource use have not been optimized for release.
 - The current TOML contains workspace-specific absolute paths.
 
@@ -130,8 +130,9 @@ Runtime and recompiler changes are developed in the public [GTTeancum/PS2Recomp 
 - [#226: Delay and coalesce GIF DMA completion interrupts](https://github.com/ran-j/PS2Recomp/pull/226)
 - [#227: Preserve framebuffer rows in interlaced presentation](https://github.com/ran-j/PS2Recomp/pull/227)
 - [#228: Support profile-defined SJRMT UNI storage](https://github.com/ran-j/PS2Recomp/pull/228)
+- [#229: Support GIF IMAGE2 transfers](https://github.com/ran-j/PS2Recomp/pull/229)
 
-All four submissions are open and mergeable as of August 29, 2026. Game-specific diagnostics and unfinished compatibility work remain on `codex/xmen-legends-bringup` until they can be reduced to reusable changes with focused tests.
+All five submissions are open and mergeable as of August 29, 2026. Game-specific diagnostics and unfinished compatibility work remain on `codex/xmen-legends-bringup` until they can be reduced to reusable changes with focused tests.
 
 ## Legal
 
