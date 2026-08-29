@@ -41,13 +41,27 @@ foreach ($candidate in $obsoleteDirectories) {
     }
 }
 
-$preservedProbeNumbers = '1567|1568|1569|1570|1571|1572'
+$retainManifest = Join-Path $xmenRoot 'probe-retain.txt'
+$preservedProbeNumbers = @(
+    if (Test-Path -LiteralPath $retainManifest -PathType Leaf) {
+        Get-Content -LiteralPath $retainManifest |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ -match '^\d+$' } |
+            Sort-Object -Unique |
+            ForEach-Object { [Regex]::Escape($_) }
+    }
+) -join '|'
+$preservedProbePattern = if ($preservedProbeNumbers) {
+    "^probe($preservedProbeNumbers)\."
+} else {
+    '(?!)'
+}
 $preservedFrames = '^gs-present-(1420|1450|1500)\.(ppm|png)$|^gs-present-vsync-'
 $obsoleteFiles = @()
 $obsoleteFiles += Get-ChildItem -LiteralPath $xmenRoot -File -Force |
     Where-Object {
         $_.Extension -eq '.log' -and
-        $_.Name -notmatch "^probe($preservedProbeNumbers)\."
+        $_.Name -notmatch $preservedProbePattern
     }
 $obsoleteFiles += Get-ChildItem -LiteralPath $disc -File -Force |
     Where-Object { $_.Name -match '^(runner-)?probe.*\.log$' }
