@@ -2,6 +2,9 @@ param(
     [Parameter(Mandatory = $true)]
     [int]$Probe,
 
+    [ValidateSet('Debug', 'Release', 'RelWithDebInfo', 'MinSizeRel')]
+    [string]$Config = 'Release',
+
     [int]$TimeoutSeconds = 220,
 
     [switch]$ContinueAfterNonBlack,
@@ -191,7 +194,11 @@ Remove-StaleBuildArtifacts
 
 foreach ($framebufferRoot in @($disc, (Join-Path $root 'PS2Recomp'))) {
     $resolvedFramebufferRoot = [System.IO.Path]::GetFullPath($framebufferRoot).TrimEnd('\')
-    Get-ChildItem -LiteralPath $resolvedFramebufferRoot -Filter 'gs-present-*.ppm' -File |
+    Get-ChildItem -LiteralPath $resolvedFramebufferRoot -File |
+        Where-Object {
+            $_.Name -like 'gs-present-*.ppm' -or
+            $_.Name -like 'gs-present-*.png'
+        } |
         ForEach-Object {
             $parent = [System.IO.Path]::GetDirectoryName($_.FullName).TrimEnd('\')
             if (-not $parent.Equals(
@@ -216,7 +223,7 @@ foreach ($log in @($outLog, $errLog)) {
     }
 }
 
-$exe = Join-Path $root 'PS2Recomp\out\xmen-final3-build\ps2xRuntime\Release\ps2EntryRunner.exe'
+$exe = Join-Path $root "PS2Recomp\out\xmen-final3-build\ps2xRuntime\$Config\ps2EntryRunner.exe"
 $process = Start-Process `
     -FilePath $exe `
     -WorkingDirectory $disc `
