@@ -1,5 +1,5 @@
 param(
-    [ValidateSet("Bypass", "MovieOnly", "MovieWait", "TitleGameplayFirst", "GameplayDemo", "GameplayMap", "GameplayFirst", "Restore")]
+    [ValidateSet("Bypass", "MovieOnly", "MovieWait", "TitleGameplayFirst", "GameplayDemo", "GameplayMap", "GameplayMapNoMovie", "GameplayFirst", "Restore")]
     [string]$Mode = "Bypass"
 )
 
@@ -13,10 +13,11 @@ $sourceName = switch ($Mode) {
     "TitleGameplayFirst" { "intro_normal.skip-movies.py" }
     "GameplayDemo" { "intro_normal.gameplay-demo.py" }
     "GameplayMap" { "intro_normal.gameplay-map.py" }
+    "GameplayMapNoMovie" { "intro_normal.gameplay-map.py" }
     "GameplayFirst" { "intro_normal.gameplay-first.py" }
     "Restore" { "intro_normal.original.py" }
 }
-$missionSourceName = if ($Mode -in @("TitleGameplayFirst", "GameplayFirst")) {
+$missionSourceName = if ($Mode -in @("TitleGameplayFirst", "GameplayMapNoMovie", "GameplayFirst")) {
     "mission_alison.skip-movie.py"
 } else {
     "mission_alison.original.py"
