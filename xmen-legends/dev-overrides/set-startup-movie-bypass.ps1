@@ -14,7 +14,7 @@ $sourceName = switch ($Mode) {
     "GameplayDemo" { "intro_normal.gameplay-demo.py" }
     "GameplayMap" { "intro_normal.gameplay-map.py" }
     "GameplayMapNoMovie" { "intro_normal.gameplay-map.py" }
-    "GameplayFirst" { "intro_normal.gameplay-first.py" }
+    "GameplayFirst" { "intro_normal.skip-movies.py" }
     "Restore" { "intro_normal.original.py" }
 }
 $missionSourceName = if ($Mode -in @("TitleGameplayFirst", "GameplayMapNoMovie", "GameplayFirst")) {

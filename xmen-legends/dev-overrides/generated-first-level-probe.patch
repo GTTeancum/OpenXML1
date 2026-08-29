@@ -1,0 +1,74 @@
+diff --git a/xmen-legends/output_mapped_final3/xmen_fn_00274970_0x274970.cpp b/xmen-legends/output_mapped_final3/xmen_fn_00274970_0x274970.cpp
+--- a/xmen-legends/output_mapped_final3/xmen_fn_00274970_0x274970.cpp
++++ b/xmen-legends/output_mapped_final3/xmen_fn_00274970_0x274970.cpp
+@@ -1,4 +1,6 @@
+ #include <stdexcept>
++#include <cstdlib>
++#include <iostream>
+ #include "ps2_runtime_macros.h"
+ #include "ps2_runtime.h"
+ #include "ps2_recompiled_functions.h"
+@@ -37,6 +39,7 @@ void xmen_fn_00274970_0x274970(uint8_t* rdram, R5900Context* ctx, PS2Runtime *r
+         case 0x274bd0u: goto label_274bd0;
+         case 0x274be4u: goto label_274be4;
+         case 0x274bf4u: goto label_274bf4;
++        case 0x274c04u: goto label_274c04;
+         case 0x274c20u: goto label_274c20;
+         case 0x274c30u: goto label_274c30;
+         case 0x274c38u: goto label_274c38;
+@@ -868,6 +871,44 @@ label_274bfc:
+     }
+     ctx->pc = 0x274C04u;
+ label_274c04:
++    {
++        static const bool startFirstLevel =
++            std::getenv("PS2X_XMEN_START_FIRST_LEVEL") != nullptr;
++        static bool firstLevelStarted = false;
++        static uint32_t completedFrameCount = 0;
++        ++completedFrameCount;
++
++        constexpr uint32_t levelManager = 0x00B1A220u;
++        const uint32_t activeLevel = READ32(levelManager + 0x0C08u);
++        const uint32_t activeLevelVtable =
++            activeLevel != 0u ? READ32(activeLevel + 0x0EC8u) : 0u;
++        if (startFirstLevel && !firstLevelStarted && completedFrameCount > 448u &&
++            activeLevelVtable == 0x00716070u)
++        {
++            constexpr uint32_t newGameHandler = 0x00422430u;
++            firstLevelStarted = true;
++            SET_GPR_U32(ctx, 4, 0u);
++            SET_GPR_U32(ctx, 5, 0u);
++            SET_GPR_U32(ctx, 31, 0x00274C04u);
++            ctx->pc = newGameHandler;
++            std::cerr << "[xmen-first-level-start] completedFrames="
++                      << completedFrameCount
++                      << " handler=0x" << std::hex << newGameHandler
++                      << " return=0x274c04" << std::dec << std::endl;
++            if (!runtime->dispatchGuestBranch(
++                    rdram,
++                    ctx,
++                    newGameHandler,
++                    0x00274C04u,
++                    0x00274C04u,
++                    PS2Runtime::GuestBranchKind::DirectCall,
++                    "X-Men Legends first-level probe"))
++            {
++                return;
++            }
++            ctx->pc = 0x00274C04u;
++        }
++    }
+     // 0x274c04: 0xdfbf0030  ld          $ra, 0x30($sp)
+     ctx->pc = 0x274c04u;
+     SET_GPR_U64(ctx, 31, READ64(ADD32(GPR_U32(ctx, 29), 48)));
+diff --git a/xmen-legends/output_mapped_final3/register_functions.cpp b/xmen-legends/output_mapped_final3/register_functions.cpp
+--- a/xmen-legends/output_mapped_final3/register_functions.cpp
++++ b/xmen-legends/output_mapped_final3/register_functions.cpp
+@@ -75326,6 +75326,7 @@ void register_all_ps2_functions() {
+         g_ps2RecompiledFunctionTable[381682] = xmen_fn_00274970_0x274970; // 0x274bd0
+         g_ps2RecompiledFunctionTable[381687] = xmen_fn_00274970_0x274970; // 0x274be4
+         g_ps2RecompiledFunctionTable[381691] = xmen_fn_00274970_0x274970; // 0x274bf4
++        g_ps2RecompiledFunctionTable[381695] = xmen_fn_00274970_0x274970; // 0x274c04
+         g_ps2RecompiledFunctionTable[381702] = xmen_fn_00274970_0x274970; // 0x274c20
+         g_ps2RecompiledFunctionTable[381706] = xmen_fn_00274970_0x274970; // 0x274c30
+         g_ps2RecompiledFunctionTable[381708] = xmen_fn_00274970_0x274970; // 0x274c38

@@ -40,6 +40,7 @@ The first level is running through the real campaign flow and renders its enviro
 | `xmen-legends/xmen-legends.synthetic-ghidra.final3.csv` | Repaired function map used by the recompiler |
 | `xmen-legends/xmen-legends.resume-entry-points.observed.txt` | Validated internal callable entry points |
 | `xmen-legends/dev-overrides/` | Reversible startup and gameplay diagnostic scripts |
+| `xmen-legends/apply-generated-first-level-probe.ps1` | Reapplies the deterministic native New Game probe after regeneration |
 | `xmen-legends/run-guarded-probe.ps1` | Bounded, low-priority runtime probe and artifact retention |
 | `xmen-legends/cleanup-generated-artifacts.ps1` | Removal of obsolete builds, captures, and logs |
 
@@ -79,6 +80,9 @@ Generate the game C++ and configure the runtime against it:
 ```powershell
 & PS2Recomp/out/xmen-final3-build/ps2xRecomp/Release/ps2_recomp.exe `
   xmen-legends/xmen-legends.boot.final3.toml
+
+powershell -ExecutionPolicy Bypass -File `
+  xmen-legends/apply-generated-first-level-probe.ps1
 
 cmake -S PS2Recomp -B PS2Recomp/out/xmen-final3-build `
   -DPS2X_RECOMPILED_OUTPUT_DIR="$PWD/xmen-legends/output_mapped_final3" `
