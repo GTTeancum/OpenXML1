@@ -35,6 +35,16 @@ if (-not $disc.Equals($expectedDisc, [System.StringComparison]::OrdinalIgnoreCas
 function Remove-StaleProbeArtifacts {
     param([int]$CurrentProbe)
 
+    $artifactRoots = @($PSScriptRoot, $disc)
+    $allowedParents = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($artifactRoot in $artifactRoots) {
+        [void]$allowedParents.Add(
+            [System.IO.Path]::GetFullPath($artifactRoot).TrimEnd('\')
+        )
+    }
+
     $pinnedProbeIds = [System.Collections.Generic.HashSet[int]]::new()
     $retentionPath = Join-Path $PSScriptRoot 'probe-retain.txt'
     if (Test-Path -LiteralPath $retentionPath) {
@@ -61,14 +71,16 @@ function Remove-StaleProbeArtifacts {
     }
 
     $artifacts = @(
-        Get-ChildItem -LiteralPath $PSScriptRoot -File -Filter 'probe*' |
-            Where-Object { $_.Name -match '^probe(?<id>\d+).*\.(?:log|zip|ppm|png)$' } |
-            ForEach-Object {
-                [pscustomobject]@{
-                    File = $_
-                    ProbeId = [int]$Matches.id
+        foreach ($artifactRoot in $artifactRoots) {
+            Get-ChildItem -LiteralPath $artifactRoot -File -Filter 'probe*' |
+                Where-Object { $_.Name -match '^probe(?<id>\d+).*\.(?:log|zip|ppm|png)$' } |
+                ForEach-Object {
+                    [pscustomobject]@{
+                        File = $_
+                        ProbeId = [int]$Matches.id
+                    }
                 }
-            }
+        }
     )
 
     $keepProbeIds = [System.Collections.Generic.HashSet[int]]::new()
@@ -90,7 +102,7 @@ function Remove-StaleProbeArtifacts {
         }
 
         $parent = [System.IO.Path]::GetDirectoryName($artifact.File.FullName).TrimEnd('\')
-        if (-not $parent.Equals($PSScriptRoot.TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)) {
+        if (-not $allowedParents.Contains($parent)) {
             throw "Refusing to remove unexpected path: $($artifact.File.FullName)"
         }
 
@@ -105,6 +117,16 @@ function Remove-StaleProbeArtifacts {
 }
 
 function Remove-StaleBuildArtifacts {
+    $artifactRoots = @($PSScriptRoot, $disc)
+    $allowedParents = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($artifactRoot in $artifactRoots) {
+        [void]$allowedParents.Add(
+            [System.IO.Path]::GetFullPath($artifactRoot).TrimEnd('\')
+        )
+    }
+
     $trackedNames = [System.Collections.Generic.HashSet[string]]::new(
         [System.StringComparer]::OrdinalIgnoreCase
     )
@@ -113,16 +135,18 @@ function Remove-StaleBuildArtifacts {
     }
 
     $artifacts = @(
-        Get-ChildItem -LiteralPath $PSScriptRoot -File |
-            Where-Object {
-                $_.Name -match '^(?:build|configure|recomp|tests).*?(?<id>\d{3,}).*\.(?:log|err|exit)$'
-            } |
-            ForEach-Object {
-                [pscustomobject]@{
-                    File = $_
-                    BuildId = [int]$Matches.id
+        foreach ($artifactRoot in $artifactRoots) {
+            Get-ChildItem -LiteralPath $artifactRoot -File |
+                Where-Object {
+                    $_.Name -match '^(?:build|configure|recomp|tests).*?(?<id>\d{3,}).*\.(?:log|err|exit)$'
+                } |
+                ForEach-Object {
+                    [pscustomobject]@{
+                        File = $_
+                        BuildId = [int]$Matches.id
+                    }
                 }
-            }
+        }
     )
 
     $keepBuildIds = [System.Collections.Generic.HashSet[int]]::new()
@@ -140,7 +164,7 @@ function Remove-StaleBuildArtifacts {
         }
 
         $parent = [System.IO.Path]::GetDirectoryName($artifact.File.FullName).TrimEnd('\')
-        if (-not $parent.Equals($PSScriptRoot.TrimEnd('\'), [System.StringComparison]::OrdinalIgnoreCase)) {
+        if (-not $allowedParents.Contains($parent)) {
             throw "Refusing to remove unexpected path: $($artifact.File.FullName)"
         }
         Remove-Item -LiteralPath $artifact.File.FullName -Force
@@ -165,10 +189,6 @@ function Remove-StaleBuildArtifacts {
 Remove-StaleProbeArtifacts -CurrentProbe $Probe
 Remove-StaleBuildArtifacts
 
-if ($CleanupOnly) {
-    exit 0
-}
-
 Get-ChildItem -LiteralPath $disc -Filter 'gs-present-*.ppm' -File | ForEach-Object {
     $parent = [System.IO.Path]::GetDirectoryName($_.FullName).TrimEnd('\')
     if (-not $parent.Equals($disc, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -176,6 +196,10 @@ Get-ChildItem -LiteralPath $disc -Filter 'gs-present-*.ppm' -File | ForEach-Obje
     }
 
     Remove-Item -LiteralPath $_.FullName -Force
+}
+
+if ($CleanupOnly) {
+    exit 0
 }
 
 $outLog = Join-Path $PSScriptRoot "probe$Probe.out.log"
