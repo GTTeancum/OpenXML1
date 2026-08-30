@@ -64,7 +64,7 @@ function Set-BuildTreePriority {
 try {
     while (-not $process.HasExited) {
         Set-BuildTreePriority -RootProcessId $process.Id
-        Start-Sleep -Milliseconds 500
+        Start-Sleep -Milliseconds 100
         $process.Refresh()
     }
 }
