@@ -98,33 +98,42 @@ finally {
 }
 
 $process.WaitForExit()
-foreach ($processId in $buildProcessIds) {
-    $trackedProcess = Get-Process -Id $processId -ErrorAction SilentlyContinue
-    if ($trackedProcess -and
-        $trackedProcess.ProcessName -in @('cmake', 'MSBuild', 'cl', 'link')) {
+function Remove-DetachedBuildWorkers {
+    foreach ($processId in $buildProcessIds) {
+        $trackedProcess = Get-Process -Id $processId -ErrorAction SilentlyContinue
+        if ($trackedProcess -and
+            $trackedProcess.ProcessName -in @('cmake', 'MSBuild', 'cl', 'link')) {
+            try {
+                $trackedProcess.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
+                Stop-Process -Id $processId -Force -ErrorAction Stop
+            }
+            catch {
+                # A tracked build process can exit while cleanup is running.
+            }
+        }
+    }
+
+    foreach ($worker in Get-CimInstance Win32_Process -Filter "Name='MSBuild.exe'") {
+        if ($preexistingMsBuildIds.Contains([int]$worker.ProcessId) -or
+            (Get-Process -Id $worker.ParentProcessId -ErrorAction SilentlyContinue)) {
+            continue
+        }
+
         try {
-            $trackedProcess.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
-            Stop-Process -Id $processId -Force -ErrorAction Stop
+            $workerProcess = Get-Process -Id $worker.ProcessId -ErrorAction Stop
+            $workerProcess.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
+            Stop-Process -Id $worker.ProcessId -Force -ErrorAction Stop
         }
         catch {
-            # A tracked build process can exit while cleanup is running.
+            # A detached worker can exit while cleanup is running.
         }
     }
 }
-foreach ($worker in Get-CimInstance Win32_Process -Filter "Name='MSBuild.exe'") {
-    if ($preexistingMsBuildIds.Contains([int]$worker.ProcessId) -or
-        (Get-Process -Id $worker.ParentProcessId -ErrorAction SilentlyContinue)) {
-        continue
-    }
 
-    try {
-        $workerProcess = Get-Process -Id $worker.ProcessId -ErrorAction Stop
-        $workerProcess.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
-        Stop-Process -Id $worker.ProcessId -Force -ErrorAction Stop
-    }
-    catch {
-        # A detached worker can exit while cleanup is running.
-    }
+Remove-DetachedBuildWorkers
+foreach ($cleanupPass in 1..5) {
+    Start-Sleep -Milliseconds 400
+    Remove-DetachedBuildWorkers
 }
 Get-Content -LiteralPath $stdoutPath
 if ((Get-Item -LiteralPath $stderrPath).Length -gt 0) {
