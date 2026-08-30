@@ -5,17 +5,33 @@ An experimental static recompilation of the North American PlayStation 2 release
 > [!IMPORTANT]
 > This is active bring-up work, not a playable release. A legal disc dump is required, generated code is not distributed, and normal retail startup does not yet complete the Sofdec sequence or reach gameplay without development overrides.
 
+## Acceptance Target
+
+The project goal is a native PC build that follows the unmodified retail boot flow through the legal screen, all startup movies with audio, the fully rendered 3D Cerebro title scene, and playable campaign gameplay without graphical or audio defects.
+
+| Milestone | Current state |
+| --- | --- |
+| Legal and memory-card flow | Renders and advances; final presentation/timing validation remains |
+| Startup Sofdec movies | File I/O, demux, MPEG/IPU submission, and ADX transport run; decoded video and audible movie playback remain broken |
+| 3D title scene | Complete title UI and Cerebro chamber render after a reversible movie bypass |
+| First campaign level | The real Begin Story path loads and renders New York; lighting, effects, blending, and HUD remain defective |
+| Playable release | Not yet |
+
 ## Current Status
 
 The game now executes far beyond initial boot and has reached each of these milestones in the native PC runtime:
 
-- Stable legal and memory-card screens.
+- Legal text and memory-card screens that render and advance.
 - Complete title UI and the 3D Cerebro chamber after a reversible startup-movie bypass.
 - ZAUDIO stream creation, buffering, and playback service calls.
 - First-level loading and world rendering through the real **Begin Story** menu path after a reversible startup-movie bypass.
 - Retail SFD file I/O, PSS demux, MPEG/IPU submission, and ADX block transport.
 
-The current retail-path blocker is producing and presenting correct Sofdec video frames. The demux advances through the movie and its ADX audio header and blocks arrive intact, but the visible video output is still invalid. The title level reaches a clean, complete Cerebro scene using the game's own GIF transfers; coalescing duplicate pending DMAC completion events fixed the skipped texture upload that previously required a diagnostic repair. The real New Game handler now transitions deterministically from the initialized title level into the first campaign level, and the current clean build renders the complete New York world through VU/GIF/GS. The earlier apparent world-rendering regression was an invalid comparison against the direct `loadMap()` shortcut, which skips campaign initialization and produces only HUD fragments. Effects, material lighting, blending, and HUD corruption remain. The full acceptance target remains: legal screen, all startup SFD movies with audio, an issue-free title scene, and playable gameplay without graphical or audio defects.
+The title level reaches a clean, complete Cerebro scene using the game's own GIF transfers; coalescing duplicate pending DMAC completion events fixed the skipped texture upload that previously required a diagnostic repair. The real New Game handler now transitions deterministically from the initialized title level into the first campaign level, and the current clean build renders the complete New York world through VU/GIF/GS. The earlier apparent world-rendering regression was an invalid comparison against the direct `loadMap()` shortcut, which skips campaign initialization and produces only HUD fragments.
+
+The highest-priority gameplay blocker is now localized to lighting data before rasterization. Textures sample correctly, but many mesh packets reach GS with zero or near-zero vertex RGB. The authored New York scene contains nonzero ambient light and valid global-light colors, while the target VU shader receives zero ambient and incomplete light slots. A qword-specific VIF provenance trace found no direct VIF UNPACK write that creates the ambient qword during the target interval. The next investigation is therefore the VU or mapped-memory store path that constructs that table, not another broad GS or texture probe.
+
+The separate retail-startup blocker remains correct Sofdec output. The demux advances through each movie and its ADX audio header and blocks arrive intact, but visible decoded frames and audible movie playback are not yet correct. The full acceptance target remains unfinished.
 
 ## Bring-up Screenshots
 
@@ -30,7 +46,7 @@ These are direct runtime framebuffer captures, not emulator or desktop captures.
 
 ![First New York gameplay scene rendered by the current recompiled runtime](docs/screenshots/first-gameplay.png)
 
-This current-build frame comes from the real campaign flow and renders the environment, Wolverine, props, effects, and HUD. Black materials, the red ground effect, and corrupted HUD elements remain visible, so this is a major bring-up milestone rather than release-quality gameplay.
+This current-build frame comes from the real Begin Story campaign flow and renders the environment, Wolverine, props, effects, and HUD. Black materials, the red ground effect, and corrupted HUD elements remain visible, so this is a major bring-up milestone rather than release-quality gameplay.
 
 ## Repository Layout
 
@@ -126,6 +142,19 @@ Input is implemented, but the complete retail flow is not yet ready for normal p
 - Gameplay is reachable through the real New Game handler after bypassing startup movies. The complete world renders on the current clean build, while the direct `loadMap()` shortcut remains intentionally unsuitable because it skips campaign setup. HUD, material-lighting, effect, and blending defects remain.
 - Performance is diagnostic-build quality; timing and resource use have not been optimized for release.
 - The current TOML contains workspace-specific absolute paths.
+
+## Roadmap
+
+1. Trace the VU microprogram stores that construct the gameplay light table and reduce the result to a reusable PS2Recomp fix.
+2. Repair gameplay material lighting, effects, blending, and HUD rendering, then validate normal controller input and game audio.
+3. Complete Sofdec video decode/presentation and movie audio playback on the retail startup path.
+4. Validate the complete legal-to-title-to-campaign flow without development overrides and package a reproducible PC build process.
+
+## Contributing
+
+Reproduction notes, focused PS2 hardware tests, and generally useful PS2Recomp fixes are welcome. Keep copyrighted game files, extracted assets, generated game code, build products, and probe logs out of commits. Generic runtime changes should include a focused test and be submitted separately to upstream PS2Recomp; game-specific maps, scripts, and diagnostics belong in this repository until their behavior is understood well enough to generalize.
+
+Use `xmen-legends/run-guarded-probe.ps1` for bounded runtime tests and `xmen-legends/cleanup-generated-artifacts.ps1` after investigation. The scripts keep probes at Below Normal priority, constrain CPU affinity, and retain only explicitly pinned evidence.
 
 ## Upstream Work
 
