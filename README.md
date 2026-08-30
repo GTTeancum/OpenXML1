@@ -15,7 +15,7 @@ The game now executes far beyond initial boot and has reached each of these mile
 - First-level loading and world rendering through the real **Begin Story** menu path after a reversible startup-movie bypass.
 - Retail SFD file I/O, PSS demux, MPEG/IPU submission, and ADX block transport.
 
-The current retail-path blocker is producing and presenting correct Sofdec video frames. The demux advances through the movie and its ADX audio header and blocks arrive intact, but the visible video output is still invalid. The title level reaches a clean, complete Cerebro scene using the game's own GIF transfers; coalescing duplicate pending DMAC completion events fixed the skipped texture upload that previously required a diagnostic repair. Driving the real title menu's **Begin Story** action also proved that the earlier direct `loadMap()` shortcut skipped required campaign initialization, and a preserved last-known-good build rendered the complete New York world through VU/GIF/GS. The active diagnostic build currently regresses to HUD fragments over a black world. A frame-by-frame comparison against the runtime immediately before the CLUT-cache and VIF-lane work produced identical gameplay frames, narrowing that regression to game-side generated code or launch state rather than those runtime changes. Effects, material lighting, blending, and HUD corruption also remain. The full acceptance target remains: legal screen, all startup SFD movies with audio, an issue-free title scene, and playable gameplay without graphical or audio defects.
+The current retail-path blocker is producing and presenting correct Sofdec video frames. The demux advances through the movie and its ADX audio header and blocks arrive intact, but the visible video output is still invalid. The title level reaches a clean, complete Cerebro scene using the game's own GIF transfers; coalescing duplicate pending DMAC completion events fixed the skipped texture upload that previously required a diagnostic repair. The real New Game handler now transitions deterministically from the initialized title level into the first campaign level, and the current clean build renders the complete New York world through VU/GIF/GS. The earlier apparent world-rendering regression was an invalid comparison against the direct `loadMap()` shortcut, which skips campaign initialization and produces only HUD fragments. Effects, material lighting, blending, and HUD corruption remain. The full acceptance target remains: legal screen, all startup SFD movies with audio, an issue-free title scene, and playable gameplay without graphical or audio defects.
 
 ## Bring-up Screenshots
 
@@ -28,9 +28,9 @@ These are direct runtime framebuffer captures, not emulator or desktop captures.
 
 ### First Gameplay Frame
 
-![Preserved first New York gameplay scene rendered by the recompiled runtime](docs/screenshots/first-gameplay.png)
+![First New York gameplay scene rendered by the current recompiled runtime](docs/screenshots/first-gameplay.png)
 
-This last-known-good frame proves that the real campaign flow rendered its environment, Wolverine, props, effects, and HUD. Black materials, the red ground effect, and corrupted HUD elements remain visible, so this is a major bring-up milestone rather than release-quality gameplay. The active diagnostic build currently presents only the HUD fragments; restoring this complete frame is the immediate rendering regression under investigation.
+This current-build frame comes from the real campaign flow and renders the environment, Wolverine, props, effects, and HUD. Black materials, the red ground effect, and corrupted HUD elements remain visible, so this is a major bring-up milestone rather than release-quality gameplay.
 
 ## Repository Layout
 
@@ -123,7 +123,7 @@ Input is implemented, but the complete retail flow is not yet ready for normal p
 
 - Sofdec SFD file reads and demux advance, but startup movies do not yet produce correct presented video frames.
 - The ADX header and compressed blocks traverse the movie audio ring correctly; audible SFD playback is not yet verified end to end.
-- Gameplay is reachable through the real **Begin Story** action after bypassing startup movies. The active diagnostic build currently presents only HUD fragments over black, while the preserved last-known-good build rendered the world; game-side generated code and launch state are the remaining regression boundary. HUD, material-lighting, and blending defects remain in the preserved frame.
+- Gameplay is reachable through the real New Game handler after bypassing startup movies. The complete world renders on the current clean build, while the direct `loadMap()` shortcut remains intentionally unsuitable because it skips campaign setup. HUD, material-lighting, effect, and blending defects remain.
 - Performance is diagnostic-build quality; timing and resource use have not been optimized for release.
 - The current TOML contains workspace-specific absolute paths.
 

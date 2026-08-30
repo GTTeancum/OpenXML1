@@ -16,7 +16,7 @@ diff --git a/xmen-legends/output_mapped_final3/xmen_fn_00274970_0x274970.cpp b/x
          case 0x274c20u: goto label_274c20;
          case 0x274c30u: goto label_274c30;
          case 0x274c38u: goto label_274c38;
-@@ -868,6 +871,44 @@ label_274bfc:
+@@ -868,6 +871,46 @@ label_274bfc:
      }
      ctx->pc = 0x274C04u;
  label_274c04:
@@ -24,15 +24,17 @@ diff --git a/xmen-legends/output_mapped_final3/xmen_fn_00274970_0x274970.cpp b/x
 +        static const bool startFirstLevel =
 +            std::getenv("PS2X_XMEN_START_FIRST_LEVEL") != nullptr;
 +        static bool firstLevelStarted = false;
-+        static uint32_t completedFrameCount = 0;
-+        ++completedFrameCount;
++        static uint32_t titleFrameCount = 0;
 +
 +        constexpr uint32_t levelManager = 0x00B1A220u;
 +        const uint32_t activeLevel = READ32(levelManager + 0x0C08u);
 +        const uint32_t activeLevelVtable =
 +            activeLevel != 0u ? READ32(activeLevel + 0x0EC8u) : 0u;
-+        if (startFirstLevel && !firstLevelStarted && completedFrameCount > 448u &&
-+            activeLevelVtable == 0x00716070u)
++        if (activeLevelVtable == 0x00716070u)
++            ++titleFrameCount;
++        else
++            titleFrameCount = 0u;
++        if (startFirstLevel && !firstLevelStarted && titleFrameCount >= 30u)
 +        {
 +            constexpr uint32_t newGameHandler = 0x00422430u;
 +            firstLevelStarted = true;
@@ -40,8 +42,8 @@ diff --git a/xmen-legends/output_mapped_final3/xmen_fn_00274970_0x274970.cpp b/x
 +            SET_GPR_U32(ctx, 5, 0u);
 +            SET_GPR_U32(ctx, 31, 0x00274C04u);
 +            ctx->pc = newGameHandler;
-+            std::cerr << "[xmen-first-level-start] completedFrames="
-+                      << completedFrameCount
++            std::cerr << "[xmen-first-level-start] titleFrames="
++                      << titleFrameCount
 +                      << " handler=0x" << std::hex << newGameHandler
 +                      << " return=0x274c04" << std::dec << std::endl;
 +            if (!runtime->dispatchGuestBranch(
