@@ -236,6 +236,9 @@ def main() -> int:
                         field_row["target_type"] = target.type_name.decode(
                             "ascii", errors="replace"
                         )
+                        target_name = object_name(target)
+                        if target_name:
+                            field_row["target_name"] = target_name
                 fields.append(field_row)
 
             row = {
@@ -243,6 +246,9 @@ def main() -> int:
                 "type": obj.type_name.decode("ascii", errors="replace"),
                 "fields": fields,
             }
+            name = object_name(obj)
+            if name:
+                row["name"] = name
             if obj.type_name in (b"igLightList", b"igLightStateAttrList"):
                 row["items"] = [
                     {
