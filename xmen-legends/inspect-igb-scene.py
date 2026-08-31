@@ -82,6 +82,25 @@ def fnv1a64(data: bytes) -> str:
     return f"{value:016x}"
 
 
+def ps2_csm1_upload_clut(clut_data: bytes) -> bytes:
+    """Arrange linear RGBA32 entries for a 16x16 CSM1 host upload."""
+    entries = len(clut_data) // 4
+    if entries != 256:
+        return b""
+
+    upload = bytearray(len(clut_data))
+    for logical_index in range(entries):
+        upload_index = (
+            (logical_index & ~0x18)
+            | ((logical_index & 0x08) << 1)
+            | ((logical_index & 0x10) >> 1)
+        )
+        source = logical_index * 4
+        destination = upload_index * 4
+        upload[destination : destination + 4] = clut_data[source : source + 4]
+    return bytes(upload)
+
+
 class GeometryCollector:
     """Mirror igb-blender's inherited AttrSet state without importing bpy."""
 
@@ -316,6 +335,7 @@ def main() -> int:
             if args.texture_details and image.source_obj.index not in texture_details:
                 pixel_data = image.pixel_data or b""
                 clut_data = image.clut_data or b""
+                csm1_upload_clut = ps2_csm1_upload_clut(clut_data)
                 decoded = image_convert.convert_image_to_rgba(image) or b""
                 indices = Counter(pixel_data[: image.width * image.height])
                 texture_details[image.source_obj.index] = {
@@ -331,6 +351,11 @@ def main() -> int:
                     "clut_bytes": len(clut_data),
                     "clut_fnv1a64": fnv1a64(clut_data),
                     "clut_sha256": hashlib.sha256(clut_data).hexdigest(),
+                    "csm1_upload_clut_bytes": len(csm1_upload_clut),
+                    "csm1_upload_clut_fnv1a64": fnv1a64(csm1_upload_clut),
+                    "csm1_upload_clut_sha256": hashlib.sha256(
+                        csm1_upload_clut
+                    ).hexdigest(),
                     "decoded_rgba_bytes": len(decoded),
                     "decoded_rgba_fnv1a64": fnv1a64(decoded),
                     "decoded_rgba_sha256": hashlib.sha256(decoded).hexdigest(),
