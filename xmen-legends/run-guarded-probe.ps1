@@ -16,6 +16,9 @@ param(
 
     [switch]$CleanupOnly,
 
+    [ValidateSet('Restore', 'Bypass', 'MovieOnly', 'MovieWait', 'TitleGameplayFirst', 'GameplayDemo', 'GameplayMap', 'GameplayMapNoMovie', 'GameplayFirst')]
+    [string]$StartupMovieMode = 'Restore',
+
     [ValidateRange(1, 100)]
     [int]$RetainProbeCount = 8,
 
@@ -296,6 +299,13 @@ if ($CleanupOnly) {
     exit 0
 }
 
+$startupMovieScript = Join-Path $PSScriptRoot 'dev-overrides\set-startup-movie-bypass.ps1'
+if ($StartupMovieMode -ne 'Restore') {
+    & $startupMovieScript -Mode $StartupMovieMode
+}
+
+try {
+
 $outLog = Join-Path $PSScriptRoot "probe$Probe.out.log"
 $errLog = Join-Path $PSScriptRoot "probe$Probe.err.log"
 foreach ($log in @($outLog, $errLog)) {
@@ -419,3 +429,9 @@ while ([DateTime]::UtcNow -lt $deadline) {
 Stop-ProbeProcess
 
 "TIMEOUT PPM_COUNT=$($seen.Count)"
+}
+finally {
+    if ($StartupMovieMode -ne 'Restore') {
+        & $startupMovieScript -Mode Restore
+    }
+}
