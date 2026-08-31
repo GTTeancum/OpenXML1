@@ -9,6 +9,9 @@ param(
 
     [switch]$ContinueAfterNonBlack,
 
+    [ValidateRange(-1, [int]::MaxValue)]
+    [int]$StopAfterPresent = -1,
+
     [switch]$ContinueAfterMissing,
 
     [switch]$CleanupOnly,
@@ -18,6 +21,9 @@ param(
 
     [ValidateRange(1, 100)]
     [int]$RetainBuildCount = 8,
+
+    [ValidateRange(1, 720)]
+    [int]$MaxGeneratedImageAgeHours = 12,
 
     [ValidateRange(16, 4096)]
     [int]$MaxCombinedLogMiB = 128
@@ -189,8 +195,53 @@ function Remove-StaleBuildArtifacts {
     }
 }
 
+function Remove-StaleGeneratedImages {
+    $captureRoot = Join-Path $PSScriptRoot 'asset-inspect'
+    if (-not (Test-Path -LiteralPath $captureRoot -PathType Container)) {
+        return
+    }
+
+    $resolvedCaptureRoot = [System.IO.Path]::GetFullPath($captureRoot).TrimEnd('\')
+    $cutoffUtc = [DateTime]::UtcNow.AddHours(-$MaxGeneratedImageAgeHours)
+    $trackedPaths = [System.Collections.Generic.HashSet[string]]::new(
+        [System.StringComparer]::OrdinalIgnoreCase
+    )
+    foreach ($trackedPath in git -C $root ls-files -- 'xmen-legends/asset-inspect/*') {
+        [void]$trackedPaths.Add(
+            [System.IO.Path]::GetFullPath((Join-Path $root $trackedPath))
+        )
+    }
+
+    $removedCount = 0
+    [long]$removedBytes = 0
+    Get-ChildItem -LiteralPath $resolvedCaptureRoot -File |
+        Where-Object {
+            $_.Name -match '^probe\d+.*\.(?:ppm|png)$' -and
+            $_.LastWriteTimeUtc -lt $cutoffUtc
+        } |
+        ForEach-Object {
+            $target = [System.IO.Path]::GetFullPath($_.FullName)
+            $parent = [System.IO.Path]::GetDirectoryName($target).TrimEnd('\')
+            if (-not $parent.Equals(
+                    $resolvedCaptureRoot,
+                    [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "Refusing to remove unexpected image path: $target"
+            }
+            if (-not $trackedPaths.Contains($target)) {
+                $removedBytes += $_.Length
+                Remove-Item -LiteralPath $target -Force
+                $removedCount++
+            }
+        }
+
+    if ($removedCount -gt 0) {
+        "IMAGE_CLEANUP FILES=$removedCount MIB=$([math]::Round($removedBytes / 1MB, 1)) MAX_AGE_HOURS=$MaxGeneratedImageAgeHours"
+    }
+}
+
 Remove-StaleProbeArtifacts -CurrentProbe $Probe
 Remove-StaleBuildArtifacts
+Remove-StaleGeneratedImages
 
 foreach ($framebufferRoot in @($disc, (Join-Path $root 'PS2Recomp'))) {
     $resolvedFramebufferRoot = [System.IO.Path]::GetFullPath($framebufferRoot).TrimEnd('\')
@@ -221,6 +272,10 @@ foreach ($log in @($outLog, $errLog)) {
     if (Test-Path -LiteralPath $log) {
         Remove-Item -LiteralPath $log -Force
     }
+}
+
+if ($StopAfterPresent -ge 0) {
+    $env:PS2X_DUMP_PRESENT_RANGE = "$StopAfterPresent-$StopAfterPresent"
 }
 
 $exe = Join-Path $root "PS2Recomp\out\xmen-final3-build\ps2xRuntime\$Config\ps2EntryRunner.exe"
@@ -268,15 +323,26 @@ while ([DateTime]::UtcNow -lt $deadline) {
         }
 
         try {
-            $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
+            $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256 -ErrorAction Stop).Hash
         }
-        catch [System.IO.IOException] {
-            # The runtime may still be writing a newly-created framebuffer dump.
-            continue
+        catch {
+            if ($_.Exception.Message -match 'being used by another process|cannot access the file') {
+                # The runtime may still be writing a newly-created framebuffer dump.
+                continue
+            }
+
+            throw
         }
 
         $seen[$file.FullName] = $hash
         "PPM=$($file.Name) SHA256=$hash"
+
+        if ($StopAfterPresent -ge 0 -and
+            $file.Name -eq "gs-present-$StopAfterPresent.ppm") {
+            "TARGET_PRESENT PID=$($process.Id) INDEX=$StopAfterPresent FILE=$($file.FullName) SHA256=$hash"
+            Stop-ProbeProcess
+            exit 45
+        }
 
         if ($hash -ne $knownBlack) {
             "NONBLACK PID=$($process.Id) FILE=$($file.FullName) SHA256=$hash"

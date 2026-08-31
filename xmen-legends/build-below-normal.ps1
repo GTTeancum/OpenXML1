@@ -7,7 +7,13 @@ param(
     [string]$BuildPath = '',
 
     [ValidateRange(1, 64)]
-    [int]$Parallel = 1
+    [int]$Parallel = 1,
+
+    [string]$SelectedSource = '',
+
+    [switch]$DisableOptimization,
+
+    [switch]$LinkOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -21,17 +27,94 @@ if (-not (Test-Path -LiteralPath $BuildPath -PathType Container)) {
     throw "Build directory does not exist: $BuildPath"
 }
 
-$stdoutPath = Join-Path $BuildPath 'build-below-normal.out.log'
-$stderrPath = Join-Path $BuildPath 'build-below-normal.err.log'
-$arguments = @(
-    '--build', $BuildPath,
-    '--config', $Config,
-    '--target', $Target,
-    '--parallel', $Parallel,
-    '--',
-    '/nodeReuse:false',
-    '/p:UseSharedCompilation=false'
-)
+if ($SelectedSource -and $LinkOnly) {
+    throw 'SelectedSource and LinkOnly cannot be used together.'
+}
+if ($DisableOptimization -and -not $SelectedSource) {
+    throw 'DisableOptimization requires SelectedSource.'
+}
+
+$buildExecutable = 'cmake.exe'
+$workingDirectory = $repoRoot
+$logStem = 'build-below-normal'
+if ($SelectedSource -or $LinkOnly) {
+    if ($SelectedSource) {
+        $SelectedSource = [System.IO.Path]::GetFullPath($SelectedSource)
+        if (-not (Test-Path -LiteralPath $SelectedSource -PathType Leaf)) {
+            throw "Selected source does not exist: $SelectedSource"
+        }
+
+        $projectNeedle = '<ClCompile Include="' + $SelectedSource + '"'
+        $owningProjects = @(Get-ChildItem -LiteralPath $BuildPath -Recurse -File -Filter '*.vcxproj' |
+            Where-Object {
+                Select-String -LiteralPath $_.FullName -SimpleMatch $projectNeedle -Quiet
+            })
+        if ($owningProjects.Count -ne 1) {
+            throw "Expected one generated project to own $SelectedSource; found $($owningProjects.Count)."
+        }
+        $projectPath = $owningProjects[0].FullName
+    }
+    else {
+        $projectPath = Join-Path $BuildPath "ps2xRuntime\$Target.vcxproj"
+    }
+    if (-not (Test-Path -LiteralPath $projectPath -PathType Leaf)) {
+        throw "MSBuild project does not exist: $projectPath"
+    }
+
+    $cachePath = Join-Path $BuildPath 'CMakeCache.txt'
+    $makeProgramLine = Select-String -LiteralPath $cachePath `
+        -Pattern '^CMAKE_MAKE_PROGRAM:FILEPATH=(.+)$' | Select-Object -First 1
+    if ($makeProgramLine) {
+        $buildExecutable = $makeProgramLine.Matches[0].Groups[1].Value
+    }
+    else {
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} `
+            'Microsoft Visual Studio\Installer\vswhere.exe'
+        if (-not (Test-Path -LiteralPath $vswhere -PathType Leaf)) {
+            throw "CMAKE_MAKE_PROGRAM is missing from $cachePath and vswhere is unavailable."
+        }
+        $buildExecutable = & $vswhere -latest -requires Microsoft.Component.MSBuild `
+            -find 'MSBuild\**\Bin\amd64\MSBuild.exe' | Select-Object -First 1
+        if (-not $buildExecutable) {
+            throw 'Unable to locate the 64-bit MSBuild executable.'
+        }
+    }
+    $workingDirectory = Split-Path -Parent $projectPath
+    $arguments = @(
+        $projectPath,
+        $(if ($LinkOnly) { '/t:_Link' } else { '/t:ClCompile' }),
+        "/p:Configuration=$Config",
+        '/p:Platform=x64',
+        '/m:1',
+        '/v:m',
+        '/nodeReuse:false',
+        '/p:UseSharedCompilation=false'
+    )
+
+    if ($SelectedSource) {
+        $arguments += "/p:SelectedFiles=$SelectedSource"
+        $arguments += '/p:SelectedFilesBuildPCH=false'
+        $logStem = 'build-selected-below-normal'
+    }
+    else {
+        $arguments += '/p:Link_MinimalRebuildFromTracking=false'
+        $logStem = 'link-below-normal'
+    }
+}
+else {
+    $arguments = @(
+        '--build', $BuildPath,
+        '--config', $Config,
+        '--target', $Target,
+        '--parallel', $Parallel,
+        '--',
+        '/nodeReuse:false',
+        '/p:UseSharedCompilation=false'
+    )
+}
+
+$stdoutPath = Join-Path $BuildPath "$logStem.out.log"
+$stderrPath = Join-Path $BuildPath "$logStem.err.log"
 $env:MSBUILDDISABLENODEREUSE = '1'
 $buildProcessIds = [System.Collections.Generic.HashSet[int]]::new()
 $preexistingMsBuildIds = [System.Collections.Generic.HashSet[int]]::new()
@@ -39,13 +122,25 @@ foreach ($existingMsBuild in Get-Process -Name 'MSBuild' -ErrorAction SilentlyCo
     [void]$preexistingMsBuildIds.Add($existingMsBuild.Id)
 }
 
-$process = Start-Process -FilePath 'cmake.exe' `
-    -ArgumentList $arguments `
-    -WorkingDirectory $repoRoot `
-    -WindowStyle Hidden `
-    -RedirectStandardOutput $stdoutPath `
-    -RedirectStandardError $stderrPath `
-    -PassThru
+$previousClAfterOptions = [Environment]::GetEnvironmentVariable('_CL_', 'Process')
+try {
+    if ($DisableOptimization) {
+        $clAfterOptions = @($previousClAfterOptions, '/Od') |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+        [Environment]::SetEnvironmentVariable('_CL_', ($clAfterOptions -join ' '), 'Process')
+    }
+
+    $process = Start-Process -FilePath $buildExecutable `
+        -ArgumentList $arguments `
+        -WorkingDirectory $workingDirectory `
+        -WindowStyle Hidden `
+        -RedirectStandardOutput $stdoutPath `
+        -RedirectStandardError $stderrPath `
+        -PassThru
+}
+finally {
+    [Environment]::SetEnvironmentVariable('_CL_', $previousClAfterOptions, 'Process')
+}
 $process.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
 $process.ProcessorAffinity = [IntPtr]0xF
 [void]$buildProcessIds.Add($process.Id)
