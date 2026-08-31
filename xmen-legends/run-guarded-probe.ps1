@@ -12,6 +12,14 @@ param(
     [ValidateRange(-1, [int]::MaxValue)]
     [int]$StopAfterPresent = -1,
 
+    [ValidatePattern('^\d+-\d+$')]
+    [string]$DumpPresentRange = '',
+
+    [ValidateRange(-1, [int]::MaxValue)]
+    [int]$SkipCpuRasterBeforePresent = -1,
+
+    [switch]$FastForwardLegal,
+
     [switch]$ContinueAfterMissing,
 
     [switch]$CleanupOnly,
@@ -314,8 +322,18 @@ foreach ($log in @($outLog, $errLog)) {
     }
 }
 
-if ($StopAfterPresent -ge 0) {
+if ($DumpPresentRange) {
+    $env:PS2X_DUMP_PRESENT_RANGE = $DumpPresentRange
+}
+elseif ($StopAfterPresent -ge 0 -and
+    [string]::IsNullOrWhiteSpace($env:PS2X_DUMP_PRESENT_RANGE)) {
     $env:PS2X_DUMP_PRESENT_RANGE = "$StopAfterPresent-$StopAfterPresent"
+}
+if ($SkipCpuRasterBeforePresent -ge 0) {
+    $env:PS2X_SKIP_CPU_RASTER_BEFORE_PRESENT = $SkipCpuRasterBeforePresent.ToString()
+}
+if ($FastForwardLegal) {
+    $env:PS2X_FAST_FORWARD_XMEN_LEGAL = '1'
 }
 
 $exe = Join-Path $root "PS2Recomp\out\xmen-final3-build\ps2xRuntime\$Config\ps2EntryRunner.exe"
@@ -329,7 +347,7 @@ $process = Start-Process `
     -PassThru
 
 try {
-    $process.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
+    $process.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::Normal
     $process.ProcessorAffinity = [IntPtr]0xF
 }
 catch {
@@ -378,10 +396,13 @@ while ([DateTime]::UtcNow -lt $deadline) {
         "PPM=$($file.Name) SHA256=$hash"
 
         if ($StopAfterPresent -ge 0 -and
-            $file.Name -eq "gs-present-$StopAfterPresent.ppm") {
-            "TARGET_PRESENT PID=$($process.Id) INDEX=$StopAfterPresent FILE=$($file.FullName) SHA256=$hash"
-            Stop-ProbeProcess
-            exit 45
+            $file.Name -match '^gs-present-(\d+)\.ppm$') {
+            $observedPresent = [int]$Matches[1]
+            if ($observedPresent -ge $StopAfterPresent) {
+                "TARGET_PRESENT PID=$($process.Id) REQUESTED=$StopAfterPresent OBSERVED=$observedPresent FILE=$($file.FullName) SHA256=$hash"
+                Stop-ProbeProcess
+                exit 45
+            }
         }
 
         if ($hash -ne $knownBlack) {

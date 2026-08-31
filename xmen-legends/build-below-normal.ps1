@@ -44,11 +44,39 @@ if ($SelectedSource -or $LinkOnly) {
             throw "Selected source does not exist: $SelectedSource"
         }
 
-        $projectNeedle = '<ClCompile Include="' + $SelectedSource + '"'
-        $owningProjects = @(Get-ChildItem -LiteralPath $BuildPath -Recurse -File -Filter '*.vcxproj' |
+        $projectFiles = @(Get-ChildItem -LiteralPath $BuildPath -Recurse -File -Filter '*.vcxproj')
+        $selectedBuildSources = @()
+        $unityIncludeNeedle = '#include "' + $SelectedSource.Replace('\', '/') + '"'
+        $unitySources = @(Get-ChildItem -LiteralPath $BuildPath -Recurse -File -Filter 'unity_*_cxx.cxx' |
             Where-Object {
+                Select-String -LiteralPath $_.FullName -SimpleMatch $unityIncludeNeedle -Quiet
+            })
+        $unityOwners = @()
+        foreach ($unitySource in $unitySources) {
+            $unityProjectNeedle = '<ClCompile Include="' + $unitySource.FullName + '"'
+            foreach ($projectFile in $projectFiles) {
+                if (Select-String -LiteralPath $projectFile.FullName `
+                        -SimpleMatch $unityProjectNeedle -Quiet) {
+                    $unityOwners += [pscustomobject]@{
+                        Project = $projectFile
+                        Source = $unitySource
+                    }
+                }
+            }
+        }
+
+        if ($unityOwners.Count -gt 0) {
+            $owningProjects = @($unityOwners.Project | Sort-Object FullName -Unique)
+            $selectedBuildSources = @($unityOwners.Source.FullName | Sort-Object -Unique)
+        }
+        else {
+            $projectNeedle = '<ClCompile Include="' + $SelectedSource + '"'
+            $owningProjects = @($projectFiles | Where-Object {
                 Select-String -LiteralPath $_.FullName -SimpleMatch $projectNeedle -Quiet
             })
+            $selectedBuildSources = @($SelectedSource)
+        }
+
         if ($owningProjects.Count -ne 1) {
             throw "Expected one generated project to own $SelectedSource; found $($owningProjects.Count)."
         }
@@ -92,9 +120,10 @@ if ($SelectedSource -or $LinkOnly) {
     )
 
     if ($SelectedSource) {
-        $arguments += "/p:SelectedFiles=$SelectedSource"
+        $arguments += "/p:SelectedFiles=$($selectedBuildSources -join ';')"
         $arguments += '/p:SelectedFilesBuildPCH=false'
         $logStem = 'build-selected-below-normal'
+        "SELECTED_SOURCE_MAP REQUEST=$SelectedSource EFFECTIVE=$($selectedBuildSources -join ';')"
     }
     else {
         $arguments += '/p:Link_MinimalRebuildFromTracking=false'
