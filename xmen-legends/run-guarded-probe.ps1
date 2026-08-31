@@ -197,42 +197,72 @@ function Remove-StaleBuildArtifacts {
 
 function Remove-StaleGeneratedImages {
     $captureRoot = Join-Path $PSScriptRoot 'asset-inspect'
-    if (-not (Test-Path -LiteralPath $captureRoot -PathType Container)) {
-        return
-    }
-
-    $resolvedCaptureRoot = [System.IO.Path]::GetFullPath($captureRoot).TrimEnd('\')
     $cutoffUtc = [DateTime]::UtcNow.AddHours(-$MaxGeneratedImageAgeHours)
     $trackedPaths = [System.Collections.Generic.HashSet[string]]::new(
         [System.StringComparer]::OrdinalIgnoreCase
     )
-    foreach ($trackedPath in git -C $root ls-files -- 'xmen-legends/asset-inspect/*') {
+    foreach ($trackedPath in git -C $root ls-files -- '*.png' '*.ppm') {
         [void]$trackedPaths.Add(
             [System.IO.Path]::GetFullPath((Join-Path $root $trackedPath))
         )
     }
 
+    $scopes = @(
+        [pscustomobject]@{
+            Root = $captureRoot
+            Recurse = $false
+            NamePattern = '^probe\d+.*\.(?:ppm|png)$'
+        }
+        [pscustomobject]@{
+            Root = $root
+            Recurse = $false
+            NamePattern = '^gs-present-.*\.(?:ppm|png)$'
+        }
+        [pscustomobject]@{
+            Root = Join-Path $root 'PS2Recomp\out'
+            Recurse = $true
+            NamePattern = '^gs-present-.*\.(?:ppm|png)$'
+        }
+    )
+
     $removedCount = 0
     [long]$removedBytes = 0
-    Get-ChildItem -LiteralPath $resolvedCaptureRoot -File |
-        Where-Object {
-            $_.Name -match '^probe\d+.*\.(?:ppm|png)$' -and
-            $_.LastWriteTimeUtc -lt $cutoffUtc
-        } |
-        ForEach-Object {
-            $target = [System.IO.Path]::GetFullPath($_.FullName)
-            $parent = [System.IO.Path]::GetDirectoryName($target).TrimEnd('\')
-            if (-not $parent.Equals(
-                    $resolvedCaptureRoot,
-                    [System.StringComparison]::OrdinalIgnoreCase)) {
-                throw "Refusing to remove unexpected image path: $target"
-            }
-            if (-not $trackedPaths.Contains($target)) {
-                $removedBytes += $_.Length
-                Remove-Item -LiteralPath $target -Force
-                $removedCount++
-            }
+    foreach ($scope in $scopes) {
+        if (-not (Test-Path -LiteralPath $scope.Root -PathType Container)) {
+            continue
         }
+
+        $resolvedScopeRoot = [System.IO.Path]::GetFullPath($scope.Root).TrimEnd('\')
+        $childArgs = @{
+            LiteralPath = $resolvedScopeRoot
+            File = $true
+        }
+        if ($scope.Recurse) {
+            $childArgs.Recurse = $true
+        }
+
+        Get-ChildItem @childArgs |
+            Where-Object {
+                $_.Name -match $scope.NamePattern -and
+                $_.LastWriteTimeUtc -lt $cutoffUtc
+            } |
+            ForEach-Object {
+                $target = [System.IO.Path]::GetFullPath($_.FullName)
+                if (-not ($target.StartsWith(
+                        $resolvedScopeRoot + [System.IO.Path]::DirectorySeparatorChar,
+                        [System.StringComparison]::OrdinalIgnoreCase) -or
+                    $target.Equals(
+                        $resolvedScopeRoot,
+                        [System.StringComparison]::OrdinalIgnoreCase))) {
+                    throw "Refusing to remove unexpected image path: $target"
+                }
+                if (-not $trackedPaths.Contains($target)) {
+                    $removedBytes += $_.Length
+                    Remove-Item -LiteralPath $target -Force
+                    $removedCount++
+                }
+            }
+    }
 
     if ($removedCount -gt 0) {
         "IMAGE_CLEANUP FILES=$removedCount MIB=$([math]::Round($removedBytes / 1MB, 1)) MAX_AGE_HOURS=$MaxGeneratedImageAgeHours"
