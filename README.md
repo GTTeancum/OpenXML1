@@ -29,7 +29,7 @@ The game now executes far beyond initial boot and has reached each of these mile
 
 The title level reaches a clean, complete Cerebro scene using the game's own GIF transfers; coalescing duplicate pending DMAC completion events fixed the skipped texture upload that previously required a diagnostic repair. The real New Game handler now transitions deterministically from the initialized title level into the first campaign level, and the current clean build renders the complete New York world through VU/GIF/GS. The earlier apparent world-rendering regression was an invalid comparison against the direct `loadMap()` shortcut, which skips campaign initialization and produces only HUD fragments.
 
-The highest-priority gameplay blocker is now localized to lighting data before rasterization. Textures sample correctly, but many mesh packets reach GS with zero or near-zero vertex RGB. The authored New York scene contains nonzero ambient light and valid global-light colors, while the target VU shader receives zero ambient and incomplete light slots. A qword-specific VIF provenance trace found no direct VIF UNPACK write that creates the ambient qword during the target interval. The next investigation is therefore the VU or mapped-memory store path that constructs that table, not another broad GS or texture probe.
+The highest-priority gameplay blocker is now localized to Alchemy color and lighting state before rasterization. Inspection through `igb-blender` confirms that the affected props use valid one-byte PSMT8 indices with 256-entry RGBA CLUTs. They have normals but no baked vertex colors, so they depend on runtime lighting; the authored scene supplies a dark-blue ambient light, two directional world lights, and local point lights. Runtime tracing instead finds a zero current-color vector feeding the light packet and therefore zero or near-zero vertex RGB. The investigation is following the `igColorAttr` state-copy path that supplies that vector rather than treating the textures as malformed.
 
 The separate retail-startup blocker remains correct Sofdec output. The demux advances through each movie and its ADX audio header and blocks arrive intact, but visible decoded frames and audible movie playback are not yet correct. The full acceptance target remains unfinished.
 
@@ -46,7 +46,7 @@ These are direct runtime framebuffer captures, not emulator or desktop captures.
 
 ![First New York gameplay scene rendered by the current recompiled runtime](docs/screenshots/first-gameplay.png)
 
-This current-build frame comes from the real Begin Story campaign flow and renders the environment, Wolverine, props, effects, and HUD. Black materials, the red ground effect, and corrupted HUD elements remain visible, so this is a major bring-up milestone rather than release-quality gameplay.
+This current-build frame comes from the real Begin Story campaign flow and renders the environment, Wolverine, props, effects, and HUD. Unlit black props, missing foliage, and incomplete HUD colors remain visible, so this is a major bring-up milestone rather than release-quality gameplay.
 
 ## Repository Layout
 
@@ -57,8 +57,9 @@ This current-build frame comes from the real Begin Story campaign flow and rende
 | `xmen-legends/xmen-legends.resume-entry-points.observed.txt` | Validated internal callable entry points |
 | `xmen-legends/dev-overrides/` | Reversible startup and gameplay diagnostic scripts |
 | `xmen-legends/apply-generated-first-level-probe.ps1` | Reapplies the deterministic native New Game probe after regeneration |
-| `xmen-legends/run-guarded-probe.ps1` | Bounded, low-priority runtime probe and artifact retention |
+| `xmen-legends/run-guarded-probe.ps1` | Bounded runtime probe and artifact retention |
 | `xmen-legends/cleanup-generated-artifacts.ps1` | Removal of obsolete builds, captures, and logs |
+| `xmen-legends/inspect-igb-scene.py` | Reports authored geometry, PSMT8/CLUT, material, and light state through `igb-blender` |
 
 The PS2Recomp checkout, extracted disc, ELF, generated C++, build products, memory cards, and probe captures are deliberately ignored. They are local inputs or reproducible artifacts, not redistributable project source.
 
@@ -117,7 +118,7 @@ Push-Location xmen-legends/disc
 Pop-Location
 ```
 
-The development scripts assume this layout. `run-guarded-probe.ps1` also caps the runtime at Below Normal priority, four logical processors, bounded logs, and bounded retained captures so repeated investigation does not monopolize the host or grow the workspace indefinitely.
+The development scripts assume this layout. Compiler, recompiler, CMake, and MSBuild work runs at Below Normal priority with one compiler worker. `run-guarded-probe.ps1` keeps the visible, user-closable runtime at Normal priority, limits it to four logical processors, and bounds retained logs and captures so repeated investigation does not monopolize the host or grow the workspace indefinitely.
 
 ## Controls
 
@@ -145,7 +146,7 @@ Input is implemented, but the complete retail flow is not yet ready for normal p
 
 ## Roadmap
 
-1. Trace the VU microprogram stores that construct the gameplay light table and reduce the result to a reusable PS2Recomp fix.
+1. Repair the Alchemy color/light state path that currently supplies a zero modulation vector to gameplay light packets, then reduce any runtime defect to a reusable PS2Recomp fix.
 2. Repair gameplay material lighting, effects, blending, and HUD rendering, then validate normal controller input and game audio.
 3. Complete Sofdec video decode/presentation and movie audio playback on the retail startup path.
 4. Validate the complete legal-to-title-to-campaign flow without development overrides and package a reproducible PC build process.
@@ -154,7 +155,7 @@ Input is implemented, but the complete retail flow is not yet ready for normal p
 
 Reproduction notes, focused PS2 hardware tests, and generally useful PS2Recomp fixes are welcome. Keep copyrighted game files, extracted assets, generated game code, build products, and probe logs out of commits. Generic runtime changes should include a focused test and be submitted separately to upstream PS2Recomp; game-specific maps, scripts, and diagnostics belong in this repository until their behavior is understood well enough to generalize.
 
-Use `xmen-legends/run-guarded-probe.ps1` for bounded runtime tests and `xmen-legends/cleanup-generated-artifacts.ps1` after investigation. The scripts keep probes at Below Normal priority, constrain CPU affinity, and retain only explicitly pinned evidence.
+Use `xmen-legends/run-guarded-probe.ps1` for bounded runtime tests and `xmen-legends/cleanup-generated-artifacts.ps1` after investigation. Runtime probes remain at Normal priority and are user-closable; build tools run at Below Normal priority. The scripts constrain CPU affinity and retain only explicitly pinned evidence.
 
 ## Upstream Work
 
