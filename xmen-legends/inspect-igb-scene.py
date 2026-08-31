@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
+import hashlib
 import json
 import re
 import sys
@@ -47,12 +49,17 @@ def load_plugin(plugin_root: Path):
         f"{package_name}.scene_graph.sg_lights",
         fromlist=["extract_lights_from_light_set"],
     )
+    image_convert_module = __import__(
+        f"{package_name}.utils.image_convert",
+        fromlist=["convert_image_to_rgba"],
+    )
     return (
         reader_module,
         classes_module,
         geometry_module,
         materials_module,
         lights_module,
+        image_convert_module,
     )
 
 
@@ -65,6 +72,14 @@ def object_name(obj) -> str:
                 return value.decode("utf-8", errors="replace")
             return value if isinstance(value, str) else ""
     return ""
+
+
+def fnv1a64(data: bytes) -> str:
+    value = 0xCBF29CE484222325
+    for byte in data:
+        value ^= byte
+        value = (value * 0x100000001B3) & 0xFFFFFFFFFFFFFFFF
+    return f"{value:016x}"
 
 
 class GeometryCollector:
@@ -154,6 +169,21 @@ def parse_args():
         action="store_true",
         help="Report authored igLightSet values instead of geometry state",
     )
+    parser.add_argument(
+        "--light-graph",
+        action="store_true",
+        help="Report raw light-set, light-state, and light-attribute relationships",
+    )
+    parser.add_argument(
+        "--summary",
+        action="store_true",
+        help="Report aggregate geometry, vertex-color, lighting, and texture state",
+    )
+    parser.add_argument(
+        "--texture-details",
+        action="store_true",
+        help="Report hashes and index usage for unique matching textures",
+    )
     return parser.parse_args()
 
 
@@ -165,6 +195,7 @@ def main() -> int:
         geometry_module,
         materials,
         lights,
+        image_convert,
     ) = load_plugin(args.plugin_root.resolve())
 
     reader = reader_module.IGBReader(str(args.igb.resolve()))
@@ -176,6 +207,56 @@ def main() -> int:
     collector = GeometryCollector()
     graph.walk(collector)
     matcher = re.compile(args.filter, re.IGNORECASE) if args.filter else None
+
+    if args.light_graph:
+        object_types = {
+            b"igLightAttr",
+            b"igLightList",
+            b"igLightSet",
+            b"igLightStateAttr",
+            b"igLightStateAttrList",
+            b"igLightStateSet",
+        }
+        graph_rows = []
+        for obj in reader.objects:
+            if not hasattr(obj, "type_name") or obj.type_name not in object_types:
+                continue
+            fields = []
+            for slot, value, field in obj._raw_fields:
+                field_name = field.short_name.decode("ascii", errors="replace")
+                field_row = {
+                    "slot": slot,
+                    "field": field_name,
+                    "value": value,
+                }
+                if field_name == "ObjectRef" and value != -1:
+                    target = reader.resolve_ref(value)
+                    if hasattr(target, "type_name"):
+                        field_row["target_index"] = target.index
+                        field_row["target_type"] = target.type_name.decode(
+                            "ascii", errors="replace"
+                        )
+                fields.append(field_row)
+
+            row = {
+                "index": obj.index,
+                "type": obj.type_name.decode("ascii", errors="replace"),
+                "fields": fields,
+            }
+            if obj.type_name in (b"igLightList", b"igLightStateAttrList"):
+                row["items"] = [
+                    {
+                        "index": item.index,
+                        "type": item.type_name.decode("ascii", errors="replace"),
+                    }
+                    for item in reader.resolve_object_list(obj)
+                    if hasattr(item, "type_name")
+                ]
+            graph_rows.append(row)
+
+        json.dump(graph_rows, sys.stdout, indent=2, sort_keys=True)
+        sys.stdout.write("\n")
+        return 0
 
     if args.lights_only:
         light_rows = []
@@ -204,6 +285,7 @@ def main() -> int:
         return 0
 
     rows = []
+    texture_details = {}
 
     for attr, transform, parent, state in collector.instances:
         geometry = geometry_module.extract_geometry(reader, attr)
@@ -213,16 +295,42 @@ def main() -> int:
             texture = materials.extract_texture_bind(reader, texture_obj)
             if texture is None or texture.image is None:
                 continue
+            image = texture.image
             textures.append(
                 {
                     "unit": unit,
-                    "name": texture.image.name,
-                    "width": texture.image.width,
-                    "height": texture.image.height,
-                    "pixel_format": texture.image.pixel_format,
-                    "clut_entries": texture.image.clut_num_entries,
+                    "name": image.name,
+                    "image_object_index": image.source_obj.index,
+                    "width": image.width,
+                    "height": image.height,
+                    "pixel_format": image.pixel_format,
+                    "clut_entries": image.clut_num_entries,
                 }
             )
+            if args.texture_details and image.source_obj.index not in texture_details:
+                pixel_data = image.pixel_data or b""
+                clut_data = image.clut_data or b""
+                decoded = image_convert.convert_image_to_rgba(image) or b""
+                indices = Counter(pixel_data[: image.width * image.height])
+                texture_details[image.source_obj.index] = {
+                    "image_object_index": image.source_obj.index,
+                    "name": image.name,
+                    "width": image.width,
+                    "height": image.height,
+                    "pixel_format": image.pixel_format,
+                    "pixel_bytes": len(pixel_data),
+                    "pixel_fnv1a64": fnv1a64(pixel_data),
+                    "pixel_sha256": hashlib.sha256(pixel_data).hexdigest(),
+                    "clut_entries": image.clut_num_entries,
+                    "clut_bytes": len(clut_data),
+                    "clut_fnv1a64": fnv1a64(clut_data),
+                    "clut_sha256": hashlib.sha256(clut_data).hexdigest(),
+                    "decoded_rgba_bytes": len(decoded),
+                    "decoded_rgba_fnv1a64": fnv1a64(decoded),
+                    "decoded_rgba_sha256": hashlib.sha256(decoded).hexdigest(),
+                    "unique_indices": len(indices),
+                    "most_common_indices": indices.most_common(16),
+                }
 
         row = {
             "geometry_index": attr.index,
@@ -246,13 +354,90 @@ def main() -> int:
             "color": materials.extract_color_attr(reader, state["color"]),
             "lighting": materials.extract_lighting_state(reader, state["lighting"]),
         }
+        if geometry is not None and geometry.colors:
+            color_count = len(geometry.colors)
+            row["vertex_color_min"] = [
+                min(color[lane] for color in geometry.colors) for lane in range(4)
+            ]
+            row["vertex_color_mean"] = [
+                sum(color[lane] for color in geometry.colors) / color_count
+                for lane in range(4)
+            ]
+            row["vertex_color_max"] = [
+                max(color[lane] for color in geometry.colors) for lane in range(4)
+            ]
         searchable = "\n".join(
             [row["name"]] + [texture["name"] for texture in textures]
         )
         if matcher is None or matcher.search(searchable):
             rows.append(row)
 
-    json.dump(rows, sys.stdout, indent=2, sort_keys=True)
+    if args.texture_details:
+        filtered_details = []
+        matching_image_indices = {
+            texture["image_object_index"]
+            for row in rows
+            for texture in row["textures"]
+        }
+        for image_index in sorted(matching_image_indices):
+            detail = texture_details.get(image_index)
+            if detail is not None:
+                filtered_details.append(detail)
+        json.dump(filtered_details, sys.stdout, indent=2, sort_keys=True)
+    elif args.summary:
+        color_rows = [row for row in rows if row["has_vertex_colors"]]
+        color_vertex_count = sum(row["vertex_count"] for row in color_rows)
+        weighted_color_mean = [0.0, 0.0, 0.0, 0.0]
+        if color_vertex_count:
+            for lane in range(4):
+                weighted_color_mean[lane] = sum(
+                    row["vertex_color_mean"][lane] * row["vertex_count"]
+                    for row in color_rows
+                ) / color_vertex_count
+
+        lighting_counts = Counter(
+            "inherited" if row["lighting"] is None else
+            "enabled" if row["lighting"]["enabled"] else "disabled"
+            for row in rows
+        )
+        texture_counts = Counter(
+            (
+                texture["pixel_format"],
+                texture["clut_entries"],
+            )
+            for row in rows
+            for texture in row["textures"]
+        )
+        summary = {
+            "instances": len(rows),
+            "unique_geometry": len({row["geometry_index"] for row in rows}),
+            "vertices": sum(row["vertex_count"] for row in rows),
+            "instances_with_vertex_colors": len(color_rows),
+            "vertices_with_vertex_colors": color_vertex_count,
+            "vertex_color_min": [
+                min(row["vertex_color_min"][lane] for row in color_rows)
+                if color_rows else None
+                for lane in range(4)
+            ],
+            "vertex_color_mean": weighted_color_mean,
+            "vertex_color_max": [
+                max(row["vertex_color_max"][lane] for row in color_rows)
+                if color_rows else None
+                for lane in range(4)
+            ],
+            "lighting_state_instances": dict(sorted(lighting_counts.items())),
+            "texture_bindings": [
+                {
+                    "pixel_format": pixel_format,
+                    "clut_entries": clut_entries,
+                    "count": count,
+                }
+                for (pixel_format, clut_entries), count in sorted(texture_counts.items())
+            ],
+        }
+        json.dump(summary, sys.stdout, indent=2, sort_keys=True)
+    else:
+        json.dump(rows, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
     return 0
 
