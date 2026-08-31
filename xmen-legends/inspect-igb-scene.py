@@ -101,6 +101,14 @@ def ps2_csm1_upload_clut(clut_data: bytes) -> bytes:
     return bytes(upload)
 
 
+def ps2_gs_csm1_upload_clut(clut_data: bytes) -> bytes:
+    """Convert IGB alpha to GS alpha, then arrange a CSM1 host upload."""
+    gs_clut = bytearray(clut_data)
+    for alpha in range(3, len(gs_clut), 4):
+        gs_clut[alpha] = (gs_clut[alpha] + 1) // 2
+    return ps2_csm1_upload_clut(bytes(gs_clut))
+
+
 class GeometryCollector:
     """Mirror igb-blender's inherited AttrSet state without importing bpy."""
 
@@ -336,6 +344,7 @@ def main() -> int:
                 pixel_data = image.pixel_data or b""
                 clut_data = image.clut_data or b""
                 csm1_upload_clut = ps2_csm1_upload_clut(clut_data)
+                gs_csm1_upload_clut = ps2_gs_csm1_upload_clut(clut_data)
                 decoded = image_convert.convert_image_to_rgba(image) or b""
                 indices = Counter(pixel_data[: image.width * image.height])
                 texture_details[image.source_obj.index] = {
@@ -355,6 +364,11 @@ def main() -> int:
                     "csm1_upload_clut_fnv1a64": fnv1a64(csm1_upload_clut),
                     "csm1_upload_clut_sha256": hashlib.sha256(
                         csm1_upload_clut
+                    ).hexdigest(),
+                    "gs_csm1_upload_clut_bytes": len(gs_csm1_upload_clut),
+                    "gs_csm1_upload_clut_fnv1a64": fnv1a64(gs_csm1_upload_clut),
+                    "gs_csm1_upload_clut_sha256": hashlib.sha256(
+                        gs_csm1_upload_clut
                     ).hexdigest(),
                     "decoded_rgba_bytes": len(decoded),
                     "decoded_rgba_fnv1a64": fnv1a64(decoded),
