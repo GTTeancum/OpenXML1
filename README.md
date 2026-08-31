@@ -29,7 +29,7 @@ The game now executes far beyond initial boot and has reached each of these mile
 
 The title level reaches a clean, complete Cerebro scene using the game's own GIF transfers; coalescing duplicate pending DMAC completion events fixed the skipped texture upload that previously required a diagnostic repair. The real New Game handler now transitions deterministically from the initialized title level into the first campaign level, and the current clean build renders the complete New York world through VU/GIF/GS. The earlier apparent world-rendering regression was an invalid comparison against the direct `loadMap()` shortcut, which skips campaign initialization and produces only HUD fragments.
 
-The highest-priority gameplay blocker is now localized to Alchemy color and lighting state before rasterization. Inspection through `igb-blender` confirms that the affected props use valid one-byte PSMT8 indices with 256-entry RGBA CLUTs. They have normals but no baked vertex colors, so they depend on runtime lighting; the authored scene supplies a dark-blue ambient light, two directional world lights, and local point lights. Runtime tracing instead finds a zero current-color vector feeding the light packet and therefore zero or near-zero vertex RGB. The investigation is following the `igColorAttr` state-copy path that supplies that vector rather than treating the textures as malformed.
+The highest-priority gameplay blockers are now split into two testable paths using `igb-blender` as the authored-format reference. Of 201 map texture bindings, 200 are one-byte PSMT8 indices with 256-entry RGBA CLUTs. Static map geometry carries baked vertex colors and explicitly disables live lighting, matching Alchemy's fixed-function `texture * vertex color * 2` path. The affected black props instead have normals, no baked colors, and inherit live lighting. The map enables all 12 authored light states, including a dark-blue `SceneAmbient`, two directional world lights, and local point lights. The previously observed zero at `0x752750` is the separate global scene-ambient multiplier, not proof that those live lights were lost. Current tracing therefore matches named light-state application and exact IGB index/palette hashes against host-to-GS uploads before following either defect farther downstream.
 
 The separate retail-startup blocker remains correct Sofdec output. The demux advances through each movie and its ADX audio header and blocks arrive intact, but visible decoded frames and audible movie playback are not yet correct. The full acceptance target remains unfinished.
 
@@ -146,7 +146,7 @@ Input is implemented, but the complete retail flow is not yet ready for normal p
 
 ## Roadmap
 
-1. Repair the Alchemy color/light state path that currently supplies a zero modulation vector to gameplay light packets, then reduce any runtime defect to a reusable PS2Recomp fix.
+1. Match authored live-light state and exact PSMT8/CLUT payloads through the runtime, repair the first divergence, and reduce any general runtime defect to a reusable PS2Recomp fix.
 2. Repair gameplay material lighting, effects, blending, and HUD rendering, then validate normal controller input and game audio.
 3. Complete Sofdec video decode/presentation and movie audio playback on the retail startup path.
 4. Validate the complete legal-to-title-to-campaign flow without development overrides and package a reproducible PC build process.
