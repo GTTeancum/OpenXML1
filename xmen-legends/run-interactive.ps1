@@ -69,6 +69,7 @@ try {
     $startInfo.Environment['PS2X_XMEN_HOST_CLOCK'] = '1'
     $startInfo.Environment['PS2X_FAST_FORWARD_XMEN_LEGAL'] = '1'
     $startInfo.Environment['PS2X_XMEN_PROGRESS_TRACE'] = '1'
+    $startInfo.Environment['PS2X_CAPTURE_LATEST_PRESENT_INTERVAL'] = '128'
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
