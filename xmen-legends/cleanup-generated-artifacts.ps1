@@ -103,6 +103,8 @@ $preservedProbePattern = if ($preservedProbeNumbers) {
     '(?!)'
 }
 $preservedFrames = '^gs-present-(1420|1450|1500)\.(ppm|png)$|^gs-present-vsync-'
+$staleMediaCutoff = [DateTime]::UtcNow.AddHours(-12)
+$generatedMediaExtensions = @('.bmp', '.jpeg', '.jpg', '.mp4', '.png', '.ppm', '.raw', '.wav')
 $obsoleteFiles = @()
 $obsoleteFiles += Get-ChildItem -LiteralPath $xmenRoot -File -Force |
     Where-Object {
@@ -118,14 +120,43 @@ $obsoleteFiles += Get-ChildItem -LiteralPath $disc -File -Force |
     }
 $obsoleteFiles += Get-ChildItem -LiteralPath $xmenRoot -File -Force |
     Where-Object { $_.Name -match '^(frame|probe|gs-|runner).*(\.ppm|\.png|\.raw|\.wav|\.mp4)$' }
+$assetInspect = Join-Path $xmenRoot 'asset-inspect'
+if (Test-Path -LiteralPath $assetInspect -PathType Container) {
+    $obsoleteFiles += Get-ChildItem -LiteralPath $assetInspect -Recurse -File -Force |
+        Where-Object {
+            $_.LastWriteTimeUtc -lt $staleMediaCutoff -and
+            $generatedMediaExtensions -contains $_.Extension.ToLowerInvariant() -and
+            $_.Name -match '^(frame|probe|gs-)' -and
+            $_.Name -notmatch $preservedProbePattern
+        }
+}
+$analysisExtract = Join-Path $disc '.analysis-extract'
+if (Test-Path -LiteralPath $analysisExtract -PathType Container) {
+    $obsoleteFiles += Get-ChildItem -LiteralPath $analysisExtract -Recurse -File -Force |
+        Where-Object {
+            $_.LastWriteTimeUtc -lt $staleMediaCutoff -and
+            $generatedMediaExtensions -contains $_.Extension.ToLowerInvariant()
+        }
+}
+$obsoleteFiles += Get-ChildItem -LiteralPath $disc -File -Force |
+    Where-Object {
+        $_.LastWriteTimeUtc -lt $staleMediaCutoff -and
+        $generatedMediaExtensions -contains $_.Extension.ToLowerInvariant() -and
+        $_.Name -match '^xmen-'
+    }
 $obsoleteFiles += Get-ChildItem -LiteralPath (Join-Path $recomp 'out') -File -Force |
     Where-Object { $_.Extension -eq '.log' }
 $obsoleteFiles += Get-ChildItem -LiteralPath $recomp -File -Force |
     Where-Object { $_.Name -match '^probe.*\.log$' }
+$obsoleteFiles += Get-ChildItem -LiteralPath $recomp -File -Force |
+    Where-Object {
+        $generatedMediaExtensions -contains $_.Extension.ToLowerInvariant() -and
+        $_.Name -match '^(frame|probe|gs-)'
+    }
 $obsoleteFiles += Get-ChildItem -LiteralPath $activeBuild -Recurse -File -Force |
     Where-Object {
         $_.Extension -eq '.log' -and
-        $_.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddHours(-12)
+        $_.LastWriteTimeUtc -lt $staleMediaCutoff
     }
 $activeRelease = Join-Path $activeBuild 'ps2xRuntime\Release'
 if (Test-Path -LiteralPath $activeRelease -PathType Container) {
@@ -133,7 +164,7 @@ if (Test-Path -LiteralPath $activeRelease -PathType Container) {
         Where-Object {
             $_.Name -match '^ps2EntryRunner\.(pre|old|bak|probe).*\.exe$' -or
             ($_.Name -eq 'ps2EntryRunner.next.exe' -and
-                $_.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddHours(-12) -and
+                $_.LastWriteTimeUtc -lt $staleMediaCutoff -and
                 -not $activeRuntimePaths.Contains([IO.Path]::GetFullPath($_.FullName)))
         }
 }
