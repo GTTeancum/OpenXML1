@@ -13,7 +13,9 @@ param(
 
     [switch]$DisableOptimization,
 
-    [switch]$LinkOnly
+    [switch]$LinkOnly,
+
+    [string]$OutputName = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,6 +31,12 @@ if (-not (Test-Path -LiteralPath $BuildPath -PathType Container)) {
 
 if ($SelectedSource -and $LinkOnly) {
     throw 'SelectedSource and LinkOnly cannot be used together.'
+}
+if ($OutputName -and -not $LinkOnly) {
+    throw 'OutputName requires LinkOnly.'
+}
+if ($OutputName -and $OutputName.IndexOfAny([System.IO.Path]::GetInvalidFileNameChars()) -ge 0) {
+    throw "OutputName is not a valid file name: $OutputName"
 }
 if ($DisableOptimization -and -not $SelectedSource) {
     throw 'DisableOptimization requires SelectedSource.'
@@ -127,6 +135,10 @@ if ($SelectedSource -or $LinkOnly) {
     }
     else {
         $arguments += '/p:Link_MinimalRebuildFromTracking=false'
+        $arguments += '/p:BuildProjectReferences=false'
+        if ($OutputName) {
+            $arguments += "/p:TargetName=$OutputName"
+        }
         $logStem = 'link-below-normal'
     }
 }
