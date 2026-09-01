@@ -24,7 +24,7 @@ param(
 
     [switch]$CleanupOnly,
 
-    [ValidateSet('Restore', 'Bypass', 'MovieOnly', 'MovieWait', 'TitleGameplayFirst', 'GameplayDemo', 'GameplayMap', 'GameplayMapNoMovie', 'GameplayFirst')]
+    [ValidateSet('Restore', 'Bypass', 'MovieOnly', 'MovieWait', 'TitleGameplayFirst', 'GameplayDemo', 'GameplayMap', 'GameplayMapNoMovie', 'GameplayMissionNoMovie', 'GameplayFirst')]
     [string]$StartupMovieMode = 'Restore',
 
     [ValidateRange(1, 100)]

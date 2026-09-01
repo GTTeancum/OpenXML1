@@ -109,24 +109,22 @@ powershell -ExecutionPolicy Bypass -File xmen-legends/build-below-normal.ps1 `
   -Target ps2EntryRunner
 ```
 
-Run from the extracted disc directory so the original relative asset paths resolve:
+Launch the current control-first build through the reversible interactive wrapper:
 
 ```powershell
-Push-Location xmen-legends/disc
-& ../../PS2Recomp/out/xmen-final3-build/ps2xRuntime/Release/ps2EntryRunner.exe `
-  ./SLUS_206.56
-Pop-Location
+& .\xmen-legends\run-interactive.ps1
 ```
 
-The development scripts assume this layout. Compiler, recompiler, CMake, and MSBuild work runs at Below Normal priority with one compiler worker. `run-guarded-probe.ps1` keeps the visible, user-closable runtime at Normal priority, limits it to four logical processors, and bounds retained logs and captures so repeated investigation does not monopolize the host or grow the workspace indefinitely.
+The wrapper selects a staged `ps2EntryRunner.next.exe` when present, starts the real New Game setup, bypasses only Alison's unfinished intro movie, and restores the retail startup package when the user closes the game. The development scripts assume this layout. Compiler, recompiler, CMake, and MSBuild work runs at Below Normal priority with one compiler worker. Interactive and guarded runs keep the visible, user-closable runtime at Normal priority, limit it to four logical processors, and discard or bound diagnostics so repeated investigation does not monopolize the host or grow the workspace indefinitely.
 
 ## Controls
 
-The first available gamepad is mapped as a PS2 controller. Keyboard mappings are also available:
+The first available gamepad is mapped as a PS2 controller. Keyboard mappings remain available while a gamepad is connected:
 
 | PS2 input | Keyboard |
 | --- | --- |
 | Left analog | `W` `A` `S` `D` |
+| Right analog | `I` `J` `K` `L` |
 | D-pad | Arrow keys |
 | Square / Cross / Circle / Triangle | `Z` / `X` / `C` / `V` |
 | L1 / R1 | `Q` / `E` |
@@ -134,7 +132,7 @@ The first available gamepad is mapped as a PS2 controller. Keyboard mappings are
 | Start / Select | `Enter` / `Right Shift` |
 | L3 / R3 | `Left Ctrl` / `Right Ctrl` |
 
-Input is implemented, but the complete retail flow is not yet ready for normal play testing.
+Input is implemented in the staged runtime. Manual validation of sustained movement, camera control, combat, and level progression is the next bring-up milestone; visual defects that do not prevent navigation no longer block that test.
 
 ## Known Issues
 
@@ -146,9 +144,9 @@ Input is implemented, but the complete retail flow is not yet ready for normal p
 
 ## Roadmap
 
-1. Trace the verified authored live lights and byte-exact PSMT8/CLUT uploads through material, VU, and GS sampling state, repair the first divergence, and reduce any general runtime defect to a reusable PS2Recomp fix.
-2. Repair gameplay material lighting, effects, blending, and HUD rendering, then validate normal controller input and game audio.
-3. Complete Sofdec video decode/presentation and movie audio playback on the retail startup path.
+1. Validate sustained controller and keyboard movement, camera control, simulation, combat, audio, and basic progression through the real campaign setup with only the mission-intro movie bypassed.
+2. Repair rendering faults that conceal playable state or prevent navigation, then address remaining gameplay material lighting, effects, blending, and HUD defects.
+3. Finish the 3D title presentation and complete Sofdec video decode/presentation and movie audio playback on the retail startup path.
 4. Validate the complete legal-to-title-to-campaign flow without development overrides and package a reproducible PC build process.
 
 ## Contributing

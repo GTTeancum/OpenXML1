@@ -1,11 +1,20 @@
 param(
-    [ValidateSet("Bypass", "MovieOnly", "MovieWait", "TitleGameplayFirst", "GameplayDemo", "GameplayMap", "GameplayMapNoMovie", "GameplayFirst", "Restore")]
-    [string]$Mode = "Bypass"
+    [ValidateSet("Bypass", "MovieOnly", "MovieWait", "TitleGameplayFirst", "GameplayDemo", "GameplayMap", "GameplayMapNoMovie", "GameplayMissionNoMovie", "GameplayFirst", "Restore")]
+    [string]$Mode = "Bypass",
+
+    [string]$ArchivePath = ""
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$zipPath = Join-Path $root "disc\Z\ASSETSFB.ZIP"
+$zipPath = if ($ArchivePath) {
+    [IO.Path]::GetFullPath($ArchivePath)
+} else {
+    Join-Path $root "disc\Z\ASSETSFB.ZIP"
+}
+if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
+    throw "Startup archive does not exist: $zipPath"
+}
 $sourceName = switch ($Mode) {
     "Bypass" { "intro_normal.skip-movies.py" }
     "MovieOnly" { "intro_normal.movie-only.py" }
@@ -14,10 +23,11 @@ $sourceName = switch ($Mode) {
     "GameplayDemo" { "intro_normal.gameplay-demo.py" }
     "GameplayMap" { "intro_normal.gameplay-map.py" }
     "GameplayMapNoMovie" { "intro_normal.gameplay-map.py" }
+    "GameplayMissionNoMovie" { "intro_normal.gameplay-first.py" }
     "GameplayFirst" { "intro_normal.skip-movies.py" }
     "Restore" { "intro_normal.original.py" }
 }
-$missionSourceName = if ($Mode -in @("TitleGameplayFirst", "GameplayMapNoMovie", "GameplayFirst")) {
+$missionSourceName = if ($Mode -in @("TitleGameplayFirst", "GameplayMapNoMovie", "GameplayMissionNoMovie", "GameplayFirst")) {
     "mission_alison.skip-movie.py"
 } else {
     "mission_alison.original.py"
