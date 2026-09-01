@@ -23,10 +23,23 @@ if (-not $disc.Equals($expectedDisc, [System.StringComparison]::OrdinalIgnoreCas
     throw "Unexpected disc path: $disc"
 }
 
-$exe = Join-Path $root 'PS2Recomp\out\xmen-final3-build\ps2xRuntime\Release\ps2EntryRunner.exe'
+$runtimeDirectory = Join-Path $root 'PS2Recomp\out\xmen-final3-build\ps2xRuntime\Release'
+$primaryExe = Join-Path $runtimeDirectory 'ps2EntryRunner.exe'
+$stagedExe = Join-Path $runtimeDirectory 'ps2EntryRunner.next.exe'
+$exe = if (Test-Path -LiteralPath $stagedExe -PathType Leaf) {
+    $stagedExe
+} else {
+    $primaryExe
+}
 $startupScript = Join-Path $PSScriptRoot 'dev-overrides\set-startup-movie-bypass.ps1'
 if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
     throw "Runtime executable does not exist: $exe"
+}
+
+$existingRuntime = Get-Process -ErrorAction SilentlyContinue |
+    Where-Object { $_.ProcessName -like 'ps2EntryRunner*' }
+if ($existingRuntime) {
+    throw "A PS2 runtime is already running (PID $($existingRuntime.Id -join ', '))."
 }
 
 Get-ChildItem -LiteralPath $disc -File -Filter 'gs-present-*.ppm' |
@@ -81,7 +94,7 @@ try {
     $process.BeginErrorReadLine()
     $process.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::Normal
     $process.ProcessorAffinity = [IntPtr]0xF
-    "PID=$($process.Id)"
+    "PID=$($process.Id) BINARY=$([IO.Path]::GetFileName($exe))"
 
     $seen = [System.Collections.Generic.HashSet[string]]::new(
         [System.StringComparer]::OrdinalIgnoreCase)
