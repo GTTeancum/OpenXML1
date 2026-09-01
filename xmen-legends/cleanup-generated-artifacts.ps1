@@ -122,6 +122,11 @@ $obsoleteFiles += Get-ChildItem -LiteralPath (Join-Path $recomp 'out') -File -Fo
     Where-Object { $_.Extension -eq '.log' }
 $obsoleteFiles += Get-ChildItem -LiteralPath $recomp -File -Force |
     Where-Object { $_.Name -match '^probe.*\.log$' }
+$obsoleteFiles += Get-ChildItem -LiteralPath $activeBuild -Recurse -File -Force |
+    Where-Object {
+        $_.Extension -eq '.log' -and
+        $_.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddHours(-12)
+    }
 $activeRelease = Join-Path $activeBuild 'ps2xRuntime\Release'
 if (Test-Path -LiteralPath $activeRelease -PathType Container) {
     $obsoleteFiles += Get-ChildItem -LiteralPath $activeRelease -File -Force |
