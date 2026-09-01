@@ -124,10 +124,11 @@ $assetInspect = Join-Path $xmenRoot 'asset-inspect'
 if (Test-Path -LiteralPath $assetInspect -PathType Container) {
     $obsoleteFiles += Get-ChildItem -LiteralPath $assetInspect -Recurse -File -Force |
         Where-Object {
-            $_.LastWriteTimeUtc -lt $staleMediaCutoff -and
             $generatedMediaExtensions -contains $_.Extension.ToLowerInvariant() -and
-            $_.Name -match '^(frame|probe|gs-)' -and
-            $_.Name -notmatch $preservedProbePattern
+            ($_.Name -match '^current-' -or
+                ($_.LastWriteTimeUtc -lt $staleMediaCutoff -and
+                    $_.Name -match '^(frame|probe|gs-)' -and
+                    $_.Name -notmatch $preservedProbePattern))
         }
 }
 $analysisExtract = Join-Path $disc '.analysis-extract'
