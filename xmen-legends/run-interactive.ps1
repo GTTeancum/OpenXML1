@@ -6,7 +6,9 @@ param(
     [string]$Config = 'Release',
 
     [ValidateSet('Auto', 'Primary', 'Staged')]
-    [string]$RuntimeVariant = 'Auto'
+    [string]$RuntimeVariant = 'Auto',
+
+    [switch]$FastBranchHooks
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,7 +63,9 @@ try {
             [void]$startInfo.Environment.Remove($name)
         }
     }
-    $startInfo.Environment['PS2X_BYPASS_XMEN_BRANCH_HOOKS'] = '1'
+    if ($FastBranchHooks) {
+        $startInfo.Environment['PS2X_BYPASS_XMEN_BRANCH_HOOKS'] = '1'
+    }
     $startInfo.Environment['PS2X_XMEN_HOST_CLOCK'] = '1'
     $startInfo.Environment['PS2X_FAST_FORWARD_XMEN_LEGAL'] = '1'
     $startInfo.Environment['PS2X_XMEN_PROGRESS_TRACE'] = '1'
