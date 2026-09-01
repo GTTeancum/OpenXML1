@@ -172,7 +172,8 @@ if (Test-Path -LiteralPath $activeRelease -PathType Container) {
 if (Test-Path -LiteralPath $activeBuild -PathType Container) {
     $obsoleteFiles += Get-ChildItem -LiteralPath $activeBuild -Recurse -File -Force |
         Where-Object {
-            $_.Name -like 'ps2EntryRunner.next.*' -and
+            ($_.Name -like 'ps2EntryRunner.next.*' -or
+                $_.Name -like 'ps2EntryRunner.candidate.*') -and
             $_.Extension -ne '.exe'
         }
 }
