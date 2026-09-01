@@ -3,7 +3,10 @@ param(
     [string]$StartupMovieMode = 'GameplayMissionNoMovie',
 
     [ValidateSet('Debug', 'Release', 'RelWithDebInfo', 'MinSizeRel')]
-    [string]$Config = 'Release'
+    [string]$Config = 'Release',
+
+    [ValidateSet('Auto', 'Primary', 'Staged')]
+    [string]$RuntimeVariant = 'Auto'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -18,10 +21,16 @@ if (-not $disc.Equals($expectedDisc, [System.StringComparison]::OrdinalIgnoreCas
 $runtimeDirectory = Join-Path $root "PS2Recomp\out\xmen-final3-build\ps2xRuntime\$Config"
 $primaryExe = Join-Path $runtimeDirectory 'ps2EntryRunner.exe'
 $stagedExe = Join-Path $runtimeDirectory 'ps2EntryRunner.next.exe'
-$exe = if (Test-Path -LiteralPath $stagedExe -PathType Leaf) {
-    $stagedExe
-} else {
-    $primaryExe
+$exe = switch ($RuntimeVariant) {
+    'Primary' { $primaryExe }
+    'Staged' { $stagedExe }
+    default {
+        if (Test-Path -LiteralPath $stagedExe -PathType Leaf) {
+            $stagedExe
+        } else {
+            $primaryExe
+        }
+    }
 }
 $startupScript = Join-Path $PSScriptRoot 'dev-overrides\set-startup-movie-bypass.ps1'
 if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
