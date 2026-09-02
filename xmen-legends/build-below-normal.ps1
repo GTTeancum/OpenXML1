@@ -250,8 +250,13 @@ function Remove-DetachedBuildWorkers {
     }
 
     foreach ($worker in Get-CimInstance Win32_Process -Filter "Name='MSBuild.exe'") {
-        if ($preexistingMsBuildIds.Contains([int]$worker.ProcessId) -or
-            (Get-Process -Id $worker.ParentProcessId -ErrorAction SilentlyContinue)) {
+        if ($preexistingMsBuildIds.Contains([int]$worker.ProcessId)) {
+            continue
+        }
+
+        $parentIsTracked = $buildProcessIds.Contains([int]$worker.ParentProcessId)
+        $parentIsAlive = Get-Process -Id $worker.ParentProcessId -ErrorAction SilentlyContinue
+        if (-not $parentIsTracked -and $parentIsAlive) {
             continue
         }
 

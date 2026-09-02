@@ -5,12 +5,18 @@ param(
     [ValidateSet('Debug', 'Release', 'RelWithDebInfo', 'MinSizeRel')]
     [string]$Config = 'Release',
 
+    [ValidateSet('Auto', 'Primary', 'Staged', 'Profile')]
+    [string]$RuntimeVariant = 'Primary',
+
     [int]$TimeoutSeconds = 220,
 
     [switch]$ContinueAfterNonBlack,
 
     [ValidateRange(-1, [int]::MaxValue)]
     [int]$StopAfterPresent = -1,
+
+    [ValidateRange(-1, [int]::MaxValue)]
+    [int]$StopAfterTick = -1,
 
     [ValidatePattern('^\d+-\d+$')]
     [string]$DumpPresentRange = '',
@@ -19,6 +25,13 @@ param(
     [int]$SkipCpuRasterBeforePresent = -1,
 
     [switch]$FastForwardLegal,
+
+    [switch]$UseHostClock,
+
+    [switch]$BypassXmenBranchHooks,
+
+    [ValidateRange(-1, [int]::MaxValue)]
+    [int]$TraceXmenWorldMinTick = -1,
 
     [switch]$ContinueAfterMissing,
 
@@ -335,8 +348,37 @@ if ($SkipCpuRasterBeforePresent -ge 0) {
 if ($FastForwardLegal) {
     $env:PS2X_FAST_FORWARD_XMEN_LEGAL = '1'
 }
+if ($UseHostClock) {
+    $env:PS2X_XMEN_HOST_CLOCK = '1'
+}
+if ($BypassXmenBranchHooks) {
+    $env:PS2X_BYPASS_XMEN_BRANCH_HOOKS = '1'
+}
+if ($TraceXmenWorldMinTick -ge 0) {
+    $env:PS2X_TRACE_XMEN_WORLD_MIN_TICK = $TraceXmenWorldMinTick.ToString()
+}
 
-$exe = Join-Path $root "PS2Recomp\out\xmen-final3-build\ps2xRuntime\$Config\ps2EntryRunner.exe"
+$runtimeDirectory = Join-Path $root "PS2Recomp\out\xmen-final3-build\ps2xRuntime\$Config"
+$primaryExe = Join-Path $runtimeDirectory 'ps2EntryRunner.exe'
+$stagedExe = Join-Path $runtimeDirectory 'ps2EntryRunner.next.exe'
+$profileExe = Join-Path $runtimeDirectory 'ps2EntryRunner.profile.exe'
+$exe = switch ($RuntimeVariant) {
+    'Primary' { $primaryExe }
+    'Staged' { $stagedExe }
+    'Profile' { $profileExe }
+    default {
+        if (Test-Path -LiteralPath $stagedExe -PathType Leaf) {
+            $stagedExe
+        }
+        else {
+            $primaryExe
+        }
+    }
+}
+if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+    throw "Runtime executable does not exist: $exe"
+}
+$processStartedUtc = [DateTime]::UtcNow
 $process = Start-Process `
     -FilePath $exe `
     -WorkingDirectory $disc `
@@ -373,6 +415,23 @@ $maxCombinedLogBytes = [long]$MaxCombinedLogMiB * 1MB
 
 while ([DateTime]::UtcNow -lt $deadline) {
     $process.Refresh()
+
+    if ($StopAfterTick -ge 0) {
+        $progressPath = Join-Path $disc 'xmen_runtime_progress.log'
+        $progressFile = Get-Item -LiteralPath $progressPath -ErrorAction SilentlyContinue
+        $progressLine = if ($null -ne $progressFile -and
+            $progressFile.LastWriteTimeUtc -ge $processStartedUtc) {
+            Get-Content -LiteralPath $progressPath -Tail 1 -ErrorAction SilentlyContinue
+        }
+        if ($progressLine -match 'tick=(\d+)') {
+            $observedTick = [int]$Matches[1]
+            if ($observedTick -ge $StopAfterTick) {
+                "TARGET_TICK PID=$($process.Id) REQUESTED=$StopAfterTick OBSERVED=$observedTick"
+                Stop-ProbeProcess
+                exit 46
+            }
+        }
+    }
 
     foreach ($file in Get-ChildItem -LiteralPath $disc -Filter 'gs-present-*.ppm' -File |
         Sort-Object LastWriteTimeUtc) {

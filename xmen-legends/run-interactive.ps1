@@ -1,6 +1,6 @@
 param(
-    [ValidateSet('GameplayMap', 'GameplayMapNoMovie', 'GameplayMissionNoMovie')]
-    [string]$StartupMovieMode = 'GameplayMissionNoMovie',
+    [ValidateSet('GameplayFirst', 'TitleGameplayFirst', 'GameplayMap', 'GameplayMapNoMovie', 'GameplayMissionNoMovie')]
+    [string]$StartupMovieMode = 'GameplayFirst',
 
     [ValidateSet('Debug', 'Release', 'RelWithDebInfo', 'MinSizeRel')]
     [string]$Config = 'Release',
@@ -8,7 +8,17 @@ param(
     [ValidateSet('Auto', 'Primary', 'Staged')]
     [string]$RuntimeVariant = 'Auto',
 
-    [switch]$FastBranchHooks
+    # Retained for compatibility with existing launch commands. Fast dispatch is
+    # now the default; use -CompatibilityBranchHooks to disable it.
+    [switch]$FastBranchHooks,
+
+    [switch]$CompatibilityBranchHooks,
+
+    [switch]$Diagnostics,
+
+    [switch]$WhiteWireframe,
+
+    [switch]$SuppressLateSprites
 )
 
 $ErrorActionPreference = 'Stop'
@@ -63,13 +73,31 @@ try {
             [void]$startInfo.Environment.Remove($name)
         }
     }
-    if ($FastBranchHooks) {
+    if ($FastBranchHooks -and $CompatibilityBranchHooks) {
+        throw '-FastBranchHooks and -CompatibilityBranchHooks cannot be combined.'
+    }
+    if (-not $CompatibilityBranchHooks) {
         $startInfo.Environment['PS2X_BYPASS_XMEN_BRANCH_HOOKS'] = '1'
     }
     $startInfo.Environment['PS2X_XMEN_HOST_CLOCK'] = '1'
     $startInfo.Environment['PS2X_FAST_FORWARD_XMEN_LEGAL'] = '1'
-    $startInfo.Environment['PS2X_XMEN_PROGRESS_TRACE'] = '1'
-    $startInfo.Environment['PS2X_CAPTURE_LATEST_PRESENT_INTERVAL'] = '128'
+    if ($Diagnostics) {
+        $startInfo.Environment['PS2X_XMEN_DIAGNOSTICS'] = '1'
+        $startInfo.Environment['PS2X_XMEN_PROGRESS_TRACE'] = '1'
+        $startInfo.Environment['PS2X_CAPTURE_LATEST_PRESENT_INTERVAL'] = '128'
+    }
+    if ($StartupMovieMode -eq 'TitleGameplayFirst') {
+        $startInfo.Environment['PS2X_XMEN_START_FIRST_LEVEL'] = '1'
+    }
+    if ($WhiteWireframe) {
+        $startInfo.Environment['PS2X_DEBUG_WHITE_WIREFRAME'] = '1'
+    }
+    if ($SuppressLateSprites) {
+        if (-not $WhiteWireframe) {
+            throw '-SuppressLateSprites requires -WhiteWireframe.'
+        }
+        $startInfo.Environment['PS2X_DEBUG_WHITE_WIREFRAME_NO_LATE_SPRITES'] = '1'
+    }
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
