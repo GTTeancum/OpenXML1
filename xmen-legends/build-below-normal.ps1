@@ -158,12 +158,36 @@ $stdoutPath = Join-Path $BuildPath "$logStem.out.log"
 $stderrPath = Join-Path $BuildPath "$logStem.err.log"
 $env:MSBUILDDISABLENODEREUSE = '1'
 $buildProcessIds = [System.Collections.Generic.HashSet[int]]::new()
-$preexistingMsBuildIds = [System.Collections.Generic.HashSet[int]]::new()
-foreach ($existingMsBuild in Get-Process -Name 'MSBuild' -ErrorAction SilentlyContinue) {
-    [void]$preexistingMsBuildIds.Add($existingMsBuild.Id)
+
+if (-not ('OpenXml1BuildJob' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class OpenXml1BuildJob
+{
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool TerminateJobObject(IntPtr job, uint exitCode);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool CloseHandle(IntPtr handle);
+}
+'@
 }
 
 $previousClAfterOptions = [Environment]::GetEnvironmentVariable('_CL_', 'Process')
+$jobHandle = [IntPtr]::Zero
+$startGate = $null
+$process = $null
 try {
     if ($DisableOptimization) {
         $clAfterOptions = @($previousClAfterOptions, '/Od') |
@@ -171,13 +195,88 @@ try {
         [Environment]::SetEnvironmentVariable('_CL_', ($clAfterOptions -join ' '), 'Process')
     }
 
-    $process = Start-Process -FilePath $buildExecutable `
-        -ArgumentList $arguments `
-        -WorkingDirectory $workingDirectory `
-        -WindowStyle Hidden `
-        -RedirectStandardOutput $stdoutPath `
-        -RedirectStandardError $stderrPath `
-        -PassThru
+    $gateName = "Local\OpenXml1Build-$PID-$([Guid]::NewGuid().ToString('N'))"
+    $startGate = [Threading.EventWaitHandle]::new(
+        $false,
+        [Threading.EventResetMode]::ManualReset,
+        $gateName)
+    $payload = @{
+        EventName = $gateName
+        Executable = $buildExecutable
+        Arguments = @($arguments)
+        WorkingDirectory = $workingDirectory
+        StdoutPath = $stdoutPath
+        StderrPath = $stderrPath
+    } | ConvertTo-Json -Compress
+    $payloadBase64 = [Convert]::ToBase64String(
+        [Text.Encoding]::UTF8.GetBytes($payload))
+    $wrapperSource = @'
+$ErrorActionPreference = 'Stop'
+$payloadJson = [Text.Encoding]::UTF8.GetString(
+    [Convert]::FromBase64String($env:OPENXML1_BUILD_PAYLOAD))
+$payload = $payloadJson | ConvertFrom-Json
+$gate = [Threading.EventWaitHandle]::OpenExisting($payload.EventName)
+try {
+    [void]$gate.WaitOne()
+    Set-Location -LiteralPath $payload.WorkingDirectory
+    & $payload.Executable @($payload.Arguments) `
+        1> $payload.StdoutPath `
+        2> $payload.StderrPath
+    exit $LASTEXITCODE
+}
+finally {
+    $gate.Dispose()
+}
+'@
+    $encodedWrapper = [Convert]::ToBase64String(
+        [Text.Encoding]::Unicode.GetBytes($wrapperSource))
+    $wrapperExecutable = (Get-Process -Id $PID).Path
+    $startInfo = [Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $wrapperExecutable
+    $startInfo.WorkingDirectory = $workingDirectory
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+    $startInfo.Environment['OPENXML1_BUILD_PAYLOAD'] = $payloadBase64
+    [void]$startInfo.ArgumentList.Add('-NoProfile')
+    [void]$startInfo.ArgumentList.Add('-NonInteractive')
+    [void]$startInfo.ArgumentList.Add('-EncodedCommand')
+    [void]$startInfo.ArgumentList.Add($encodedWrapper)
+
+    $jobHandle = [OpenXml1BuildJob]::CreateJobObject([IntPtr]::Zero, $null)
+    if ($jobHandle -eq [IntPtr]::Zero) {
+        throw [ComponentModel.Win32Exception]::new(
+            [Runtime.InteropServices.Marshal]::GetLastWin32Error())
+    }
+
+    $process = [Diagnostics.Process]::new()
+    $process.StartInfo = $startInfo
+    if (-not $process.Start()) {
+        throw 'Failed to start the gated build process.'
+    }
+    if (-not [OpenXml1BuildJob]::AssignProcessToJobObject(
+            $jobHandle,
+            $process.Handle)) {
+        throw [ComponentModel.Win32Exception]::new(
+            [Runtime.InteropServices.Marshal]::GetLastWin32Error())
+    }
+    [void]$startGate.Set()
+}
+catch {
+    if ($jobHandle -ne [IntPtr]::Zero) {
+        [void][OpenXml1BuildJob]::TerminateJobObject($jobHandle, 1u)
+        [void][OpenXml1BuildJob]::CloseHandle($jobHandle)
+        $jobHandle = [IntPtr]::Zero
+    }
+    if ($null -ne $startGate) {
+        $startGate.Dispose()
+        $startGate = $null
+    }
+    if ($null -ne $process) {
+        $process.Dispose()
+        $process = $null
+    }
+    throw
 }
 finally {
     [Environment]::SetEnvironmentVariable('_CL_', $previousClAfterOptions, 'Process')
@@ -207,77 +306,34 @@ function Set-BuildTreePriority {
         }
     }
 
-    foreach ($name in @('cmake', 'MSBuild', 'cl', 'link')) {
-        foreach ($compilerProcess in Get-Process -Name $name -ErrorAction SilentlyContinue) {
-            try {
-                $compilerProcess.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
-                $compilerProcess.ProcessorAffinity = [IntPtr]0xF
-            }
-            catch {
-                # A process can exit between enumeration and the priority update.
-            }
-        }
-    }
 }
 
+$buildExitCode = 1
 try {
     while (-not $process.HasExited) {
         Set-BuildTreePriority -RootProcessId $process.Id
         Start-Sleep -Milliseconds 100
         $process.Refresh()
     }
+    $process.WaitForExit()
+    $buildExitCode = $process.ExitCode
 }
 finally {
-    if (-not $process.HasExited) {
-        $process.WaitForExit()
+    if ($jobHandle -ne [IntPtr]::Zero) {
+        [void][OpenXml1BuildJob]::TerminateJobObject($jobHandle, 1u)
+        [void][OpenXml1BuildJob]::CloseHandle($jobHandle)
+        $jobHandle = [IntPtr]::Zero
+    }
+    if ($null -ne $startGate) {
+        $startGate.Dispose()
+    }
+    if ($null -ne $process) {
+        $process.Dispose()
     }
 }
 
-$process.WaitForExit()
-function Remove-DetachedBuildWorkers {
-    foreach ($processId in $buildProcessIds) {
-        $trackedProcess = Get-Process -Id $processId -ErrorAction SilentlyContinue
-        if ($trackedProcess -and
-            $trackedProcess.ProcessName -in @('cmake', 'MSBuild', 'cl', 'link')) {
-            try {
-                $trackedProcess.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
-                Stop-Process -Id $processId -Force -ErrorAction Stop
-            }
-            catch {
-                # A tracked build process can exit while cleanup is running.
-            }
-        }
-    }
-
-    foreach ($worker in Get-CimInstance Win32_Process -Filter "Name='MSBuild.exe'") {
-        if ($preexistingMsBuildIds.Contains([int]$worker.ProcessId)) {
-            continue
-        }
-
-        $parentIsTracked = $buildProcessIds.Contains([int]$worker.ParentProcessId)
-        $parentIsAlive = Get-Process -Id $worker.ParentProcessId -ErrorAction SilentlyContinue
-        if (-not $parentIsTracked -and $parentIsAlive) {
-            continue
-        }
-
-        try {
-            $workerProcess = Get-Process -Id $worker.ProcessId -ErrorAction Stop
-            $workerProcess.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
-            Stop-Process -Id $worker.ProcessId -Force -ErrorAction Stop
-        }
-        catch {
-            # A detached worker can exit while cleanup is running.
-        }
-    }
-}
-
-Remove-DetachedBuildWorkers
-foreach ($cleanupPass in 1..5) {
-    Start-Sleep -Milliseconds 400
-    Remove-DetachedBuildWorkers
-}
 Get-Content -LiteralPath $stdoutPath
 if ((Get-Item -LiteralPath $stderrPath).Length -gt 0) {
     Get-Content -LiteralPath $stderrPath
 }
-exit $process.ExitCode
+exit $buildExitCode
