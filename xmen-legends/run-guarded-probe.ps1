@@ -309,10 +309,13 @@ Remove-StaleGeneratedImages
 
 foreach ($framebufferRoot in @($disc, (Join-Path $root 'PS2Recomp'))) {
     $resolvedFramebufferRoot = [System.IO.Path]::GetFullPath($framebufferRoot).TrimEnd('\')
+    # Removal of this existing test artifact was policy-blocked; do not retry it here.
+    $protectedTestFrame = Join-Path $root 'PS2Recomp\gs-present-first-nonblack-0.ppm'
     Get-ChildItem -LiteralPath $resolvedFramebufferRoot -File |
         Where-Object {
-            $_.Name -like 'gs-present-*.ppm' -or
-            $_.Name -like 'gs-present-*.png'
+            ($_.Name -like 'gs-present-*.ppm' -or
+             $_.Name -like 'gs-present-*.png') -and
+            $_.FullName -ne $protectedTestFrame
         } |
         ForEach-Object {
             $parent = [System.IO.Path]::GetDirectoryName($_.FullName).TrimEnd('\')
