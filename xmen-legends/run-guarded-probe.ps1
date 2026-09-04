@@ -233,6 +233,16 @@ function Remove-StaleGeneratedImages {
 
     $scopes = @(
         [pscustomobject]@{
+            Root = $PSScriptRoot
+            Recurse = $false
+            NamePattern = '^(?:probe\d+|gs-present-).*\.(?:ppm|png)$'
+        }
+        [pscustomobject]@{
+            Root = $disc
+            Recurse = $false
+            NamePattern = '^(?:probe\d+|gs-present-).*\.(?:ppm|png)$'
+        }
+        [pscustomobject]@{
             Root = $captureRoot
             Recurse = $false
             NamePattern = '^probe\d+.*\.(?:ppm|png)$'
