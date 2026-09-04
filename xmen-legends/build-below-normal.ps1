@@ -45,6 +45,7 @@ if ($DisableOptimization -and -not $SelectedSource) {
 $buildExecutable = 'cmake.exe'
 $workingDirectory = $repoRoot
 $logStem = 'build-below-normal'
+$archiveArguments = @()
 if ($SelectedSource -or $LinkOnly) {
     if ($SelectedSource) {
         $SelectedSource = [System.IO.Path]::GetFullPath($SelectedSource)
@@ -128,6 +129,21 @@ if ($SelectedSource -or $LinkOnly) {
     )
 
     if ($SelectedSource) {
+        [xml]$projectXml = Get-Content -LiteralPath $projectPath -Raw
+        $configurationCondition = "'`$(Configuration)|`$(Platform)'=='$Config|x64'"
+        $configurationGroups = @($projectXml.Project.PropertyGroup | Where-Object {
+            $_.Label -eq 'Configuration' -and
+            $_.Condition.Replace(' ', '') -eq $configurationCondition
+        })
+        if ($configurationGroups.Count -ne 1) {
+            throw "Cannot identify the $Config configuration in $projectPath."
+        }
+        if ($configurationGroups[0].ConfigurationType -eq 'StaticLibrary') {
+            # Re-evaluate without SelectedFiles so the archive retains every object.
+            $archiveArguments = @($arguments | Where-Object { $_ -ne '/t:ClCompile' })
+            $archiveArguments += '/t:_Lib'
+            $archiveArguments += '/p:BuildProjectReferences=false'
+        }
         $arguments += "/p:SelectedFiles=$($selectedBuildSources -join ';')"
         $arguments += '/p:SelectedFilesBuildPCH=false'
         $logStem = 'build-selected-below-normal'
@@ -204,6 +220,7 @@ try {
         EventName = $gateName
         Executable = $buildExecutable
         Arguments = @($arguments)
+        ArchiveArguments = @($archiveArguments)
         WorkingDirectory = $workingDirectory
         StdoutPath = $stdoutPath
         StderrPath = $stderrPath
@@ -222,6 +239,12 @@ try {
     & $payload.Executable @($payload.Arguments) `
         1> $payload.StdoutPath `
         2> $payload.StderrPath
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    if ($payload.ArchiveArguments.Count -gt 0) {
+        & $payload.Executable @($payload.ArchiveArguments) `
+            1>> $payload.StdoutPath `
+            2>> $payload.StderrPath
+    }
     exit $LASTEXITCODE
 }
 finally {
@@ -260,6 +283,8 @@ finally {
         throw [ComponentModel.Win32Exception]::new(
             [Runtime.InteropServices.Marshal]::GetLastWin32Error())
     }
+    $process.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
+    $process.ProcessorAffinity = [IntPtr]0xF
     [void]$startGate.Set()
 }
 catch {
@@ -281,8 +306,6 @@ catch {
 finally {
     [Environment]::SetEnvironmentVariable('_CL_', $previousClAfterOptions, 'Process')
 }
-$process.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
-$process.ProcessorAffinity = [IntPtr]0xF
 [void]$buildProcessIds.Add($process.Id)
 
 function Set-BuildTreePriority {

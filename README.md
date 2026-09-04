@@ -7,14 +7,14 @@ An experimental static recompilation of the North American PlayStation 2 release
 
 ## Acceptance Target
 
-The project goal is a native PC build that follows the unmodified retail boot flow through the legal screen, all startup movies with audio, the fully rendered 3D Cerebro title scene, and playable campaign gameplay without graphical or audio defects.
+The active goal is basic first-level playability on PC: reliable campaign startup, movement and combat, and a practical interactive frame rate. Gameplay fidelity remains important, but detailed visual polish and Sofdec (SFD) movie playback are deferred. The original defect-free retail boot target is not the current acceptance gate.
 
 | Milestone | Current state |
 | --- | --- |
 | Legal and memory-card flow | Renders and advances; final presentation/timing validation remains |
 | Startup Sofdec movies | File I/O, demux, MPEG/IPU submission, and ADX transport run; decoded video and audible movie playback remain broken |
 | 3D title scene | Complete title UI and Cerebro chamber render after a reversible movie bypass |
-| First campaign level | The real Begin Story path loads and renders New York; lighting, effects, blending, and HUD remain defective |
+| First campaign level | New York loads and renders; user testing confirms movement and basic combat, but frame rate is very low and rendering defects remain |
 | Playable release | Not yet |
 
 ## Current Status
@@ -25,13 +25,16 @@ The game now executes far beyond initial boot and has reached each of these mile
 - Complete title UI and the 3D Cerebro chamber after a reversible startup-movie bypass.
 - ZAUDIO stream creation, buffering, and playback service calls.
 - First-level loading and world rendering through the real **Begin Story** menu path after a reversible startup-movie bypass.
+- User-confirmed Wolverine movement and basic combat in the first level. Music and ambient police sirens have also been reported working.
 - Retail SFD file I/O, PSS demux, MPEG/IPU submission, and ADX block transport.
 
 The title level reaches a clean, complete Cerebro scene using the game's own GIF transfers; coalescing duplicate pending DMAC completion events fixed the skipped texture upload that previously required a diagnostic repair. The real New Game handler now transitions deterministically from the initialized title level into the first campaign level, and the current clean build renders the complete New York world through VU/GIF/GS. The earlier apparent world-rendering regression was an invalid comparison against the direct `loadMap()` shortcut, which skips campaign initialization and produces only HUD fragments.
 
-The highest-priority gameplay blockers are now split into two testable paths using `igb-blender` as the authored-format reference. Of 201 map texture bindings, 200 are one-byte PSMT8 indices with 256-entry RGBA CLUTs. Static map geometry carries baked vertex colors and explicitly disables live lighting, matching Alchemy's fixed-function `texture * vertex color * 2` path. The affected black props instead have normals, no baked colors, and inherit live lighting. Runtime tracing observed 79 of 81 unique New York textures; every observed index payload and every CSM1 palette upload matches the plugin data exactly after the game's 0-255 to 0-128 GS alpha conversion. The two unobserved entries are an unpalettized shadow texture and an unused subway texture. All 12 authored lights also arrive with their exact colors and apply enabled before scene traversal restores them. The previously observed zero at `0x752750` is the separate global scene-ambient multiplier, not proof that those live lights were lost. Current tracing therefore follows the active lights into material and VU packets, after IGB extraction, deserialization, and host-to-GS upload have been ruled out.
+The immediate priority is frame rate and responsiveness. A September 4 full-rendering baseline measured about 95 ms of CPU rasterization per gameplay frame, before other runtime work. Dispatch optimization is also under investigation. Selected-source builds now rearchive their static library before relinking; previous performance candidates built without that step are not reliable evidence.
 
-The separate retail-startup blocker remains correct Sofdec output. The demux advances through each movie and its ADX audio header and blocks arrive intact, but visible decoded frames and audible movie playback are not yet correct. The full acceptance target remains unfinished.
+Rendering investigation uses `igb-blender` as the authored-format reference. Of 201 map texture bindings, 200 are one-byte PSMT8 indices with 256-entry RGBA CLUTs. Static map geometry carries baked vertex colors and explicitly disables live lighting, matching Alchemy's fixed-function `texture * vertex color * 2` path. The affected black props instead have normals, no baked colors, and inherit live lighting. Runtime tracing observed 79 of 81 unique New York textures; every observed index payload and every CSM1 palette upload matches the plugin data exactly after the game's 0-255 to 0-128 GS alpha conversion. The two unobserved entries are an unpalettized shadow texture and an unused subway texture. All 12 authored lights also arrive with their exact colors and apply enabled before scene traversal restores them. The previously observed zero at `0x752750` is the separate global scene-ambient multiplier, not proof that those live lights were lost. Lighting, effects, and HUD fixes remain tracked for later work.
+
+Sofdec output remains unfinished and outside the active goal. The demux advances through each movie and its ADX audio header and blocks arrive intact, but visible decoded frames and audible movie playback are not yet correct.
 
 ## Bring-up Screenshots
 
@@ -66,6 +69,7 @@ The PS2Recomp checkout, extracted disc, ELF, generated C++, build products, memo
 ## Requirements
 
 - Windows 10 or 11
+- PowerShell 7 for the build and test wrappers
 - CMake 3.20 or newer
 - Visual Studio 2022 with the Desktop development with C++ workload
 - A CPU with the SIMD support required by PS2Recomp
@@ -84,11 +88,14 @@ git -C PS2Recomp checkout codex/xmen-legends-bringup
 
 Extract your own disc into `xmen-legends/disc/` and place the game ELF at `xmen-legends/SLUS_206.56`. The repository does not contain or download copyrighted game data. If the workspace is not at `C:\Programming\GitHub\OpenXML1`, update the absolute paths in `xmen-legends/xmen-legends.boot.final3.toml` before recompiling.
 
-Configure and build the recompiler:
+Configure and build the recompiler in a dedicated PowerShell 7 build session:
 
 ```powershell
+$buildHost = Get-Process -Id $PID
+$buildHost.PriorityClass = 'BelowNormal'
+$buildHost.ProcessorAffinity = [IntPtr]0xF
 cmake -S PS2Recomp -B PS2Recomp/out/xmen-final3-build
-powershell -ExecutionPolicy Bypass -File xmen-legends/build-below-normal.ps1 `
+pwsh -NoProfile -File xmen-legends/build-below-normal.ps1 `
   -Target ps2_recomp
 ```
 
@@ -98,14 +105,14 @@ Generate the game C++ and configure the runtime against it:
 & PS2Recomp/out/xmen-final3-build/ps2xRecomp/Release/ps2_recomp.exe `
   xmen-legends/xmen-legends.boot.final3.toml
 
-powershell -ExecutionPolicy Bypass -File `
+pwsh -NoProfile -File `
   xmen-legends/apply-generated-first-level-probe.ps1
 
 cmake -S PS2Recomp -B PS2Recomp/out/xmen-final3-build `
   -DPS2X_RECOMPILED_OUTPUT_DIR="$PWD/xmen-legends/output_mapped_final3" `
   -DPS2X_DEFAULT_BOOT_ELF="$PWD/xmen-legends/disc/SLUS_206.56"
 
-powershell -ExecutionPolicy Bypass -File xmen-legends/build-below-normal.ps1 `
+pwsh -NoProfile -File xmen-legends/build-below-normal.ps1 `
   -Target ps2EntryRunner
 ```
 
@@ -132,7 +139,7 @@ The first available gamepad is mapped as a PS2 controller. Keyboard mappings rem
 | Start / Select | `Enter` / `Right Shift` |
 | L3 / R3 | `Left Ctrl` / `Right Ctrl` |
 
-Input is implemented in the staged runtime. Manual validation of sustained movement, camera control, combat, and level progression is the next bring-up milestone; visual defects that do not prevent navigation no longer block that test.
+User testing has confirmed movement and basic combat, albeit at very low speed. Sustained camera, combat, and level-progression testing remains necessary; visual defects that do not prevent navigation no longer block that work.
 
 ## Known Issues
 
@@ -144,14 +151,21 @@ Input is implemented in the staged runtime. Manual validation of sustained movem
 
 ## Roadmap
 
-1. Validate sustained controller and keyboard movement, camera control, simulation, combat, audio, and basic progression through the real campaign setup with only the mission-intro movie bypassed.
-2. Repair rendering faults that conceal playable state or prevent navigation, then address remaining gameplay material lighting, effects, blending, and HUD defects.
-3. Finish the 3D title presentation and complete Sofdec video decode/presentation and movie audio playback on the retail startup path.
-4. Validate the complete legal-to-title-to-campaign flow without development overrides and package a reproducible PC build process.
+1. Improve measured CPU rendering and dispatch costs to make movement and combat practically usable.
+2. Validate sustained input, camera, simulation, combat, audio, and progression through the real campaign setup with movies bypassed.
+3. Repair visual faults that conceal playable state, then address remaining lighting, effects, blending, and HUD defects.
+4. Later, outside the active gameplay goal: finish Sofdec playback and validate the complete retail boot sequence without overrides.
 
 ## Contributing
 
 Reproduction notes, focused PS2 hardware tests, and generally useful PS2Recomp fixes are welcome. Keep copyrighted game files, extracted assets, generated game code, build products, and probe logs out of commits. Generic runtime changes should include a focused test and be submitted separately to upstream PS2Recomp; game-specific maps, scripts, and diagnostics belong in this repository until their behavior is understood well enough to generalize.
+
+The selected-source build regression checks compile, archive, and relink a small fixture, including failed-compilation handling and preservation of the primary executable. Temporary products are removed automatically:
+
+```powershell
+pwsh -NoProfile -File xmen-legends/tests/test-selected-build.ps1
+pwsh -NoProfile -File xmen-legends/tests/test-selected-build.ps1 -Unity
+```
 
 Use `xmen-legends/run-guarded-probe.ps1` for bounded runtime tests and `xmen-legends/cleanup-generated-artifacts.ps1` after investigation. Runtime probes remain at Normal priority and are user-closable; build tools run at Below Normal priority. The scripts constrain CPU affinity and retain only explicitly pinned evidence.
 
