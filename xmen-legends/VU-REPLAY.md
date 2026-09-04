@@ -283,7 +283,7 @@ exact replay identifies 16 entries, 426 executed PCs, 439 edges (26 non-linear),
 199 distinct lower words, and the same 105 upper words used by the existing native
 recipe. Straight-line paths are partitioned at entries, non-sequential/multiple
 edges, missing coverage, and an eight-pair compiler-unit limit. The result is 80
-blocks averaging 5.32 pairs, with a maximum of eight. The manifest is 39,538 bytes
+blocks averaging 5.32 pairs, with a maximum of eight. The manifest is 56,202 bytes
 in the ignored fixed slot `disc/vu-native-pairs.inc`; it is not tracked. This is
 substantially smaller than compiling all 1968 nonzero pairs or all 2048 addresses
 in the uploaded image.
@@ -291,6 +291,35 @@ in the uploaded image.
 Validation after adding pair discovery: focused PS2VU1 suite 54/54; retail replay
 32/32 at one measured repeat, 40,803 cycles, digest `75d4ff1e67bbbc4c`.
 The replay reported 80,194 interpreted upper executions including its cold pass.
-The pair exporter and partitioner are diagnostic preparation, not a speed
-improvement. Next, execute the resulting AOT blocks behind code-identity checks
-and the existing interpreter fallback.
+The pair exporter and partitioner alone are diagnostic preparation, not a speed
+improvement.
+
+## Native Pair Prototype
+
+The opt-in `PS2X_ENABLE_VU_NATIVE_PAIRS` prototype consumes the ranked unique
+pair records in the private recipe. It compiles constant lower and upper bodies
+from the interpreter's shared implementations while retaining the interpreter's
+hazard checks, pipeline queues, delayed writes, branches, cycle budgets, PATH1
+ordering, code-generation invalidation, and unknown-pair fallback. The source
+option defaults OFF. The current private build contains 64 replay-ranked pairs
+plus three public synthetic pairs; no retail-derived recipe or generated source
+is tracked.
+
+The focused PS2VU1 suite passes 55/55. Pair mode disabled and enabled both replay
+all 32 gameplay captures exactly at 40,803 cycles for one repeat, including every
+register/pipeline field, all VU data, and every emitted GIF byte. Both retain
+digest `75d4ff1e67bbbc4c`. The top-64 private set handles 62,982 of 80,194 retired
+pairs in the one-repeat run (78.54%).
+
+Nine alternating comparisons at 128 repeats per case retain the same digest.
+Interpreter median/mean execution time is 501.040/501.156 ms; native-pair
+median/mean is 465.445/468.259 ms. The median reduction is 7.10%, and every
+native-pair run is faster than its paired interpreter run. This is an offline
+replay gain, not a gameplay FPS result.
+
+An instrumented 2048-repeat native-pair replay shifts the dominant sampled work
+outside the specialized instruction bodies: `commitReadyPipelines` is 25.20% of
+in-module samples, `run` is 17.07%, `queueVfWrite` is 10.16%, and
+`updateFmacFlags` is 8.54%. The next compiled stage should reduce queue and
+retirement crossings while preserving exact mid-slice state; merely compiling
+more low-frequency pair bodies is unlikely to produce practical gameplay speed.
