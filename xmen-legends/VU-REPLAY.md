@@ -175,7 +175,7 @@ in a native-enabled runner; omit the variable to use its interpreter. An explici
 request with an unavailable/incompatible module fails before opening the game.
 VU provider changes clear the decode cache, and the caller must detach/destroy
 interpreters before unloading. This does not change ordinary builds, where the
-CMake option remains OFF. The first game validation is still pending.
+CMake option remains OFF. The first game validation is recorded below.
 
 Set `PS2X_VU_REPLAY_NATIVE=1` to test the native provider. Leave it absent for the
 interpreted comparison in the same native-enabled test executable. Coverage
@@ -208,5 +208,60 @@ The flag-specialization batch identities are test executable
 `D9C4EFD73DB3FF58A2A00FA0E3D8123A7EA49929C25D9F887A58DF82D4A4CA36`.
 The module contains 276 unique kernels and occupies 237,056 bytes. These are
 warm-replay results, not game FPS. Scheduling and retirement still use the
-interpreter; compiled-block execution remains open. Validate a separate,
-consistently rebuilt runner before changing either saved gameplay executable.
+interpreter; compiled-block execution remains open.
+
+## Native Game Validation
+
+September 4: the consistent 107-step runner rebuild completed under the unchanged
+BelowNormal, four-logical-processor, one-worker, 2048 MiB compiler limits. The
+separate `ps2EntryRunner.profile.exe` candidate rejects a relative/missing native
+module with exit code 1 before window initialization. Its link retained the
+existing `CloseWindow`/`ShowCursor` duplicate-symbol warnings; do not call this a
+warning-free build.
+
+Probes 2265 (native) and 2266 (interpreted) used that same candidate, full CPU
+rasterization, host-clock pacing, the reversible `TitleGameplayFirst` movie
+bypass, fast legal handling, and branch-hook bypass. Both also set
+`PS2X_XMEN_START_FIRST_LEVEL=1` and `PS2X_DISABLE_HOST_INPUT=1`. They call the real
+New Game handler; they do not directly load a map. No replay capture, phase
+profiler, raster profiler, wireframe, or raster-skipping option was enabled.
+
+External present-log observation measured indices 1152 through 1280:
+
+| Mode | Seconds for 128 frames | FPS |
+| --- | ---: | ---: |
+| Native | 36.7985431 | 3.4784 |
+| Interpreted | 38.0110288 | 3.3674 |
+
+These two sequential shared-machine samples are not a deterministic workload or
+a sustained-speed guarantee. Both final runtime-owned framebuffers show New York
+and Wolverine, with existing black props, missing foliage, and HUD/effect defects.
+Different character/effect states are not evidence of pixel-identical rendering.
+The small timing difference does not establish practical playability or justify
+replacing the saved gameplay executable. Exactness evidence remains the offline
+state/memory/GIF replay, not comparisons between separate live screenshots.
+
+`PS2X_RUN_VSYNC_LIMIT=1400` requested a normal stop in both runs; both joined the
+game thread and exited with code 0. The guards restored the retail startup
+scripts, and no owned runtime/observer/build process remained. Post-join counters:
+
+- Native VU1: 1,550,972,856 native / 233,407,006 interpreted upper instructions
+  (86.92% native across the entire run, not just the timed gameplay window).
+- Interpreted VU1: 0 native / 1,290,629,286 interpreted. VU0 was 0/0 in both runs.
+
+Candidate SHA-256:
+`EA710AE476878943CD20C355A875A15AD7BB2D2EA426195C5975FEAB01CB01B7`.
+Matching module SHA-256:
+`1B7AFB2D0D4309F15BB63FBD893411A123A8029E4042787613748CD519B74FF8`.
+Build fingerprint:
+`fe38a2094e8cdf0dce32223b62420cb738135f588cd7c8b0189c51eabdbabc0e`.
+Private fixed-slot timing reports are `disc/gameplay-native-rate.json` and
+`disc/gameplay-interpreted-rate.json`. Native framebuffer checkpoints are
+`probe2265-present1280.png` and `probe2266-present1280.png`; generated-image
+retention still expires them after 12 hours.
+
+The primary and staged Probe 2264 executables remain unchanged. Keep this
+candidate opt-in. Next, remove per-pair interpretation/scheduling overhead with
+compiled blocks in offline replay, preserving exact slice boundaries, pending
+results, microcode invalidation, and PATH1 bytes/emission cycles before another
+gameplay integration.
