@@ -62,10 +62,57 @@ must use a new version, not silently reinterpret old captures.
   and Wolverine. An external log observer measured 3.1218 FPS over 128 gameplay
   frames. Existing lighting/HUD defects remain; this is not yet practical speed.
 - Generic cycle-work changes are submitted as
-  [PS2Recomp PR #248](https://github.com/ran-j/PS2Recomp/pull/248), with 426/426
+  [PS2Recomp PR #248](https://github.com/ran-j/PS2Recomp/pull/248), now with 427/427
   upstream-main-based tests passing. Replay diagnostics are not part of that PR.
+- The VI-mask follow-up passes 98/98 local VU tests. Nine longer interleaved pairs
+  use 512 repeats per case: 16,384 timed slices and 20,891,136 cycles per run.
+  Median time falls from 2299.731 ms to 1981.324 ms (13.85%) with the same digest.
+  Every candidate run in that batch is faster than every baseline run. The
+  preceding shorter batch was noisier and is not the primary timing result.
+- Ordinary Probe 2264 preserves textured first-level output and measures
+  3.2485 FPS over 128 frames (39.4022 seconds). The smaller end-to-end gain is
+  not an isolated or sustained-speed guarantee. Both runtime and observer closed.
 
 These samples cover only captured VU work, not every game program or full-frame
 cost. They do not verify GS rendering, audio, gameplay control, or hardware
 accuracy. Synthetic tests and an ordinary full-rendering game run remain required.
 Do not use a replay timing improvement as a gameplay FPS claim.
+
+## Offline Sampling
+
+On Windows x64, `PS2X_VU_REPLAY_PROFILE=1` enables a test-only sampler. It duplicates
+only the calling test thread's handle, briefly suspends that thread to read its
+instruction pointer, and resumes it before allocating or logging. It never
+attaches to another process, drives a window, or sends host input. Do not use it
+for ordinary gameplay, wall-time benchmarks, or live correctness runs. Its
+instrumented replay timings are not performance results.
+
+The test executable's MSVC linker map is overwritten in one fixed slot on build
+(about 10 MB). The report checks the executable/map timestamp before resolving
+sample RVAs. It rejects missing or mismatched identities. Sample storage is
+bounded at 8192 successful samples and 4096 unique addresses.
+
+```powershell
+$env:PS2X_VU_REPLAY_REPEATS = '2048'
+$env:PS2X_VU_REPLAY_PROFILE = '1'
+& .\PS2Recomp\out\xmen-final3-build\ps2xTest\Release\ps2x_tests.exe `
+    *> xmen-legends/vu-replay-sample-confirm.log
+& .\xmen-legends\summarize-vu-sampler.ps1 `
+    -LogPath xmen-legends/vu-replay-sample-confirm.log
+Remove-Item Env:PS2X_VU_REPLAY_PROFILE
+```
+
+Run the earlier replay setup first so the filter and input file are set. The
+confirmation profile checks 65,536 timed slices / 83,564,544 VU cycles with the
+same digest. It records 895 samples: 119 outside the executable, 776 inside,
+377 distinct in-module addresses, no drops, and no sampling failures.
+
+Among in-module samples, `commitReadyPipelines` is 22.29%, `queueVfWrite` 9.28%,
+and `updateFmacFlags` 8.63%. `run` is 12.76%, `execUpper` 10.57%, and
+`calculateFmacExactResult` 8.63%. These include replay setup/comparison and are
+sampling estimates, not percentages of a production frame. An earlier profile
+also places retirement near 22%. This prioritizes completion-cycle indexing of
+pending queues before another broad arithmetic rewrite.
+
+`tests/test-vu-sampler-report.ps1` checks attribution, percentages, mismatched
+builds, missing identity, and empty samples using small synthetic fixtures.
