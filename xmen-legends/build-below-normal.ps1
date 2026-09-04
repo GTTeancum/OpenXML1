@@ -15,6 +15,8 @@ param(
 
     [switch]$LinkOnly,
 
+    [switch]$CompileOnly,
+
     [string]$OutputName = ''
 )
 
@@ -29,8 +31,8 @@ if (-not (Test-Path -LiteralPath $BuildPath -PathType Container)) {
     throw "Build directory does not exist: $BuildPath"
 }
 
-if ($SelectedSource -and $LinkOnly) {
-    throw 'SelectedSource and LinkOnly cannot be used together.'
+if (($SelectedSource -and ($LinkOnly -or $CompileOnly)) -or ($LinkOnly -and $CompileOnly)) {
+    throw 'SelectedSource, LinkOnly, and CompileOnly cannot be used together.'
 }
 if ($OutputName -and -not $LinkOnly) {
     throw 'OutputName requires LinkOnly.'
@@ -46,7 +48,7 @@ $buildExecutable = 'cmake.exe'
 $workingDirectory = $repoRoot
 $logStem = 'build-below-normal'
 $archiveArguments = @()
-if ($SelectedSource -or $LinkOnly) {
+if ($SelectedSource -or $LinkOnly -or $CompileOnly) {
     if ($SelectedSource) {
         $SelectedSource = [System.IO.Path]::GetFullPath($SelectedSource)
         if (-not (Test-Path -LiteralPath $SelectedSource -PathType Leaf)) {
@@ -149,13 +151,19 @@ if ($SelectedSource -or $LinkOnly) {
         $logStem = 'build-selected-below-normal'
         "SELECTED_SOURCE_MAP REQUEST=$SelectedSource EFFECTIVE=$($selectedBuildSources -join ';')"
     }
-    else {
+    elseif ($LinkOnly) {
         $arguments += '/p:Link_MinimalRebuildFromTracking=false'
         $arguments += '/p:BuildProjectReferences=false'
         if ($OutputName) {
             $arguments += "/p:TargetName=$OutputName"
         }
         $logStem = 'link-below-normal'
+    }
+    else {
+        # Dependencies must already be built; do not link or replace the primary.
+        $arguments += '/p:BuildProjectReferences=false'
+        $arguments += '/p:ForceRebuild=true'
+        $logStem = 'compile-below-normal'
     }
 }
 else {

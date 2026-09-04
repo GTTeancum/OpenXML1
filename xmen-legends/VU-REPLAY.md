@@ -78,6 +78,29 @@ cost. They do not verify GS rendering, audio, gameplay control, or hardware
 accuracy. Synthetic tests and an ordinary full-rendering game run remain required.
 Do not use a replay timing improvement as a gameplay FPS claim.
 
+## Rejected Experiments
+
+Two September 4 experiments preserved the real-game replay exactly but did not
+earn integration. The ordinary gameplay executable was not replaced or launched.
+
+- An eight-bucket completion-cycle index for flag/VF queues passed 100 focused
+  VU tests. Nine alternating pairs at 512 repeats per case had medians
+  2148.903 ms baseline / 2131.059 ms candidate. Seven longer pairs at 2048
+  repeats had medians 7873.528 / 7956.781 ms. Results were noisy and did not
+  establish a benefit. The derived indices and snapshot reconstruction were
+  removed; slot-reuse, zero/one-cycle resume, and restart/reset tests remain.
+- Returning cached instruction descriptions by reference passed 119 VU-related
+  tests, including edited code on tracked, untracked, misaligned-PC, and
+  nullable-memory paths. Nine alternating pairs at 1024 repeats per case had
+  medians 3923.547 / 4080.658 ms, about 4% slower. The runtime change was removed;
+  the new cache-path regression remains.
+
+All measured repetitions kept digest `75d4ff1e67bbbc4c`. These shared-machine
+timings do not justify another full-boot performance probe. The next larger
+target is compiled VU execution, tested offline against the interpreter before
+integration. Preserve cycle-budget boundaries, code invalidation, pending
+arithmetic, and graphics-packet timing; do not relax the oracle to force a pass.
+
 ## Offline Sampling
 
 On Windows x64, `PS2X_VU_REPLAY_PROFILE=1` enables a test-only sampler. It duplicates
