@@ -9,6 +9,9 @@ param(
     [ValidateRange(1, 64)]
     [int]$Parallel = 1,
 
+    [ValidateRange(128, 16384)]
+    [int]$MaxCompilerMiB = 2048,
+
     [string]$SelectedSource = '',
 
     [switch]$DisableOptimization,
@@ -326,13 +329,21 @@ function Set-BuildTreePriority {
         foreach ($child in Get-CimInstance Win32_Process -Filter "ParentProcessId = $parentId") {
             [void]$buildProcessIds.Add([int]$child.ProcessId)
             $pending.Enqueue([int]$child.ProcessId)
+            $memoryViolation = $null
             try {
                 $childProcess = Get-Process -Id $child.ProcessId -ErrorAction Stop
                 $childProcess.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::BelowNormal
                 $childProcess.ProcessorAffinity = [IntPtr]0xF
+                if ($child.Name -in @('cl.exe', 'c1xx.exe', 'c2.exe', 'link.exe') -and
+                    $childProcess.PrivateMemorySize64 -gt [long]$MaxCompilerMiB * 1MB) {
+                    $memoryViolation = "Compiler $($child.Name) PID $($child.ProcessId) exceeded $MaxCompilerMiB MiB of private memory."
+                }
             }
             catch {
                 # Short-lived compiler helpers may exit while the process tree is sampled.
+            }
+            if ($memoryViolation) {
+                throw $memoryViolation
             }
         }
     }

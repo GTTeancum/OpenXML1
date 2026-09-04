@@ -134,8 +134,66 @@ Among in-module samples, `commitReadyPipelines` is 22.29%, `queueVfWrite` 9.28%,
 and `updateFmacFlags` 8.63%. `run` is 12.76%, `execUpper` 10.57%, and
 `calculateFmacExactResult` 8.63%. These include replay setup/comparison and are
 sampling estimates, not percentages of a production frame. An earlier profile
-also places retirement near 22%. This prioritizes completion-cycle indexing of
-pending queues before another broad arithmetic rewrite.
+also places retirement near 22%. The completion-cycle index was subsequently
+tested and rejected above; do not repeat it without new evidence.
 
 `tests/test-vu-sampler-report.ps1` checks attribution, percentages, mismatched
 builds, missing identity, and empty samples using small synthetic fixtures.
+
+## Native Upper Prototype
+
+The experimental `PS2X_ENABLE_VU_NATIVE_UPPER` CMake option is OFF by default.
+It compiles constant upper-instruction words using the interpreter's own shared
+arithmetic definitions. Lower instructions, cycle budgets, queues, hazards, and
+PATH1 submission still use the interpreter. This is not yet a compiled-block VU
+engine, nor a gameplay-speed claim.
+
+The offline replay can generate a bounded private instruction recipe by setting
+`PS2X_VU_REPLAY_UPPER_EXPORT` to `disc/vu-native-upper-words.inc`. The additional
+cold pass uses one-cycle slices and must reproduce the original saved result.
+Its counts include dependency-stall retries: they identify fetched candidates,
+not executed-instruction frequencies. The existing 32-case capture yields 105
+unique candidates. Never publish the capture, recipe, generated kernels, or the
+retail-derived native DLL.
+
+Pass the absolute recipe path as `PS2X_VU_NATIVE_WORDS_FILE` when configuring the
+native build. Without a private recipe, it builds only public synthetic kernels.
+Recipes are limited to 64 KiB and 512 unique words; only the fixed numeric macro
+syntax is accepted. Generated translation units contain at most eight kernels,
+with separate object-library targets to prevent MSVC's multi-file batching.
+The initial forced-inlining build grew beyond 14 GiB of compiler working memory
+and was stopped. The revised path uses template instruction selection and normal
+inlining; do not restore forced inlining of the entire arithmetic graph or merge
+these sources into a unity build. The build helper's default 2048 MiB per-compiler
+private-memory watchdog has also been exercised on an oversized attempt.
+
+The Windows x64 module uses an exact-build interface checked against source
+fingerprints, compiler identity, configuration, and state layout. Unknown words
+fall back to the interpreter. The current loader belongs to the tests only;
+production game executables do not load this module. VU provider changes clear
+the decode cache, and the caller must detach/destroy interpreters before unloading.
+
+Set `PS2X_VU_REPLAY_NATIVE=1` to test the native provider. Leave it absent for the
+interpreted comparison in the same native-enabled test executable. Coverage
+counts include the cold pass. `compare-vu-native.ps1` alternates both modes,
+checks unchanged executable/module/capture hashes and the full replay digest,
+and stores one overwritten report at `disc/vu-native-comparison.json`. It runs
+only process-local tests at Normal priority on four logical processors, with
+no profiler or image capture. Runtime binaries remain unchanged until a useful
+gain and ordinary-game validation justify integration.
+
+September 4 validation: all 122 VU-related tests pass. The native-only synthetic
+replay covers 58 instructions with 16 boundary-value patterns, including NaNs,
+infinities, denormals, signed zeros, and conversion limits. Module mismatch,
+reload, provider switching, code-cache invalidation, and interpreted fallback
+checks also pass. All 32 retail records match exactly over 4096 timed slices;
+all 5,172,513 upper instructions including the cold pass take the native path.
+
+Nine alternating 1024-repeat comparisons use 32,768 timed slices per run, with
+digest `75d4ff1e67bbbc4c` throughout. Interpreted median: 4476.139 ms. Native
+median: 4164.376 ms, 6.965% less execution time; native is faster in every pair.
+These are warm-replay/shared-machine results, not a gameplay FPS improvement.
+The first prototype still calls generic exact-result and product-sticky helpers,
+and retains the interpreter's full scheduling/retirement machinery. Further
+specialization and compiled-block execution remain open; this modest result
+alone does not justify another full game boot or replacing the saved executable.
