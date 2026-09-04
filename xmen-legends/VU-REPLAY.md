@@ -323,3 +323,53 @@ in-module samples, `run` is 17.07%, `queueVfWrite` is 10.16%, and
 `updateFmacFlags` is 8.54%. The next compiled stage should reduce queue and
 retirement crossings while preserving exact mid-slice state; merely compiling
 more low-frequency pair bodies is unlikely to produce practical gameplay speed.
+
+## Block Retirement Experiments
+
+A generic native-block wrapper remained exact but made the two hottest blocks
+18.37% slower in replay. A census of the hottest eight-pair block at PC `0x0B00`
+found one scheduler-entry shape in 1,200 observations and no dependency stalls.
+Replacing its generic pipeline scan with a fixed retirement schedule also stayed
+exact, but a seven-round, 1024-repeat comparison measured 4,206.261 ms for native
+pairs and 4,318.020 ms for the scheduled block at the median: 2.657% slower.
+
+A second temporary prototype bypassed the pair wrapper's queue allocation and
+committed this block's known early writes directly. Both modes still reproduced
+all 32 captures at 40,803 cycles with digest `75d4ff1e67bbbc4c`. In a seven-round,
+1024-repeat alternating comparison, native pairs measured 4,020.856 ms and the
+direct-state block 4,200.546 ms at the median: 4.469% slower. The game-specific
+prototype and its retail-derived words were then removed without a gameplay
+probe.
+
+These results reject dispatch-only and retirement-only block wrappers. The next
+useful prototype must emit a complete block body, inline its arithmetic, and keep
+intermediate vector values in host registers, with exact entry/exit materialization
+for pipeline state and slice boundaries. The interpreter remains the fallback for
+uncompiled or invalidated paths.
+
+## Direct Whole-Block Prototype
+
+The direct prototype now emits complete constant-word block bodies. It proves
+internal VF, ACC, and VI dependencies at compile time, checks live entry hazards
+and microcode words at runtime, advances the architectural branch delay slot, and
+materializes queued writes and stores at their original cycles. Unsupported words,
+changed microcode, pending resources, dependency hazards, and short cycle budgets
+fall back before any partial native execution. Blocks can be enabled independently
+from the exact-pair provider at runtime.
+
+The current private build selects 16 replay-ranked blocks plus one public synthetic
+regression block. The private blocks execute 49,182 of the 80,194 retired pairs in
+the one-repeat gameplay capture (61.33%), across 2,682 successful block entries out
+of 5,250 attempts. All 32 captures still complete in 40,803 cycles with exact state,
+VU memory, GIF bytes, and digest `75d4ff1e67bbbc4c`.
+
+Seven alternating 1024-repeat comparisons used exact-pair mode as the baseline.
+Its median was 4,361.182 ms; enabling whole blocks reduced the median to 3,795.386
+ms, a 12.973% reduction in replay execution time. Every run retained the expected
+digest. This is an offline VU-slice result, not a game FPS measurement.
+
+The public `PS2VU1` suite passes 53/53 and covers vector loads, delayed stores,
+integer dependencies, an internal backward loop, branch delay behavior, and
+too-small-budget fallback. Enabling the private replay adds one test for 54/54.
+No retail-derived words are tracked in the repository; the private recipe remains
+in the ignored fixed slot under `disc/`.
