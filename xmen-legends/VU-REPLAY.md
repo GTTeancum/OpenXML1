@@ -273,20 +273,24 @@ upper-kernel discovery, but records a pair only when its PC retires. Dependency
 stall retries therefore do not inflate pair execution counts. Set
 `PS2X_VU_REPLAY_PAIR_EXPORT` to a private output path while running the recorded
 replay test. The writer accepts at most 4096 entries, validates aligned in-range
-PCs and nonzero execution counts, and emits exact PC/lower/upper triples. It does
-not emit register, memory, or GIF payloads. The output is still derived from the
-retail microprogram and must not be distributed.
+PCs and nonzero execution counts, and emits exact PC/lower/upper triples. It also
+records replay entry PCs and observed retiring-PC successors. It does not emit
+register, memory, or GIF payloads. The output is still derived from the retail
+microprogram and must not be distributed.
 
 All 32 current gameplay captures contain the same 16 KiB VU1 code image. Their
-exact replay identifies 426 executed PCs, 199 distinct lower words, and the same
-105 upper words used by the existing native recipe. The pair recipe is 21,796
-bytes in the ignored fixed slot `disc/vu-native-pairs.inc`; it is not tracked.
-This is substantially smaller than compiling all 1968 nonzero pairs or all 2048
-addresses in the uploaded image.
+exact replay identifies 16 entries, 426 executed PCs, 439 edges (26 non-linear),
+199 distinct lower words, and the same 105 upper words used by the existing native
+recipe. Straight-line paths are partitioned at entries, non-sequential/multiple
+edges, missing coverage, and an eight-pair compiler-unit limit. The result is 80
+blocks averaging 5.32 pairs, with a maximum of eight. The manifest is 39,538 bytes
+in the ignored fixed slot `disc/vu-native-pairs.inc`; it is not tracked. This is
+substantially smaller than compiling all 1968 nonzero pairs or all 2048 addresses
+in the uploaded image.
 
 Validation after adding pair discovery: focused PS2VU1 suite 54/54; retail replay
 32/32 at one measured repeat, 40,803 cycles, digest `75d4ff1e67bbbc4c`.
 The replay reported 80,194 interpreted upper executions including its cold pass.
-The pair exporter is diagnostic preparation, not a speed improvement. Next,
-partition these observed PCs at control-flow and slice boundaries and execute
-the resulting AOT blocks behind the existing interpreter fallback.
+The pair exporter and partitioner are diagnostic preparation, not a speed
+improvement. Next, execute the resulting AOT blocks behind code-identity checks
+and the existing interpreter fallback.
