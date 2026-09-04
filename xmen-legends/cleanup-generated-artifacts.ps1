@@ -177,7 +177,24 @@ if (Test-Path -LiteralPath $activeBuild -PathType Container) {
             $_.Extension -ne '.exe'
         }
 }
-$obsoleteFiles = @($obsoleteFiles | Sort-Object FullName -Unique)
+$protectedGeneratedNames = [Collections.Generic.HashSet[string]]::new(
+    [StringComparer]::OrdinalIgnoreCase
+)
+foreach ($name in @(
+    'ps2EntryRunner.next.exe.exe',
+    'ps2x_tests.vu-baseline.exe',
+    'ps2x_tests.vu-retire.exe',
+    'vu_native_words.inc',
+    'vu_native_batch_152.obj',
+    'gs-present-first-nonblack-0.ppm'
+)) {
+    [void]$protectedGeneratedNames.Add($name)
+}
+$obsoleteFiles = @(
+    $obsoleteFiles |
+        Where-Object { -not $protectedGeneratedNames.Contains($_.Name) } |
+        Sort-Object FullName -Unique
+)
 
 $removedFileBytes = [int64]0
 foreach ($file in $obsoleteFiles) {
