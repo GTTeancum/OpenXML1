@@ -265,3 +265,28 @@ candidate opt-in. Next, remove per-pair interpretation/scheduling overhead with
 compiled blocks in offline replay, preserving exact slice boundaries, pending
 results, microcode invalidation, and PATH1 bytes/emission cycles before another
 gameplay integration.
+
+## Compiled-Block Recipe
+
+The next-stage recipe exporter performs the same bounded one-cycle cold pass as
+upper-kernel discovery, but records a pair only when its PC retires. Dependency
+stall retries therefore do not inflate pair execution counts. Set
+`PS2X_VU_REPLAY_PAIR_EXPORT` to a private output path while running the recorded
+replay test. The writer accepts at most 4096 entries, validates aligned in-range
+PCs and nonzero execution counts, and emits exact PC/lower/upper triples. It does
+not emit register, memory, or GIF payloads. The output is still derived from the
+retail microprogram and must not be distributed.
+
+All 32 current gameplay captures contain the same 16 KiB VU1 code image. Their
+exact replay identifies 426 executed PCs, 199 distinct lower words, and the same
+105 upper words used by the existing native recipe. The pair recipe is 21,796
+bytes in the ignored fixed slot `disc/vu-native-pairs.inc`; it is not tracked.
+This is substantially smaller than compiling all 1968 nonzero pairs or all 2048
+addresses in the uploaded image.
+
+Validation after adding pair discovery: focused PS2VU1 suite 54/54; retail replay
+32/32 at one measured repeat, 40,803 cycles, digest `75d4ff1e67bbbc4c`.
+The replay reported 80,194 interpreted upper executions including its cold pass.
+The pair exporter is diagnostic preparation, not a speed improvement. Next,
+partition these observed PCs at control-flow and slice boundaries and execute
+the resulting AOT blocks behind the existing interpreter fallback.
