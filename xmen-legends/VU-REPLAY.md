@@ -169,9 +169,13 @@ private-memory watchdog has also been exercised on an oversized attempt.
 
 The Windows x64 module uses an exact-build interface checked against source
 fingerprints, compiler identity, configuration, and state layout. Unknown words
-fall back to the interpreter. The current loader belongs to the tests only;
-production game executables do not load this module. VU provider changes clear
-the decode cache, and the caller must detach/destroy interpreters before unloading.
+fall back to the interpreter. Tests and the opt-in runner use the same loader.
+Set `PS2X_VU_NATIVE_MODULE` to the absolute path of the matching DLL to enable it
+in a native-enabled runner; omit the variable to use its interpreter. An explicit
+request with an unavailable/incompatible module fails before opening the game.
+VU provider changes clear the decode cache, and the caller must detach/destroy
+interpreters before unloading. This does not change ordinary builds, where the
+CMake option remains OFF. The first game validation is still pending.
 
 Set `PS2X_VU_REPLAY_NATIVE=1` to test the native provider. Leave it absent for the
 interpreted comparison in the same native-enabled test executable. Coverage
@@ -182,18 +186,27 @@ only process-local tests at Normal priority on four logical processors, with
 no profiler or image capture. Runtime binaries remain unchanged until a useful
 gain and ordinary-game validation justify integration.
 
-September 4 validation: all 122 VU-related tests pass. The native-only synthetic
-replay covers 58 instructions with 16 boundary-value patterns, including NaNs,
-infinities, denormals, signed zeros, and conversion limits. Module mismatch,
+September 4 flag-specialization validation: all 122 VU-related tests pass. The
+native-only synthetic replay now covers 173 instruction words with 32 register
+patterns (5536 cases), including NaNs, infinities, denormals, signed zeros,
+conversion limits, deterministic random bits, partial/empty masks, in-place
+destinations, and VF0. Module mismatch,
 reload, provider switching, code-cache invalidation, and interpreted fallback
 checks also pass. All 32 retail records match exactly over 4096 timed slices;
 all 5,172,513 upper instructions including the cold pass take the native path.
 
-Nine alternating 1024-repeat comparisons use 32,768 timed slices per run, with
-digest `75d4ff1e67bbbc4c` throughout. Interpreted median: 4476.139 ms. Native
-median: 4164.376 ms, 6.965% less execution time; native is faster in every pair.
-These are warm-replay/shared-machine results, not a gameplay FPS improvement.
-The first prototype still calls generic exact-result and product-sticky helpers,
-and retains the interpreter's full scheduling/retirement machinery. Further
-specialization and compiled-block execution remain open; this modest result
-alone does not justify another full game boot or replacing the saved executable.
+The first prototype's nine alternating 1024-repeat comparisons had medians
+4476.139 ms interpreted / 4164.376 ms native, 6.965% less execution time. After
+specializing the exact-result and product-sticky helpers, a new nine-pair batch
+has medians 5232.074 ms interpreted / 4632.082 ms native (11.468% less execution
+time). Native wins each pair. Every run checks 32,768 timed slices and retains
+digest `75d4ff1e67bbbc4c`. Do not compare raw times across these shared-machine
+batches as if they were an isolated before/after test.
+
+The flag-specialization batch identities are test executable
+`638FF47CFFB05447F12192EFF47A325DA2565505842B3E4EF2CBC29EB8B205DB` and module
+`D9C4EFD73DB3FF58A2A00FA0E3D8123A7EA49929C25D9F887A58DF82D4A4CA36`.
+The module contains 276 unique kernels and occupies 237,056 bytes. These are
+warm-replay results, not game FPS. Scheduling and retirement still use the
+interpreter; compiled-block execution remains open. Validate a separate,
+consistently rebuilt runner before changing either saved gameplay executable.

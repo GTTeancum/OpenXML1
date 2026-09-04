@@ -1,3 +1,5 @@
 add_library(selected_fixture STATIC selected.cpp retained.cpp)
-add_executable(selected_runner main.cpp)
+add_executable(selected_runner main.cpp runner_extra.cpp)
+target_precompile_headers(selected_runner PRIVATE <cstdint>)
+set_target_properties(selected_runner PROPERTIES UNITY_BUILD_BATCH_SIZE 1)
 target_link_libraries(selected_runner PRIVATE selected_fixture)

@@ -232,6 +232,7 @@ try {
         Executable = $buildExecutable
         Arguments = @($arguments)
         ArchiveArguments = @($archiveArguments)
+        CompileSeparately = [bool]$CompileOnly
         WorkingDirectory = $workingDirectory
         StdoutPath = $stdoutPath
         StderrPath = $stderrPath
@@ -247,9 +248,39 @@ $gate = [Threading.EventWaitHandle]::OpenExisting($payload.EventName)
 try {
     [void]$gate.WaitOne()
     Set-Location -LiteralPath $payload.WorkingDirectory
-    & $payload.Executable @($payload.Arguments) `
-        1> $payload.StdoutPath `
-        2> $payload.StderrPath
+    if ($payload.CompileSeparately) {
+        # Ask MSBuild to evaluate configuration-specific items and PCH metadata.
+        '' | Set-Content -LiteralPath $payload.StdoutPath
+        $queryArguments = @($payload.Arguments | Where-Object { $_ -notlike '/t:*' })
+        $queryArguments += @('/nologo', '/getItem:ClCompile')
+        $itemJson = (& $payload.Executable @queryArguments 2> $payload.StderrPath) -join "`n"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        $items = @(($itemJson | ConvertFrom-Json).Items.ClCompile |
+            Where-Object { $_.ExcludedFromBuild -ne 'true' -and $_.IncludeInUnityFile -ne 'true' } |
+            Sort-Object @{Expression = { $_.PrecompiledHeader -ne 'Create' }}, FullPath)
+        if ($items.Count -eq 0) { throw 'MSBuild returned no active compiler sources.' }
+        $index = 0
+        foreach ($item in $items) {
+            if (-not $item.FullPath -or -not (Test-Path -LiteralPath $item.FullPath -PathType Leaf)) {
+                throw "Compiler source does not exist: $($item.FullPath)"
+            }
+            $index++
+            "COMPILE_SOURCE INDEX=$index TOTAL=$($items.Count) PATH=$($item.FullPath)" |
+                Add-Content -LiteralPath $payload.StdoutPath
+            # A fresh compiler process per source bounds MSVC's accumulated memory.
+            $sourceArguments = @($payload.Arguments) + @(
+                "/p:SelectedFiles=$($item.FullPath)", '/p:SelectedFilesBuildPCH=false')
+            & $payload.Executable @sourceArguments `
+                1>> $payload.StdoutPath `
+                2>> $payload.StderrPath
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        }
+    }
+    else {
+        & $payload.Executable @($payload.Arguments) `
+            1> $payload.StdoutPath `
+            2> $payload.StderrPath
+    }
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     if ($payload.ArchiveArguments.Count -gt 0) {
         & $payload.Executable @($payload.ArchiveArguments) `

@@ -38,14 +38,27 @@ try {
     $env:_CL_ = '/DRUNNER_BUILD_BONUS=5'
     & $helper -BuildPath $build -Target selected_runner -CompileOnly
     if ($LASTEXITCODE -ne 0) { throw 'Compile-only runner build failed.' }
+    $compileSteps = @(Select-String -LiteralPath (Join-Path $build 'compile-below-normal.out.log') `
+        -Pattern '^COMPILE_SOURCE ')
+    if ($compileSteps.Count -ne 3 -or $compileSteps[0].Line -notmatch 'cmake_pch.cxx') {
+        throw 'Compile-only must build the PCH first, then each of the two sources separately.'
+    }
     $env:_CL_ = ''
     if ((Get-FileHash -LiteralPath $exe).Hash -ne $originalHash -or
         (Get-FileHash -LiteralPath $candidate).Hash -ne $candidateHash) {
         throw 'Compile-only replaced an executable.'
     }
     & $helper -BuildPath $build -Target selected_runner -LinkOnly -OutputName selected_candidate
-    if ($LASTEXITCODE -ne 0 -or (& $candidate) -ne '41') {
+    if ($LASTEXITCODE -ne 0 -or (& $candidate) -ne '51') {
         throw 'Candidate did not use the compile-only runner and retained library.'
+    }
+    $candidateHash = (Get-FileHash -LiteralPath $candidate).Hash
+    $env:_CL_ = '/DRUNNER_BUILD_BONUS=intentionally_invalid_identifier'
+    & $helper -BuildPath $build -Target selected_runner -CompileOnly | Out-Null
+    if ($LASTEXITCODE -eq 0) { throw 'Invalid runner source unexpectedly compiled.' }
+    if ((Get-FileHash -LiteralPath $exe).Hash -ne $originalHash -or
+        (Get-FileHash -LiteralPath $candidate).Hash -ne $candidateHash) {
+        throw 'Failed compile-only changed a saved executable.'
     }
     $library = Join-Path $build 'ps2xRuntime\Release\selected_fixture.lib'
     $libraryHash = (Get-FileHash -LiteralPath $library).Hash
