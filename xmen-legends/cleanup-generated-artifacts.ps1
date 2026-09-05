@@ -204,10 +204,7 @@ $activeRelease = Join-Path $activeBuild 'ps2xRuntime\Release'
 if (Test-Path -LiteralPath $activeRelease -PathType Container) {
     $obsoleteFiles += Get-ChildItem -LiteralPath $activeRelease -File -Force |
         Where-Object {
-            $_.Name -match '^ps2EntryRunner\.(pre|old|bak|probe).*\.exe$' -or
-            ($_.Name -eq 'ps2EntryRunner.next.exe' -and
-                $_.LastWriteTimeUtc -lt $staleMediaCutoff -and
-                -not $activeRuntimePaths.Contains([IO.Path]::GetFullPath($_.FullName)))
+            $_.Name -match '^ps2EntryRunner\.(pre|old|bak|probe).*\.exe$'
         }
 }
 if (Test-Path -LiteralPath $activeBuild -PathType Container) {
@@ -222,6 +219,10 @@ $protectedGeneratedNames = [Collections.Generic.HashSet[string]]::new(
     [StringComparer]::OrdinalIgnoreCase
 )
 foreach ($name in @(
+    'ps2EntryRunner.exe',
+    'ps2EntryRunner.next.exe',
+    'ps2EntryRunner.candidate.exe',
+    'ps2EntryRunner.profile.exe',
     'ps2EntryRunner.next.exe.exe',
     'ps2x_tests.vu-baseline.exe',
     'ps2x_tests.vu-retire.exe',

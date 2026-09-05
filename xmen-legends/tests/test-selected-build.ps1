@@ -20,6 +20,21 @@ try {
     $exe = Join-Path $build 'ps2xRuntime\Release\selected_runner.exe'
     if ((& $exe) -ne '18') { throw 'Incorrect initial library contents.' }
     $originalHash = (Get-FileHash -LiteralPath $exe).Hash
+    & $helper -BuildPath $build -ConfigureCache 'CMAKE_VERBOSE_MAKEFILE:BOOL=ON'
+    if ($LASTEXITCODE -ne 0 -or -not (Select-String -LiteralPath (Join-Path $build 'CMakeCache.txt') `
+            -Pattern '^CMAKE_VERBOSE_MAKEFILE:BOOL=ON$' -Quiet)) {
+        throw 'Resource-limited cache reconfiguration failed.'
+    }
+    if ((Get-FileHash -LiteralPath $exe).Hash -ne $originalHash) {
+        throw 'Reconfiguration modified the saved executable.'
+    }
+    $rejected = $false
+    try { & $helper -BuildPath $build -ConfigureCache '-G=invalid' }
+    catch {
+        if ($_.Exception.Message -notlike '*Invalid CMake cache definition*') { throw }
+        $rejected = $true
+    }
+    if (-not $rejected) { throw 'Invalid cache definition was accepted.' }
     $retainedObject = Join-Path $build 'ps2xRuntime\selected_fixture.dir\Release\retained.obj'
     if (-not $Unity) { $retainedTime = (Get-Item -LiteralPath $retainedObject).LastWriteTimeUtc }
     $env:_CL_ = '/DSELECTED_BUILD_VALUE=29'
@@ -70,7 +85,7 @@ try {
         (Get-Item -LiteralPath $library).LastWriteTimeUtc -ne $libraryTime) {
         throw 'A failed compilation modified the library.'
     }
-    "PASS selected archive, retained object, compile-only runner, candidate relink, primary preservation, compile failure (unity=$Unity)"
+    "PASS reconfiguration, selected archive, retained object, compile-only runner, candidate relink, primary preservation, compile failure (unity=$Unity)"
 }
 finally {
     $env:_CL_ = $previousCl

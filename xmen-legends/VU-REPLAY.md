@@ -357,6 +357,49 @@ changed microcode, pending resources, dependency hazards, and short cycle budget
 fall back before any partial native execution. Blocks can be enabled independently
 from the exact-pair provider at runtime.
 
+The game runner also accepts `PS2X_VU_NATIVE_BLOCKS=1` when built with
+`PS2X_ENABLE_VU_NATIVE_BLOCKS=ON`. `PS2X_VU_NATIVE_PAIRS=1` enables compiled-pair
+fallback outside those blocks. Both modes remain off when their variables are
+absent, and their post-join counters distinguish actual execution from simply
+selecting a mode.
+
+`measure-gameplay.ps1 -Probe <unused-number> -Mode Blocks` runs the separate
+`ps2EntryRunner.candidate.exe` through the real New Game handler, observes
+native present-log indices 1152-1280, and requests a normal stop at tick 1400.
+Use `-Mode Interpreted` with another unused probe number for a same-executable
+baseline. The helper clears inherited experimental variables, disables host
+input and profiling, keeps full CPU rasterization, and uses the guarded movie
+bypass/restoration path. It rejects missing framebuffers, absent execution
+counters, changed executables, abnormal exits, and missing/coalesced timing
+endpoints. Each mode overwrites one small ignored `disc/gameplay-<mode>-rate.json`
+report. These external wall-time samples are not deterministic frame comparisons
+or a sustained-speed guarantee.
+
+The September 4 runner integration is not yet live-validated. All 107 runner
+compilation units succeeded with global IPO enabled, but the linker exceeded the
+2048 MiB process limit both normally and with `/CGTHREADS:1`. The guard stopped
+both links. `PS2X_ENABLE_RUNNER_IPO=OFF` now permits disabling IPO on the generated
+game target while leaving the runtime and native kernels optimized. Its default
+is ON, preserving existing build behavior. The active cache uses OFF; generated
+project inspection confirms runner IPO is absent while runtime IPO remains on.
+**The runner objects still need a complete rebuild under this setting.**
+
+Resource-limited reconfiguration is available through:
+
+```powershell
+& .\xmen-legends\build-below-normal.ps1 -ConfigureCache 'PS2X_ENABLE_RUNNER_IPO:BOOL=OFF'
+& .\xmen-legends\build-below-normal.ps1 -Target ps2_runtime
+& .\xmen-legends\build-below-normal.ps1 -CompileOnly
+& .\xmen-legends\build-below-normal.ps1 -LinkOnly -OutputName ps2EntryRunner.candidate
+```
+
+The failed link left `ps2EntryRunner.profile.exe` as an incomplete 2 MiB file.
+Its removal was policy-blocked; do not retry deleting or moving it. It is not a
+runnable fallback. The primary and staged executable hashes remain unchanged.
+The new measurement helper validates PE headers and section extents before
+starting a run. No gameplay run or new FPS measurement occurred during this
+integration attempt; probes 2267/2268 remain available for the comparison.
+
 The current private build selects 16 replay-ranked blocks plus one public synthetic
 regression block. The private blocks execute 49,182 of the 80,194 retired pairs in
 the one-repeat gameplay capture (61.33%), across 2,682 successful block entries out

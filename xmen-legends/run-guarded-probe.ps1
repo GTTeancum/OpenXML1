@@ -5,7 +5,7 @@ param(
     [ValidateSet('Debug', 'Release', 'RelWithDebInfo', 'MinSizeRel')]
     [string]$Config = 'Release',
 
-    [ValidateSet('Auto', 'Primary', 'Staged', 'Profile')]
+    [ValidateSet('Auto', 'Primary', 'Staged', 'Profile', 'Candidate')]
     [string]$RuntimeVariant = 'Primary',
 
     [int]$TimeoutSeconds = 220,
@@ -375,10 +375,12 @@ $runtimeDirectory = Join-Path $root "PS2Recomp\out\xmen-final3-build\ps2xRuntime
 $primaryExe = Join-Path $runtimeDirectory 'ps2EntryRunner.exe'
 $stagedExe = Join-Path $runtimeDirectory 'ps2EntryRunner.next.exe'
 $profileExe = Join-Path $runtimeDirectory 'ps2EntryRunner.profile.exe'
+$candidateExe = Join-Path $runtimeDirectory 'ps2EntryRunner.candidate.exe'
 $exe = switch ($RuntimeVariant) {
     'Primary' { $primaryExe }
     'Staged' { $stagedExe }
     'Profile' { $profileExe }
+    'Candidate' { $candidateExe }
     default {
         if (Test-Path -LiteralPath $stagedExe -PathType Leaf) {
             $stagedExe

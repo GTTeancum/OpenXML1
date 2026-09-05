@@ -20,6 +20,8 @@ param(
 
     [switch]$CompileOnly,
 
+    [string[]]$ConfigureCache = @(),
+
     [string]$OutputName = ''
 )
 
@@ -45,6 +47,9 @@ if ($OutputName -and $OutputName.IndexOfAny([System.IO.Path]::GetInvalidFileName
 }
 if ($DisableOptimization -and -not $SelectedSource) {
     throw 'DisableOptimization requires SelectedSource.'
+}
+if ($ConfigureCache.Count -and ($SelectedSource -or $LinkOnly -or $CompileOnly -or $OutputName)) {
+    throw 'ConfigureCache cannot be combined with compile or link selections.'
 }
 
 $buildExecutable = 'cmake.exe'
@@ -168,6 +173,19 @@ if ($SelectedSource -or $LinkOnly -or $CompileOnly) {
         $arguments += '/p:ForceRebuild=true'
         $logStem = 'compile-below-normal'
     }
+}
+elseif ($ConfigureCache.Count) {
+    $homeLine = Select-String -LiteralPath (Join-Path $BuildPath 'CMakeCache.txt') `
+        -Pattern '^CMAKE_HOME_DIRECTORY:INTERNAL=(.+)$' | Select-Object -First 1
+    if (-not $homeLine) { throw 'Cannot locate the source directory for this build.' }
+    $arguments = @('-S', $homeLine.Matches[0].Groups[1].Value, '-B', $BuildPath)
+    foreach ($definition in $ConfigureCache) {
+        if ($definition -notmatch '^[A-Za-z_][A-Za-z0-9_]*(?::[A-Z]+)?=') {
+            throw "Invalid CMake cache definition: $definition"
+        }
+        $arguments += "-D$definition"
+    }
+    $logStem = 'configure-below-normal'
 }
 else {
     $arguments = @(
