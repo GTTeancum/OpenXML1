@@ -57,11 +57,21 @@ if (Test-Path -LiteralPath $cachePath -PathType Leaf) {
 }
 if ($null -ne $nativeBlockLimit) {
     $runtimeBuild = Join-Path $activeBuild 'ps2xRuntime'
+    $syntheticRecipe = Join-Path $recomp `
+        'ps2xRuntime\src\lib\vu\ps2_vu1_native_pair_synthetic.inc'
+    $publicBlockCount = if (Test-Path -LiteralPath $syntheticRecipe -PathType Leaf) {
+        @(Select-String -LiteralPath $syntheticRecipe `
+            -Pattern '^VU_NATIVE_BLOCK\(').Count
+    }
+    else {
+        0
+    }
+    $maxActiveBlockIndex = $nativeBlockLimit + $publicBlockCount - 1
     $orphanedBlockDirectories = @(
         Get-ChildItem -LiteralPath $runtimeBuild -Directory -Force |
             Where-Object {
                 $_.Name -match '^ps2_vu_native_direct_block_([0-9]+)\.dir$' -and
-                [int]$Matches[1] -gt $nativeBlockLimit
+                [int]$Matches[1] -gt $maxActiveBlockIndex
             }
     )
     foreach ($directory in $orphanedBlockDirectories) {
