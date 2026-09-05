@@ -199,7 +199,7 @@ $testRelease = Join-Path $activeBuild 'ps2xTest\Release'
 if (Test-Path -LiteralPath $testRelease -PathType Container) {
     $obsoleteFiles += Get-ChildItem -LiteralPath $testRelease -File -Force |
         Where-Object {
-            $_.Name -match '^ps2x_tests\.(block[0-9]+|flags-base|ready-base|flagretire-base|blockexit-base|kick-base)\.exe$'
+            $_.Name -match '^ps2x_tests\.(block[0-9]+|flags-base|ready-base|flagretire-base|blockexit-base|kick-base|schedule-base)\.exe$'
         }
 }
 if ($null -ne $nativeBlockLimit) {

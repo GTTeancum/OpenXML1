@@ -649,3 +649,62 @@ primary, staged, and last live-validated candidate hashes remain unchanged.
 Do not describe this build as a gameplay speed improvement or promote it before
 benchmarking and subsequent game validation. All owned build/test processes
 were closed before stopping.
+
+## Broader Selection Timing Audit
+
+The continuation after the checkpoint completed three seven-round alternating
+comparisons. All recorded states, memory, GIF output, and cycles remained exact.
+The scheduler-plus-broader-recipe executable was
+`7F4AC65C4B338F2131AD97DA6DEBEAF3DFDCAEF016BE3D39767436DDC55686F6`.
+
+| Reference | Capture / repeats | Reference median | Candidate median | Candidate result |
+| --- | --- | --- | --- | --- |
+| Same broader recipe without scheduler | Spread / 2048 | 2129.191 ms | 2138.865 ms | 0.454% slower, 3/7 wins |
+| Accepted original recipe | Original / 1024 | 2433.920 ms | 2633.299 ms | 8.192% slower, 0/7 wins |
+| Accepted original recipe | Spread / 2048 | 2024.147 ms | 2080.477 ms | 2.783% slower, 0/7 wins |
+
+The scheduler did not increase block coverage in the broader selection:
+16,562,067 block pairs over the cold pass plus 2048 timed spread repeats, with
+or without scheduling. The accepted original selection executes 18,418,461
+block pairs on that same workload. On the original capture, the candidate
+executes 25,360,550 block pairs versus the accepted build's 30,680,300.
+This is evidence against promoting the broader recipe, not evidence that more
+sampled PCs automatically make a better compiled selection.
+
+Restore the original `disc/vu-native-pairs.inc` selection and isolate scheduler
+cost there before deciding whether to retain the new scheduling implementation.
+Do not expand the block budget or launch another game probe for these results.
+
+The original recipe was then restored with the same guarded build settings.
+All 125 VU-related tests pass and both captures are exact at normal and
+1/8/16/64-cycle slicing. The rebuilt test executable is
+`A81E93D0867C631B145E98C996446DDBEDD5693BBF64786602BE040C52DF7A76`.
+Seven alternating comparisons against the accepted original-recipe build give:
+
+| Capture / repeats | Before scheduler | With scheduler | Candidate result |
+| --- | --- | --- | --- |
+| Original / 1024 | 2443.675 ms | 2420.845 ms | 0.934% lower, 5/7 wins |
+| Spread / 2048 | 2022.707 ms | 2030.595 ms | 0.390% slower, 2/7 wins |
+
+Both modes execute identical block-pair counts. Treat this as effectively
+neutral, not a meaningful performance improvement. Keep the scheduler as an
+experimental capability in source, but do not promote a new game build for it.
+The broader recipe is not selected in the local cache. Temporary comparison
+binaries can now be removed; their hashes and results remain recorded above.
+
+A process-local sampler on 4096 spread repeats recorded 359 samples, 60 outside
+the module, zero dropped samples, and zero sampling failures. The linker-map
+timestamp matched the executable. Of the 299 in-module samples, pipeline
+retirement accounted for 27 (9.03%), native flag retirement 18 (6.02%),
+interpreter upper dispatch 17 (5.69%), queued stores 15 (5.02%), and readiness
+calculation 10 (3.34%). Replay serialization and loading are also substantial
+in this whole-test profile, so these are investigation leads, not production
+frame percentages. The instrumented replay still matched all recorded results.
+Investigate block fallback reasons and per-pair bookkeeping next rather than
+reranking the same kernels or repeating whole-game boot timing for tiny changes.
+
+Post-audit cleanup removed both temporary comparison executables and 186 inactive
+Debug directories. The workspace is 7.710 GiB / 29,090 files; all eight protected
+artifacts and 21 active block-source/dispatch files remain. The primary, staged,
+and gameplay-candidate executable hashes are unchanged. No game was launched,
+no screenshots were taken, and all owned build/test processes have exited.
