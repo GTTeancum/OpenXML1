@@ -418,3 +418,35 @@ alternating 1024-repeat rounds: the accepted build measured 3,265.104 ms and the
 candidate 3,453.661 ms at the median, a 5.775% regression. The implementation
 was removed. Future block work must generate direct state transitions without
 building runtime schedule arrays or copying pipeline entries on the stack.
+
+## Blocks During PATH1 Transfers
+
+Temporary per-entry counters found 1,352 block attempts with active PATH1
+transfers at 0x18c8, 0x1908, 0x1948, 0x1968, and 0x19a0. Those transfers were a
+measured fallback cause; duplicate compiled suffixes alone do not explain the
+lost coverage. Entry 0x0b80 also failed 210 attempts with a pending VI write.
+That separate restriction is still in place.
+
+PS2Recomp `6ce7a2a` advances an existing PATH1 transfer after the block's
+architectural writes at each original cycle boundary. A block may consume the
+already parsed packet payload, including completion of an EOP packet. It falls
+back if it would need to parse another GIFtag, because malformed input could
+stop execution before the block's assumed exit. This retains store visibility,
+partial packet bytes, and original delivery cycles.
+
+Coverage increases from 49,182 to 56,582 of 80,194 retired pairs (70.56%). Seven
+alternating 1024-repeat comparisons measured 3,258.914 ms baseline / 3,118.863 ms
+candidate at the median, a 4.297% reduction with seven candidate wins. Both
+comparison binaries had the same temporary diagnostic hooks with reporting off;
+those hooks were removed afterward. The final build passes 54/54 public PS2VU1
+tests, and the 32 gameplay captures retain 40,803 cycles and digest
+`75d4ff1e67bbbc4c` with normal and 1/8/16/64-cycle slicing. The new synthetic
+test compares complete serialized records across 35 packet/budget combinations,
+including stores into a live packet, completion inside a block, chained tags,
+and malformed tags. The gameplay runner has not been updated or timed yet.
+
+`compare-vu-blocks.ps1 -BaselineExecutable <path>` runs matched block-enabled
+binaries in alternating order at Normal priority with affinity 0xF. It checks
+the capture identity, cycles, output digest, actual block execution, and input
+file hashes, then overwrites the single ignored `disc/vu-block-comparison.json`
+report. `-BaselinePairsOnly` compares pair and block execution in one binary.
