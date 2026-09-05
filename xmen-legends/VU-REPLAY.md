@@ -384,8 +384,8 @@ is ON, preserving existing build behavior. On September 5, the active OFF cache
 completed a fresh 107-unit rebuild with `/O2`; an audit found no `/GL` or feature-
 define mismatches. The `/CGTHREADS:1` link then succeeded under the unchanged cap,
 producing complete PE `ps2EntryRunner.candidate.exe`. The latest relink after
-pending-VI support has SHA-256
-`775F02C4FFF521D582BE45612A9300F27742C834F71C323F8DB4E6D18E573033`.
+entry-stall support has SHA-256
+`CBA24C9E8B38ABBC6D17B5769FF441812E0746EED5B5317D1DD82091E9028119`.
 
 Resource-limited reconfiguration is available through:
 
@@ -506,6 +506,32 @@ same-executable comparisons measured 3,714.337 ms for pair-only execution and
 3,115.889 ms with native blocks at the median, a 16.112% replay-time reduction;
 the candidate won all seven pairs. This is offline VU evidence, distinct from the
 live gameplay comparison above.
+
+## First-Pair VF Entry Stalls
+
+After pending-VI support, a temporary per-reason trace found 2,174 preparation
+refusals and 60 short-budget refusals in the one-repeat replay. Every preparation
+refusal was an upper VF read in the first instruction, exactly one cycle before
+its source became visible. The trace was removed after collecting that result.
+
+PS2Recomp `7e2f840` computes the first pair's VF readiness from constant operand
+metadata. When needed, it advances the same architectural cycles as the
+interpreter, including pipeline retirement and PATH1 progress, before rechecking
+all normal block preconditions. A public two-pair synthetic block stages an LQ
+result one cycle before entry and verifies exact state, memory, cycle count, one
+block attempt, and native execution.
+
+All 122 VU-related tests pass. The 32 private captures remain exact with 1, 8,
+16, and 64-cycle slicing. At the normal replay budget, block attempts fall from
+4,014 to 2,060 and native coverage rises from 58,870 to 59,864 pairs. Seven
+alternating 1024-repeat comparisons measured 3,620.144 ms pair-only and 2,834.312
+ms with blocks at the median, a 21.707% reduction; blocks won all seven rounds.
+
+The live candidate passed static PE validation and Probes 2271/2272 both reached
+textured gameplay and exited normally. The same executable measured 3.4720 FPS
+with blocks and 3.3964 FPS interpreted over presents 1152-1280, a much smaller
+2.2% difference. Treat the replay gain as evidence for the VU path, not as a
+whole-game speed claim.
 
 `compare-vu-blocks.ps1 -BaselineExecutable <path>` runs matched block-enabled
 binaries in alternating order at Normal priority with affinity 0xF. It checks
