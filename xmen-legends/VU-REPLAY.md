@@ -614,3 +614,38 @@ completed. Its profiler-free 128-present window took 32.2046665 seconds,
 or 3.9746 FPS. This single shared-machine result is not an isolated before/after
 comparison or practical play speed. Post-join counters record 629,440,682 block
 pairs, included within 967,419,185 native pairs, plus 738,583,621 interpreted pairs.
+
+## Internal-Wait Scheduler Checkpoint
+
+Stopped on 2026-09-05 after recovering the completed BelowNormal test build.
+Experimental PS2Recomp checkpoint `1d14571` computes internal VF/ACC/VI wait
+cycles at compile time, includes them in entry deadlines and budget checks,
+and advances architectural retirement and PATH1 through each required wait.
+It retains interpreter fallback when the block cannot execute safely.
+
+The build exited 0. All 125 VU-related tests pass, including 78 new cases for
+internal waits, loop budgets, active GIF payload stores, and chained tags.
+Both 32-record captures remain exact at normal and 1/8/16/64-cycle slices:
+original 40,803 cycles / `75d4ff1e67bbbc4c`; spread 16,338 cycles /
+`6c13c7a10069aeef`. Test executable SHA-256:
+`7F4AC65C4B338F2131AD97DA6DEBEAF3DFDCAEF016BE3D39767436DDC55686F6`.
+
+The broader recipe by itself was slower in the preceding three-round comparison:
+2062.878 ms original / 2109.155 ms broader, a 2.243% regression with zero wins.
+Both capture code images are byte-identical. The local cache currently selects
+the broader recipe with 64 private pairs and 16 private blocks; the scheduler
+adds a fourth public synthetic block, for 20 compiled blocks total.
+
+Performance testing of the scheduler is still pending. Retain the temporary
+`ps2x_tests.schedule-base.exe` (same broader recipe without scheduling, SHA-256
+`96756F4C118671A2494D21D3B77F23DC1559683D817B2A242AEC155D43F3F58E`)
+and `ps2x_tests.block16.exe` (original recipe, SHA-256
+`8F7DB891A2FAEF6284E8093EDF072B4717CCAC389FCB399EB0C3CBAEED1B25D4`)
+for isolated and end-to-end comparisons on both captures. Remove these temporary
+test binaries after the comparisons; no game executable copies were added.
+
+No gameplay run or candidate relink was performed for this checkpoint. The
+primary, staged, and last live-validated candidate hashes remain unchanged.
+Do not describe this build as a gameplay speed improvement or promote it before
+benchmarking and subsequent game validation. All owned build/test processes
+were closed before stopping.
