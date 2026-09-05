@@ -9,12 +9,18 @@ This is not a replacement for first-level gameplay validation.
 Set `PS2X_VU_REPLAY_CAPTURE` to an absolute path inside the ignored extracted-disc
 directory before launching a guarded first-level probe. The recorder samples
 after guest vsync tick 1100, retaining at most 16 short slices (budgets up to 64
-cycles) and 16 longer slices. Short slices use deterministic 1-in-64 sampling.
+cycles) and 16 longer slices. Both classes use deterministic 1-in-256 sampling,
+with at least four guest ticks between records in the same class. A filled quota
+therefore spans at least 60 ticks instead of taking its first 16 eligible slices.
 The complete file is capped at 4 MiB; individual records are capped at 1 MiB.
 Recording is disabled when the environment variable is absent.
 
 Probe 2262 created `xmen-legends/disc/vu-replay.bin`: 32 cases, 1,914,088 bytes.
 It reached present 1200, closed under the guard, and restored the startup archive.
+All 32 records in this original capture have tick 1100 and the same code image.
+Keep it as the established correctness oracle, but do not treat its workload
+mix as representative of the complete level. New spread captures use a separate
+ignored file so they cannot overwrite the original regression input.
 Keep this file private: it contains retail microcode and memory. Do not commit,
 attach to an upstream issue, or redistribute it.
 
@@ -538,3 +544,73 @@ binaries in alternating order at Normal priority with affinity 0xF. It checks
 the capture identity, cycles, output digest, actual block execution, and input
 file hashes, then overwrites the single ignored `disc/vu-block-comparison.json`
 report. `-BaselinePairsOnly` compares pair and block execution in one binary.
+
+## Compiled Entry Deadlines
+
+PS2Recomp `f801b9c` computes the earliest required entry deadline for each VF lane,
+ACC lane, and VI register at compile time. Repeated reads share one check; a VI
+write inside the block removes the old entry deadline from later reads. The
+existing static internal-hazard proof and runtime VF queue-slot reservation stay
+in place. This removes repeated readiness checks and the per-entry virtual VI
+array without changing block acceptance or execution timing in the saved replay.
+
+All 123 then-current VU-related tests pass, including 270 new public synthetic
+cases with delayed lane reads, VI replacement, and short budgets. All 32 original
+gameplay captures retain 40,803 cycles and digest `75d4ff1e67bbbc4c` at normal
+and 1/8/16/64-cycle slicing. Normal-budget block coverage remains 59,864 pairs.
+Seven alternating 1024-repeat runs measure medians of 2631.679 ms before and
+2432.532 ms after (7.567% less replay time), with seven candidate wins. Both modes
+retire 30,680,300 block pairs including the cold pass. The candidate also contains
+the new synthetic test block; this is a comparison of the complete builds, not
+an isolated instruction-level timing. It is not a gameplay frame-rate claim.
+
+The pre-change offline sampler had 370 in-module samples: native flag retirement
+accounted for 9.46%, generic pipeline retirement 6.22%, and block preparation was
+also prominent. These sampled percentages include replay overhead and guided
+the entry-deadline change; they are not production-frame percentages.
+
+## Spread Gameplay Capture
+
+Recorder checkpoint `6e29441` uses a deterministic 1-in-256 selection in both
+budget classes and waits at least four ticks between records in each class.
+The quota remains 16 short and 16 long records, with the unchanged 4 MiB cap.
+The scheduling regression also runs when native blocks are disabled. The current
+VU-related suite passes 124/124.
+
+Probe 2275 used interpreted VU execution through the real New Game handler and
+recorded `disc/vu-replay-spread.bin`: 1,907,530 bytes, 32 records, two records per
+tick at 1100, 1104, ..., 1160, with one code image. Its native present-896 capture
+shows New York and Wolverine with the existing black props and HUD/effect defects.
+The process exited normally at tick 1200 and restored the startup archive.
+The original capture hash remains unchanged.
+
+All 32 new workloads match the recorded interpreter state, memory, and graphics
+packets at normal and 1/8/16/64-cycle slicing: 16,338 cycles per repeat and digest
+`6c13c7a10069aeef`. The current compiled blocks cover 17,978 of 31,034 retired pairs
+including the cold pass (57.93%), compared with 74.65% in the original capture.
+The new private recipe `disc/vu-native-pairs-spread.inc` is 64,303 bytes and covers
+487 PCs, including 185 absent from the original recipe; 124 original PCs are not
+exercised by the spread capture. Keep both inputs for regression coverage.
+
+Seven alternating 2048-repeat comparisons against the pre-entry-deadline build
+measure medians of 2195.355 ms before and 2064.303 ms after (5.970% lower VU time).
+The candidate wins five of seven rounds; later runs have noticeable shared-host
+variation. Every run preserves the expected result and 18,418,461 block pairs
+including the cold pass. This supports a replay improvement but establishes no
+whole-game FPS gain. The next coverage experiment should rank the same bounded
+kernel budget against the broader recipe and verify both captures.
+
+`compare-vu-blocks.ps1 -CapturePath <path>` accepts either capture. The native
+replay still checks every recorded state/memory/GIF result, and the helper rejects
+cross-run changes in case count, cycles, digest, or input hashes. The report
+records the compared replay identity instead of hard-coding the original digest.
+
+The current candidate includes `f801b9c` and `6e29441`, is 163,238,400 bytes, and
+has SHA-256 `42FFBDA55226B7A55AE07311A9BC35049165ADC6EA0DF46636B53BB49020108C`.
+After the interpreted capture run, ordinary block-enabled Probe 2276 reached
+textured New York/Wolverine, retained the known rendering defects, and exited
+normally at tick 1400. Both startup restoration and runtime/observer closure
+completed. Its profiler-free 128-present window took 32.2046665 seconds,
+or 3.9746 FPS. This single shared-machine result is not an isolated before/after
+comparison or practical play speed. Post-join counters record 629,440,682 block
+pairs, included within 967,419,185 native pairs, plus 738,583,621 interpreted pairs.

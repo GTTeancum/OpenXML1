@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$BaselineExecutable,
     [string]$CandidateExecutable = '',
+    [string]$CapturePath = '',
     [ValidateRange(3, 15)][int]$Rounds = 7,
     [ValidateRange(1, 2048)][int]$Repeats = 1024,
     [switch]$BaselinePairsOnly
@@ -16,12 +17,14 @@ $executables = @{
     baseline = (Resolve-Path -LiteralPath $BaselineExecutable).Path
     candidate = (Resolve-Path -LiteralPath $CandidateExecutable).Path
 }
-$capture = Join-Path $PSScriptRoot 'disc\vu-replay.bin'
+if (-not $CapturePath) { $CapturePath = Join-Path $PSScriptRoot 'disc\vu-replay.bin' }
+$capture = (Resolve-Path -LiteralPath $CapturePath).Path
 $identities = @{}
 foreach ($path in @($executables.baseline, $executables.candidate, $capture)) {
     $identities[$path] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
 }
 $results = [Collections.Generic.List[object]]::new()
+$expectedReplay = $null
 for ($round = 0; $round -lt $Rounds; ++$round) {
     $order = if ($round % 2 -eq 0) { @('baseline', 'candidate') } else { @('candidate', 'baseline') }
     foreach ($mode in $order) {
@@ -58,10 +61,22 @@ for ($round = 0; $round -lt $Rounds; ++$round) {
             if ($process.ExitCode -ne 0) { throw "Replay failed: $output`n$errors" }
             $match = [regex]::Match($output,
                 '\[vu-replay:result\] cases=(\d+) iterations=(\d+) cycles=(\d+) execute-ms=([0-9.]+) digest=([0-9a-f]+) error=\r?\n')
-            if (-not $match.Success -or $match.Groups[1].Value -ne '32' -or
-                [uint64]$match.Groups[2].Value -ne 32 * $Repeats -or
-                [uint64]$match.Groups[3].Value -ne 40803 * $Repeats -or
-                $match.Groups[5].Value -ne '75d4ff1e67bbbc4c') {
+            if (-not $match.Success -or
+                [uint64]$match.Groups[1].Value -lt 1 -or
+                [uint64]$match.Groups[1].Value -gt 64 -or
+                [uint64]$match.Groups[2].Value -ne [uint64]$match.Groups[1].Value * $Repeats -or
+                [uint64]$match.Groups[3].Value -eq 0) {
+                throw "Invalid or incomplete replay result: $output`n$errors"
+            }
+            $replayIdentity = [pscustomobject]@{
+                Cases = [uint64]$match.Groups[1].Value
+                Cycles = [uint64]$match.Groups[3].Value
+                Digest = $match.Groups[5].Value
+            }
+            if ($null -eq $expectedReplay) { $expectedReplay = $replayIdentity }
+            if ($replayIdentity.Cases -ne $expectedReplay.Cases -or
+                $replayIdentity.Cycles -ne $expectedReplay.Cycles -or
+                $replayIdentity.Digest -ne $expectedReplay.Digest) {
                 throw "Replay identity, cycle count, or exact result changed: $output`n$errors"
             }
             $coverage = [regex]::Match($errors,
@@ -110,6 +125,7 @@ $report = [pscustomobject]@{
     Repeats = $Repeats
     BaselinePairsOnly = [bool]$BaselinePairsOnly
     Identities = $identities
+    Replay = $expectedReplay
     BaselineMedianMs = $medians.baseline
     CandidateMedianMs = $medians.candidate
     ReductionPercent = 100 * (1 - $medians.candidate / $medians.baseline)

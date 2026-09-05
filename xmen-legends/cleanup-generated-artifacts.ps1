@@ -207,7 +207,7 @@ if ($null -ne $nativeBlockLimit) {
     $obsoleteFiles += Get-ChildItem -LiteralPath $runtimeBuild -File -Force |
         Where-Object {
             $_.Name -match '^vu_native_direct_block_([0-9]+)\.cpp$' -and
-            [int]$Matches[1] -gt $nativeBlockLimit
+            [int]$Matches[1] -gt $maxActiveBlockIndex
         }
 }
 $activeRelease = Join-Path $activeBuild 'ps2xRuntime\Release'
