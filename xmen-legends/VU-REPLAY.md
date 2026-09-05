@@ -887,3 +887,52 @@ normal and 1/8/16/64-cycle slicing. Final test executable SHA-256:
 All three gameplay executable hashes remain unchanged. The cleanup command was
 rejected by execution policy before launch, so the 5,780,480-byte comparison
 executable and inactive Debug directories remain; no deletion is claimed.
+
+## Direct Flag Clearing
+
+An unrolled fixed deadline pass was tried first, without cached state or changed
+retirement order. All 127 then-current tests passed, including every 8-slot
+occupancy/readiness combination at four cycle boundaries; both captures stayed
+exact at normal and 1/8/16/64-cycle slicing. Seven original-capture comparisons
+were effectively tied: 2401.464 ms baseline / 2401.870 ms candidate, 4/7 wins.
+MSVC emitted a separate deadline helper call with eight scalar comparisons.
+The experiment and its helper-specific test were removed. Do not repeat it as
+an already-proven speed improvement.
+
+Disassembly then exposed a concrete cost in flag retirement: `entry = {}` built
+a zeroed temporary on the stack and copied it to the 40-byte integer/bool entry.
+PS2Recomp `eef46ed` clears that entry directly in the interpreter and native
+block paths. MSVC now emits a zeroed 32-byte vector store and an 8-byte scalar
+store, with no aggregate temporary. Deadline checks, slot order, flag values,
+pending tails, and occupancy changes are unchanged.
+
+All 126 focused VU tests pass, and both recorded workloads remain exact at
+normal and 1/8/16/64-cycle slicing. Candidate test SHA-256:
+`BE50B67C2A9F55DF6C7D92ADA6F7D02CD0EA0B611F0559B1F84908FB3F99E267`.
+The existing `ps2x_tests.flag-pack-base.exe` was reused without another copy;
+its SHA-256 remains `6107937DE1C06E58C4A511F43086951BB60B288ED113EA043B2C3930F96176DD`.
+
+| Workload | Baseline median | Candidate median | Result |
+| --- | --- | --- | --- |
+| Original / 1024 repeats, first run | 2491.277 ms | 2469.353 ms | 0.880% lower, 4/7 wins |
+| Spread / 2048 repeats | 2135.250 ms | 2035.908 ms | 4.652% lower, 7/7 wins |
+| Original / 1024 repeats, repeat run | 2600.269 ms | 2568.404 ms | 1.225% lower, 4/7 wins |
+
+Shared-machine timing variation is substantial. The broader workload benefits,
+while the original remains a small, noisy change. Retain the simpler generated
+clearing code, not a claim of practical gameplay speed. Game executables remain
+unchanged.
+
+The generic counterpart is submitted as `c5d12f8` on existing upstream
+[PR #245](https://github.com/ran-j/PS2Recomp/pull/245#issuecomment-5555475633).
+Its upstream-based Release suite passes 427/427. It does not include private
+captures, generated game code, or the native-block implementation. The existing
+checkout at `C:/Programming/GitHub/PS2Recomp` was reused; no worktree/clone was added.
+
+Next investigate duplicated arithmetic normalization and exact-result
+reconstruction. A possible conservative fast path is ordinary nonzero,
+non-boundary results of simple ADD/SUB/MUL operations, but it needs a proof of
+identical status/sign behavior and boundary-focused differential tests before
+implementation is accepted. Do not assume the same proof applies to multiply-add
+cancellation, signed zero, the minimum normal, or maximum finite value. No such
+arithmetic fast path has been implemented in this checkpoint.
