@@ -388,3 +388,13 @@ cycles and digest `75d4ff1e67bbbc4c`. A direct seven-round alternating compariso
 against the pre-change 16-block binary measured 3,925.071 ms baseline and
 3,643.335 ms specialized at the median, a 7.178% reduction. Every run was exact;
 this remains an offline VU replay measurement rather than a gameplay FPS result.
+
+Block-entry readiness now expands constant register and lane metadata through an
+ordered template fold instead of rebuilding and indexing runtime metadata arrays.
+The same live pipeline masks, deadlines, write-slot reservation, cycle budget,
+and fallback rules remain in force. Public `PS2VU1` remains 53/53 and the 32
+gameplay captures retain the exact cycle count and digest. Seven alternating
+1024-repeat comparisons measured 3,266.214 ms for the pre-change binary and
+3,167.319 ms for specialized readiness at the median, a 3.028% reduction; the
+candidate won six of seven paired rounds. Its test executable grew by about
+31 KiB. This is another offline VU replay result, not a gameplay FPS claim.
