@@ -398,3 +398,13 @@ gameplay captures retain the exact cycle count and digest. Seven alternating
 3,167.319 ms for specialized readiness at the median, a 3.028% reduction; the
 candidate won six of seven paired rounds. Its test executable grew by about
 31 KiB. This is another offline VU replay result, not a gameplay FPS claim.
+
+A direct preassigned-FMAC-flag-slot experiment kept the generic flag scan only
+while entry-state flags drained, then retired each known four-cycle-old block
+slot directly. It preserved all 32 gameplay captures, 40,803 cycles, and digest
+`75d4ff1e67bbbc4c`, but seven alternating 1024-repeat comparisons measured
+3,713.223 ms for the accepted build and 3,952.895 ms for the candidate at the
+median. The candidate was 6.455% slower, so the change was removed. Play!
+reference commit `83700b2c31e593bc94e845b4b31b797be84dda59` remains useful evidence for
+precomputed block timing, but this narrow hybrid did not remove enough runtime
+bookkeeping to pay for its added branch and state checks.
