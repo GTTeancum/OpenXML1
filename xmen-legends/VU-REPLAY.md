@@ -382,7 +382,12 @@ both links. `PS2X_ENABLE_RUNNER_IPO=OFF` now permits disabling IPO on the genera
 game target while leaving the runtime and native kernels optimized. Its default
 is ON, preserving existing build behavior. The active cache uses OFF; generated
 project inspection confirms runner IPO is absent while runtime IPO remains on.
-**The runner objects still need a complete rebuild under this setting.**
+**The runner objects still need a complete rebuild under this setting.** The
+non-IPO rebuild was started, then deliberately stopped at unit 8/107
+(`unity_103_cxx.cxx`) when the user requested a clean stop. The build guard closed
+its process tree; no linking or gameplay run occurred. Do not link the mixed
+old/new objects. Wait for an explicit resume, then rerun the full compile-only
+pass below.
 
 Resource-limited reconfiguration is available through:
 

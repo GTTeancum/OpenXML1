@@ -1,11 +1,11 @@
 # X-Men Legends PS2Recomp TODO
 
-Work resumed on 2026-09-04 at the user's request.
+Work stopped on 2026-09-04 at the user's request. Do not restart until asked.
 
 ## Resume Point
 
 - Latest accepted VU implementation: PS2Recomp `6ce7a2a`; runner opt-in and post-join counters are pushed in `499b506`. Public PS2VU1 passes 54/54 on a fresh run; the earlier 32 gameplay captures remain exact, including 1/8/16/64-cycle resumption. No live native-block FPS measurement exists yet.
-- Immediate next step: rebuild all runner sources with the active `PS2X_ENABLE_RUNNER_IPO=OFF` cache setting (option pushed in PS2Recomp `18508bb`), then link `ps2EntryRunner.candidate` and run `measure-gameplay.ps1` in Blocks/Interpreted modes (unused probes 2267/2268). The 107-source IPO build compiled successfully but both links exceeded the unchanged 2048 MiB guard, including a `/CGTHREADS:1` retry. Runtime/native-kernel IPO remains ON. Current runner objects still contain `/GL`; a link-only retry is insufficient. See `VU-REPLAY.md` for resource-limited commands.
+- On the next authorized resume: rebuild all runner sources with the active `PS2X_ENABLE_RUNNER_IPO=OFF` cache setting (option pushed in PS2Recomp `18508bb`), then link `ps2EntryRunner.candidate` and run `measure-gameplay.ps1` in Blocks/Interpreted modes (unused probes 2267/2268). The 107-source IPO build compiled successfully but both links exceeded the unchanged 2048 MiB guard, including a `/CGTHREADS:1` retry. Runtime/native-kernel IPO remains ON. The non-IPO rebuild was deliberately stopped at compilation unit 8/107 (`unity_103_cxx.cxx`) at the user's request. Current objects mix old `/GL` and new non-IPO output; run the complete `-CompileOnly` pass before linking. No live game run occurred. The owned build wrapper and its job tree are closed. See `VU-REPLAY.md` for resource-limited commands.
 - The failed link left `ps2EntryRunner.profile.exe` incomplete at 2 MiB. Deletion was policy-blocked; leave it alone and do not launch it or retry removal/moving. The new fixed `Candidate` slot avoids this artifact without adding a per-probe executable backup. Primary/staged hashes remain unchanged.
 - Keep SFD playback out of scope. The target remains basic first-level playability.
 - Preserve the known-good primary runtime at `PS2Recomp/out/xmen-final3-build/ps2xRuntime/Release/ps2EntryRunner.exe`.
