@@ -708,3 +708,54 @@ Debug directories. The workspace is 7.710 GiB / 29,090 files; all eight protecte
 artifacts and 21 active block-source/dispatch files remain. The primary, staged,
 and gameplay-candidate executable hashes are unchanged. No game was launched,
 no screenshots were taken, and all owned build/test processes have exited.
+
+## Integer-Load Block Prototype
+
+A temporary per-block rejection audit checked both captures, including their
+cold passes. Every refusal inside `canExecuteFast` was a short execution budget.
+Pending ACC/store/divide/EFU operations, branch/end state, PATH1 boundaries,
+entry-read deadlines, and VF queue capacity caused zero refusals. This does not
+measure missing block lookups or failed code matches. The temporary counters
+and diagnostic change to the test runner's immediate exit were removed.
+
+An initial hypothesis that ILW stopped the hot 0x0a88 block was incorrect: that
+block ends at its branch and delay slot. The unsupported load instead prevents
+other entries, notably 0x18a0, from compiling. PS2Recomp `28a40cf` adds ILW with
+four-cycle VI result visibility, compile-time dependency scheduling, existing
+delayed-write queues, and a conservative queue-capacity guard. Results that
+outlive the block remain queued; newer writes retain sequence-based cancellation.
+
+All 126 VU-related tests pass. The new public block covers 198 combinations of
+signed values, wrapped addresses, pending entry writes, VI0, cancellation,
+branch delay-slot loads, and short resume budgets. Both private captures retain
+their exact state/memory/GIF output and expected cycles/digests at normal and
+1/8/16/64-cycle slicing. The test build is 5,705,728 bytes, SHA-256
+`CE2728D5207DE273D814BBEA61A38A7A86ECC567F52DDDCB6DC91BB67AE1721A`.
+
+The original recipe and 64-pair / 16-private-block limits remain active, with
+five public blocks. Enabling ILW selects the 23-pair block at 0x18a0 and displaces
+0x0b80. Normal-budget coverage becomes 59,726 pairs on the original capture
+(previously 59,864) and 18,104 on spread (previously 17,978).
+
+| Capture / repeats | Pre-ILW median | ILW prototype median | Result |
+| --- | --- | --- | --- |
+| Original / 1024 | 2502.122 ms | 2582.278 ms | 3.204% slower, 1/7 wins |
+| Spread / 2048 | 2139.856 ms | 2125.355 ms | 0.678% lower, 4/7 wins |
+
+These seven-round alternating comparisons preserve all exact outputs, but show
+no reliable improvement; shared-host timing variation is also visible. Do not
+promote this prototype to the game executable. Keep it as an explicit
+experimental checkpoint while correcting overlapping-block selection, which
+currently ranks entry frequency rather than marginal covered work.
+
+The sole active comparison baseline was renamed in place to
+`ps2x_tests.accepted-blocks.exe`, SHA-256
+`A81E93D0867C631B145E98C996446DDBEDD5693BBF64786602BE040C52DF7A76`.
+Retain that fixed slot for the next measured selection comparison; do not make
+per-probe copies. The primary, staged, and live-validated game candidate remain
+unchanged. No game process or screenshot was needed for this experiment.
+
+Cleanup removed 187 inactive Debug directories. Final workspace size is
+7.735 GiB / 29,131 files; all eight protected artifacts, the fixed comparison
+baseline, and all 22 native-block source/dispatch files remain. All owned
+build/test processes exited before cleanup.
