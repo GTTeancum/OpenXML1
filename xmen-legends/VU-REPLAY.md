@@ -373,3 +373,10 @@ integer dependencies, an internal backward loop, branch delay behavior, and
 too-small-budget fallback. Enabling the private replay adds one test for 54/54.
 No retail-derived words are tracked in the repository; the private recipe remains
 in the ignored fixed slot under `disc/`.
+
+Doubling the private selection limit to 32 increased block-contained coverage to
+53,170/80,194 retired pairs (66.30%), but it was counterproductive. A direct
+seven-round alternating comparison measured 3,259.639 ms for 16 blocks and
+3,580.251 ms for 32 blocks at the median, making the larger set 9.836% slower.
+Every run remained exact. The active cache was restored to 16, and the temporary
+comparison executable and orphaned generated targets were removed.

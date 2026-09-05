@@ -45,6 +45,32 @@ foreach ($candidate in $obsoleteDirectories) {
     }
 }
 
+$nativeBlockLimit = $null
+$cachePath = Join-Path $activeBuild 'CMakeCache.txt'
+if (Test-Path -LiteralPath $cachePath -PathType Leaf) {
+    $limitLine = Select-String -LiteralPath $cachePath `
+        -Pattern '^PS2X_VU_NATIVE_BLOCK_LIMIT:STRING=([0-9]+)$' |
+        Select-Object -First 1
+    if ($limitLine) {
+        $nativeBlockLimit = [int]$limitLine.Matches[0].Groups[1].Value
+    }
+}
+if ($null -ne $nativeBlockLimit) {
+    $runtimeBuild = Join-Path $activeBuild 'ps2xRuntime'
+    $orphanedBlockDirectories = @(
+        Get-ChildItem -LiteralPath $runtimeBuild -Directory -Force |
+            Where-Object {
+                $_.Name -match '^ps2_vu_native_direct_block_([0-9]+)\.dir$' -and
+                [int]$Matches[1] -gt $nativeBlockLimit
+            }
+    )
+    foreach ($directory in $orphanedBlockDirectories) {
+        $target = Assert-WorkspacePath $directory.FullName
+        Remove-Item -LiteralPath $target -Recurse -Force
+        ++$removedDirectoryCount
+    }
+}
+
 $activeRuntimePaths = [Collections.Generic.HashSet[string]]::new(
     [StringComparer]::OrdinalIgnoreCase
 )
@@ -159,6 +185,19 @@ $obsoleteFiles += Get-ChildItem -LiteralPath $activeBuild -Recurse -File -Force 
         $_.Extension -eq '.log' -and
         $_.LastWriteTimeUtc -lt $staleMediaCutoff
     }
+$testRelease = Join-Path $activeBuild 'ps2xTest\Release'
+if (Test-Path -LiteralPath $testRelease -PathType Container) {
+    $obsoleteFiles += Get-ChildItem -LiteralPath $testRelease -File -Force |
+        Where-Object { $_.Name -match '^ps2x_tests\.block[0-9]+\.exe$' }
+}
+if ($null -ne $nativeBlockLimit) {
+    $runtimeBuild = Join-Path $activeBuild 'ps2xRuntime'
+    $obsoleteFiles += Get-ChildItem -LiteralPath $runtimeBuild -File -Force |
+        Where-Object {
+            $_.Name -match '^vu_native_direct_block_([0-9]+)\.cpp$' -and
+            [int]$Matches[1] -gt $nativeBlockLimit
+        }
+}
 $activeRelease = Join-Path $activeBuild 'ps2xRuntime\Release'
 if (Test-Path -LiteralPath $activeRelease -PathType Container) {
     $obsoleteFiles += Get-ChildItem -LiteralPath $activeRelease -File -Force |

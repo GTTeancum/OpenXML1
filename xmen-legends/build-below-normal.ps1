@@ -185,6 +185,7 @@ $stdoutPath = Join-Path $BuildPath "$logStem.out.log"
 $stderrPath = Join-Path $BuildPath "$logStem.err.log"
 $env:MSBUILDDISABLENODEREUSE = '1'
 $buildProcessIds = [System.Collections.Generic.HashSet[int]]::new()
+$buildStartedAtUtc = [DateTime]::UtcNow.AddSeconds(-1)
 
 if (-not ('OpenXml1BuildJob' -as [type])) {
     Add-Type -TypeDefinition @'
@@ -354,9 +355,18 @@ function Set-BuildTreePriority {
     param([int]$RootProcessId)
 
     $pending = [System.Collections.Generic.Queue[int]]::new()
+    $visited = [System.Collections.Generic.HashSet[int]]::new()
     $pending.Enqueue($RootProcessId)
+    foreach ($knownId in @($buildProcessIds)) {
+        if ($knownId -ne $RootProcessId) {
+            $pending.Enqueue($knownId)
+        }
+    }
     while ($pending.Count -gt 0) {
         $parentId = $pending.Dequeue()
+        if (-not $visited.Add($parentId)) {
+            continue
+        }
         foreach ($child in Get-CimInstance Win32_Process -Filter "ParentProcessId = $parentId") {
             [void]$buildProcessIds.Add([int]$child.ProcessId)
             $pending.Enqueue([int]$child.ProcessId)
@@ -389,6 +399,7 @@ try {
         $process.Refresh()
     }
     $process.WaitForExit()
+    Set-BuildTreePriority -RootProcessId $process.Id
     $buildExitCode = $process.ExitCode
 }
 finally {
@@ -402,6 +413,21 @@ finally {
     }
     if ($null -ne $process) {
         $process.Dispose()
+    }
+    $ownedBuildToolNames = @('cmake', 'MSBuild', 'cl', 'c1xx', 'c2', 'link')
+    foreach ($ownedId in @($buildProcessIds)) {
+        try {
+            $ownedProcess = Get-Process -Id $ownedId -ErrorAction Stop
+            if ($ownedProcess.ProcessName -in $ownedBuildToolNames -and
+                $ownedProcess.StartTime.ToUniversalTime() -ge $buildStartedAtUtc) {
+                $ownedProcess.Kill()
+                [void]$ownedProcess.WaitForExit(2000)
+            }
+            $ownedProcess.Dispose()
+        }
+        catch {
+            # Most build helpers have already exited with their parent job.
+        }
     }
 }
 
