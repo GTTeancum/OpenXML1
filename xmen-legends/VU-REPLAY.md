@@ -383,8 +383,9 @@ game target while leaving the runtime and native kernels optimized. Its default
 is ON, preserving existing build behavior. On September 5, the active OFF cache
 completed a fresh 107-unit rebuild with `/O2`; an audit found no `/GL` or feature-
 define mismatches. The `/CGTHREADS:1` link then succeeded under the unchanged cap,
-producing complete PE `ps2EntryRunner.candidate.exe`, SHA-256
-`F0031C4550982DD7F92DD71757CA0BB785FAF53637AC7D4398373A13DC5AA10E`.
+producing complete PE `ps2EntryRunner.candidate.exe`. The latest relink after
+pending-VI support has SHA-256
+`775F02C4FFF521D582BE45612A9300F27742C834F71C323F8DB4E6D18E573033`.
 
 Resource-limited reconfiguration is available through:
 
@@ -399,9 +400,11 @@ The earlier failed link left `ps2EntryRunner.profile.exe` as an incomplete 2 MiB
 Its removal was policy-blocked; do not retry deleting or moving it. It is not a
 runnable fallback. The primary and staged executable hashes remain unchanged.
 The new measurement helper validates PE headers and section extents before
-starting a run. The new candidate passed that static PE validation, but no gameplay
-run or new FPS measurement occurred; probes 2267/2268 remain available for the
-comparison after an explicit resume.
+starting a run. Probes 2269/2270 used the same validated executable and both
+reached textured first-level gameplay before exiting normally at tick 1400.
+Across presents 1152-1280, native blocks measured 33.7064 seconds / 3.7975 FPS;
+interpreted mode measured 37.7803 seconds / 3.3880 FPS. That is about a 12.1%
+frame-rate gain in this controlled pair, not a sustained-speed guarantee.
 
 The current private build selects 16 replay-ranked blocks plus one public synthetic
 regression block. The private blocks execute 49,182 of the 80,194 retired pairs in
@@ -471,7 +474,11 @@ Temporary per-entry counters found 1,352 block attempts with active PATH1
 transfers at 0x18c8, 0x1908, 0x1948, 0x1968, and 0x19a0. Those transfers were a
 measured fallback cause; duplicate compiled suffixes alone do not explain the
 lost coverage. Entry 0x0b80 also failed 210 attempts with a pending VI write.
-That separate restriction is still in place.
+PS2Recomp `e793e41` now retires such pre-existing delayed VI writes at their
+original cycle inside a native block, while its readiness model still rejects any
+read before the value becomes available. A public synthetic regression stages a
+four-cycle ILW immediately before a compiled loop and verifies exact resumed
+state and data.
 
 PS2Recomp `6ce7a2a` advances an existing PATH1 transfer after the block's
 architectural writes at each original cycle boundary. A block may consume the
@@ -489,7 +496,16 @@ tests, and the 32 gameplay captures retain 40,803 cycles and digest
 `75d4ff1e67bbbc4c` with normal and 1/8/16/64-cycle slicing. The new synthetic
 test compares complete serialized records across 35 packet/budget combinations,
 including stores into a live packet, completion inside a block, chained tags,
-and malformed tags. The gameplay runner has not been updated or timed yet.
+and malformed tags. The gameplay runner had not been updated or timed at that
+checkpoint.
+
+With pending-VI continuation enabled, current one-repeat coverage rises again to
+58,870 retired pairs. All 122 VU-related tests pass, and the 32 private captures
+remain exact at slice budgets 1, 8, 16, and 64. Seven alternating 1024-repeat
+same-executable comparisons measured 3,714.337 ms for pair-only execution and
+3,115.889 ms with native blocks at the median, a 16.112% replay-time reduction;
+the candidate won all seven pairs. This is offline VU evidence, distinct from the
+live gameplay comparison above.
 
 `compare-vu-blocks.ps1 -BaselineExecutable <path>` runs matched block-enabled
 binaries in alternating order at Normal priority with affinity 0xF. It checks
