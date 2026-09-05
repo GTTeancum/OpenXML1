@@ -376,18 +376,15 @@ report. These external wall-time samples are not deterministic frame comparisons
 or a sustained-speed guarantee.
 
 The September 4 runner integration is not yet live-validated. All 107 runner
-compilation units succeeded with global IPO enabled, but the linker exceeded the
-2048 MiB process limit both normally and with `/CGTHREADS:1`. The guard stopped
-both links. `PS2X_ENABLE_RUNNER_IPO=OFF` now permits disabling IPO on the generated
+compilation units first succeeded with global IPO enabled, but the linker exceeded
+the 2048 MiB process limit both normally and with `/CGTHREADS:1`. The guard stopped
+both links. `PS2X_ENABLE_RUNNER_IPO=OFF` permits disabling IPO on the generated
 game target while leaving the runtime and native kernels optimized. Its default
-is ON, preserving existing build behavior. The active cache uses OFF; generated
-project inspection confirms runner IPO is absent while runtime IPO remains on.
-**The runner objects still need a complete rebuild under this setting.** The
-non-IPO rebuild was started, then deliberately stopped at unit 8/107
-(`unity_103_cxx.cxx`) when the user requested a clean stop. The build guard closed
-its process tree; no linking or gameplay run occurred. Do not link the mixed
-old/new objects. Wait for an explicit resume, then rerun the full compile-only
-pass below.
+is ON, preserving existing build behavior. On September 5, the active OFF cache
+completed a fresh 107-unit rebuild with `/O2`; an audit found no `/GL` or feature-
+define mismatches. The `/CGTHREADS:1` link then succeeded under the unchanged cap,
+producing complete PE `ps2EntryRunner.candidate.exe`, SHA-256
+`F0031C4550982DD7F92DD71757CA0BB785FAF53637AC7D4398373A13DC5AA10E`.
 
 Resource-limited reconfiguration is available through:
 
@@ -398,12 +395,13 @@ Resource-limited reconfiguration is available through:
 & .\xmen-legends\build-below-normal.ps1 -LinkOnly -OutputName ps2EntryRunner.candidate
 ```
 
-The failed link left `ps2EntryRunner.profile.exe` as an incomplete 2 MiB file.
+The earlier failed link left `ps2EntryRunner.profile.exe` as an incomplete 2 MiB file.
 Its removal was policy-blocked; do not retry deleting or moving it. It is not a
 runnable fallback. The primary and staged executable hashes remain unchanged.
 The new measurement helper validates PE headers and section extents before
-starting a run. No gameplay run or new FPS measurement occurred during this
-integration attempt; probes 2267/2268 remain available for the comparison.
+starting a run. The new candidate passed that static PE validation, but no gameplay
+run or new FPS measurement occurred; probes 2267/2268 remain available for the
+comparison after an explicit resume.
 
 The current private build selects 16 replay-ranked blocks plus one public synthetic
 regression block. The private blocks execute 49,182 of the 80,194 retired pairs in
