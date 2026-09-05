@@ -380,3 +380,11 @@ seven-round alternating comparison measured 3,259.639 ms for 16 blocks and
 3,580.251 ms for 32 blocks at the median, making the larger set 9.836% slower.
 Every run remained exact. The active cache was restored to 16, and the temporary
 comparison executable and orphaned generated targets were removed.
+
+Constant-destination FMAC flag packing is now specialized in generated native
+pairs and blocks while the dynamic interpreter retains the generic path. The
+public `PS2VU1` suite passes 53/53, and all 32 gameplay captures retain 40,803
+cycles and digest `75d4ff1e67bbbc4c`. A direct seven-round alternating comparison
+against the pre-change 16-block binary measured 3,925.071 ms baseline and
+3,643.335 ms specialized at the median, a 7.178% reduction. Every run was exact;
+this remains an offline VU replay measurement rather than a gameplay FPS result.
