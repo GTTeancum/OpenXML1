@@ -408,3 +408,13 @@ median. The candidate was 6.455% slower, so the change was removed. Play!
 reference commit `83700b2c31e593bc94e845b4b31b797be84dda59` remains useful evidence for
 precomputed block timing, but this narrow hybrid did not remove enough runtime
 bookkeeping to pay for its added branch and state checks.
+
+A broader block-exit materialization candidate routed block FMAC and CLIP output
+through local flag arrays, scheduled only exact entry-state flag/VF retirement
+slots, and copied just the still-pending tail flags back to the architectural
+pipeline. Public `PS2VU1` passed 53/53 and all 32 captures remained exact at
+40,803 cycles and digest `75d4ff1e67bbbc4c`. It nevertheless lost all seven
+alternating 1024-repeat rounds: the accepted build measured 3,265.104 ms and the
+candidate 3,453.661 ms at the median, a 5.775% regression. The implementation
+was removed. Future block work must generate direct state transitions without
+building runtime schedule arrays or copying pipeline entries on the stack.
