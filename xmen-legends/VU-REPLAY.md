@@ -759,3 +759,83 @@ Cleanup removed 187 inactive Debug directories. Final workspace size is
 7.735 GiB / 29,131 files; all eight protected artifacts, the fixed comparison
 baseline, and all 22 native-block source/dispatch files remain. All owned
 build/test processes exited before cleanup.
+
+## Marginal Coverage Selection
+
+PS2Recomp `5bf8813` adds opt-in `PS2X_VU_NATIVE_BLOCK_SELECTION=coverage`;
+`frequency` remains the source default. The exporter now records exact
+per-PC retired counts. The private `disc/vu-native-pairs-weighted.inc` is
+70,152 bytes, SHA-256
+`2BFA7E6FDBFE36021083C664F8A4528411CE4FA2322BF49956876139CD676220`.
+Removing its 426 new PC-count records reproduces the original recipe's content
+and order exactly. Original recipes and both captures remain unchanged.
+
+The greedy selector scores newly covered executions, capped by the candidate
+entry's own count. Overlapping blocks do not receive credit for already covered
+work; ties preserve recipe order. This is a coverage estimate, not measured
+per-block execution cost. Eight standalone selection checks and seven invalid
+input checks pass, including address zero, rare prefixes, deterministic ties,
+public-block exemption, limits, and missing/invalid weights.
+
+The active local cache selects coverage with the weighted original recipe,
+64 private pairs and 16 private blocks plus five public synthetic blocks.
+All 126 VU-related tests pass. Both captures remain exact at normal and
+1/8/16/64-cycle slicing. Test executable SHA-256:
+`415DBAFA25E21084FF1FF9F728FD556400BEBB8C07AEE91DFEA603E780E5D317`,
+5,791,744 bytes. Normal-budget block coverage is 64,508 of 80,194 pairs
+(80.44%) on original and 19,096 of 31,034 (61.53%) on spread, including cold
+passes. The fixed pre-ILW baseline covered 59,864 and 17,978 respectively.
+
+| Capture / repeats | Fixed baseline median | Coverage candidate median | Result |
+| --- | --- | --- | --- |
+| Original / 1024 | 2562.666 ms | 2491.862 ms | 2.763% lower, 7/7 wins |
+| Spread / 2048 | 2098.022 ms | 2064.947 ms | 1.576% lower, 6/7 wins |
+
+These seven-round alternating comparisons include the ILW support added since
+the fixed baseline; they measure the combined build, not an isolated selector
+instruction. All exact results and cycle counts match. The last spread round
+has visible shared-host noise. These are modest offline VU gains, not gameplay
+FPS evidence; the gameplay candidate has not been relinked.
+
+A follow-up process-local profile records 366 samples, 62 external, zero dropped
+or failed, and a matching linker-map timestamp. Among 304 in-module samples,
+pipeline retirement contributes 7.24%, native flag retirement 6.58%, and VF
+write queuing 4.28%. Replay serialization is prominent (18.75%) but lies outside
+the benchmark's timed execution. Do not interpret whole-test sample percentages
+as whole-game timing or spend effort optimizing test serialization for FPS.
+
+## Constant Result Deferral
+
+PS2Recomp `2ddfc04` passes the compiled distance to block end as a template
+constant. Each instruction's VF-result deferral is now decided at compile time,
+removing runtime end-cycle comparisons and unused temporary-copy paths. The
+existing queue allocation, retirement, instruction order, and wait schedule
+are unchanged. Both extended and short fallback blocks use their own schedule.
+
+All 126 focused VU tests pass. Both captures retain exact state, memory, GIF
+bytes/cycles, digest, and total cycles at normal and 1/8/16/64-cycle slicing.
+Block coverage remains 64,508 original / 19,096 spread pairs. The test image
+is 5,778,944 bytes (12,800 bytes smaller), SHA-256
+`1737D0CF99186FF812E8BF58A8BF3F342CDBB162723371C499F7FFCCE5E3A102`.
+
+| Capture / repeats | Coverage baseline | Constant-deferral candidate | Result |
+| --- | --- | --- | --- |
+| Original / 1024 | 2429.307 ms | 2396.670 ms | 1.343% lower, 5/7 wins |
+| Spread / 2048 | 2006.897 ms | 1996.594 ms | 0.513% lower, 4/7 wins |
+
+These are seven-round alternating same-selection comparisons. The original
+workload shows a small benefit and spread is effectively flat with shared-host
+noise. Retain the simpler generated code, but do not claim meaningful gameplay
+acceleration from this result. The saved game executables remain unchanged.
+The temporary `ps2x_tests.block16.exe` comparison copy is no longer needed.
+
+Next: separate execution sampling from replay serialization/setup, then choose
+the largest remaining execution hotspot. Existing whole-test profiles include
+substantial test-only serialization cost. Do not optimize that overhead as if
+it were part of a game frame, repeat rejected queue-index experiments without
+new evidence, or run whole-game timing probes solely for these tiny changes.
+
+Cleanup removed the finished comparison binary and 187 inactive Debug
+directories. Workspace: 7.739 GiB / 29,166 files. All eight protected artifacts,
+the fixed baseline, and 22 active block-source/dispatch files remain. Primary,
+staged, and gameplay-candidate hashes are unchanged; owned processes are closed.
