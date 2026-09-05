@@ -10,6 +10,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $map = Get-Content -LiteralPath $MapPath
 $log = Get-Content -LiteralPath $LogPath
+$scope = if ($log | Select-String '\[vu-sampler:summary\].*execution-only=1(?:\s|$)') {
+    'warm-execution'
+} else { 'whole-replay' }
 $baseMatch = $map | Select-String 'Preferred load address is ([0-9A-Fa-f]+)'
 $stampMatch = $map | Select-String 'Timestamp is ([0-9A-Fa-f]+)'
 $imageMatch = $log | Select-String '\[vu-sampler:image\] timestamp=0x([0-9A-Fa-f]+)'
@@ -53,12 +56,13 @@ $rows = @($log | ForEach-Object {
 })
 $total = ($rows | Measure-Object Hits -Sum).Sum
 if ($total -le 0) { throw 'No in-module samples were recorded.' }
-# Percentages include replay setup/comparison, not just timed VU execution.
+# New execution-only logs exclude snapshot setup/comparison; legacy logs do not.
 $rows | Group-Object Name | ForEach-Object {
     $hits = ($_.Group | Measure-Object Hits -Sum).Sum
     [pscustomobject]@{
         Hits = $hits
         ModulePercent = [Math]::Round(100 * $hits / $total, 2)
+        Scope = $scope
         Name = $_.Name
         SourceObject = $_.Group[0].SourceObject
     }

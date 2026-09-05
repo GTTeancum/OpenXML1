@@ -839,3 +839,51 @@ Cleanup removed the finished comparison binary and 187 inactive Debug
 directories. Workspace: 7.739 GiB / 29,166 files. All eight protected artifacts,
 the fixed baseline, and 22 active block-source/dispatch files remain. Primary,
 staged, and gameplay-candidate hashes are unchanged; owned processes are closed.
+
+## Execution-Only Sampling
+
+PS2Recomp `b024e1a` brackets warmed replay execution with an optional atomic
+marker. The process-local sampler reads it while its own target thread is
+suspended, alongside the instruction address. Cold passes, snapshot loading,
+serialization, and comparison are excluded. Scope cleanup clears the marker
+on unwinding; success and rejected-input checks pass. Ordinary gameplay is
+unmodified. Reports label old logs `whole-replay` and new logs `warm-execution`.
+
+The profiling baseline passes 126/126 VU tests and both captured workloads.
+Its test executable SHA-256 is
+`6107937DE1C06E58C4A511F43086951BB60B288ED113EA043B2C3930F96176DD`.
+Original / 2048 repeats gives 301 execution samples (40 external), excluding
+53 observations. Spread / 4096 gives 240 (34 external), excluding 98. Both have
+zero dropped samples or capture failures, with exact original digests and
+cycle counts. These are instrumented profiles, not speed comparisons.
+
+Among 261 original / 206 spread in-module execution samples, native flag
+retirement accounts for 11.49% / 13.59%, general pipeline retirement for
+10.34% / 16.02%, and the leading flag-packing specialization for 9.20% / 5.34%.
+Snapshot serialization is no longer a leading sample category. Symbol ownership
+can reflect linker folding, and these small sample populations establish broad
+priorities rather than precise game-frame percentages.
+
+A 16-entry MAC condition-bit lookup table passed all 126 focused tests and both
+captures at normal and 1/8/16/64-cycle slicing, but seven alternating comparisons
+showed only 0.818% lower original median (2396.055 / 2376.456 ms, 5/7 wins) and
+0.522% lower spread median (2001.170 / 1990.726 ms, 6/7 wins). That is not a
+convincing practical benefit. The experiment was removed; no gameplay build
+contains it. Its test hash was
+`927F83A79B30D899EEA919390B7C937262F67C24A71F392AAA4B94CA557EFD53`.
+
+The next investigation should address flag retirement rather than another small
+packing tweak. Native blocks currently scan pending flag entries after each
+pair. Their admitted lower operations do not include status/MAC/clip reads, but
+any batching proposal must still preserve incoming pending flags, slot order,
+sticky accumulation, internal waits, and the exact delayed tail at block exit.
+Prior completion-index and preassigned-retirement experiments were slower;
+do not repeat those approaches unchanged. This is an investigation, not yet a
+validated batching design.
+
+The restored `b024e1a` build passes 126/126 focused tests and both captures at
+normal and 1/8/16/64-cycle slicing. Final test executable SHA-256:
+`F7C221FF0EF41A0E9F6137F05E3B872DC7F6B5F670720973FBFC8985AFB31B61`.
+All three gameplay executable hashes remain unchanged. The cleanup command was
+rejected by execution policy before launch, so the 5,780,480-byte comparison
+executable and inactive Debug directories remain; no deletion is claimed.

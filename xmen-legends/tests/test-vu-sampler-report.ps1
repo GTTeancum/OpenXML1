@@ -24,8 +24,14 @@ try {
     $rows = @(& $reporter -MapPath $mapPath -LogPath $logPath)
     if ($rows.Count -ne 2 -or $rows[0].Name -ne '?Second@@YAXXZ' -or
         $rows[0].Hits -ne 3 -or $rows[0].ModulePercent -ne 60 -or
-        $rows[1].Name -ne '?First@@YAXXZ' -or $rows[1].ModulePercent -ne 40) {
+        $rows[1].Name -ne '?First@@YAXXZ' -or $rows[1].ModulePercent -ne 40 -or
+        $rows[0].Scope -ne 'whole-replay') {
         throw 'Sample address attribution or percentages are incorrect.'
+    }
+    [IO.File]::WriteAllText($logPath, $validLog + "`n[vu-sampler:summary] samples=5 execution-only=1 outside=7`n")
+    $executionRows = @(& $reporter -MapPath $mapPath -LogPath $logPath)
+    if ($executionRows[0].Scope -ne 'warm-execution' -or $executionRows[0].ModulePercent -ne 60) {
+        throw 'Execution-only samples must be labelled without including excluded observations.'
     }
     foreach ($invalid in @(
         @{ Log = $validLog.Replace('timestamp=0x0000000a', 'timestamp=0x0000000b'); Error = 'different test executable' },
