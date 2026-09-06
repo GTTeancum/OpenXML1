@@ -188,7 +188,7 @@ DrainedControl drainControl(const MIPSSTATE &s, uint64_t transferEnd)
     };
     const uint32_t mac = latest(s.pipeMac, s.nCOP2MF) & DrainedControl::macMask;
     const uint32_t sticky = latest(s.pipeSticky, s.nCOP2SF);
-    const uint32_t status = ((mac & 0xf) ? 1u : 0u) | ((mac & 0xf0) ? 2u : 0u) |
+    const uint32_t status = ((sticky & 0xf0000) ? 1u : 0u) | ((sticky & 0xf00000) ? 2u : 0u) |
         ((sticky & 0xf) ? 0x40u : 0u) | ((sticky & 0xf0) ? 0x80u : 0u) | (s.nCOP2DF ? 0x20u : 0u);
     return {end, s.pipeQ.heldValue, s.pipeP.heldValue, mac,
         latest(s.pipeClip, s.nCOP2CF) & 0xffffffu, status};
@@ -252,6 +252,8 @@ void importPending(MIPSSTATE &s, const Bytes &state)
         if (state[offset + 33]) queueFlag(s.pipeMac, static_cast<uint32_t>(at(state, offset + 16)) & 0xffu, ready);
         if (state[offset + 34])
         {
+            const uint32_t current = static_cast<uint32_t>(at(state, offset + 20));
+            sticky = (sticky & 0xffffu) | ((current & 1u) ? 0xf0000u : 0u) | ((current & 2u) ? 0xf00000u : 0u);
             const uint32_t bits = static_cast<uint32_t>(at(state, offset + 20) | at(state, offset + 24));
             sticky |= ((bits & 1u) ? 0x0fu : 0u) | ((bits & 2u) ? 0xf0u : 0u);
             queueFlag(s.pipeSticky, sticky, ready);
@@ -259,7 +261,7 @@ void importPending(MIPSSTATE &s, const Bytes &state)
         if (state[offset + 35])
         {
             const auto status = static_cast<uint32_t>(at(state, offset + 20));
-            sticky = ((status & 0x40u) ? 0x0fu : 0u) | ((status & 0x80u) ? 0xf0u : 0u);
+            sticky = (sticky & 0xffff0000u) | ((status & 0x40u) ? 0x0fu : 0u) | ((status & 0x80u) ? 0xf0u : 0u);
             queueFlag(s.pipeSticky, sticky, ready);
         }
         if (state[offset + 36]) queueFlag(s.pipeClip, static_cast<uint32_t>(at(state, offset + 28)), ready);
@@ -317,7 +319,7 @@ bool pendingImportTests()
         s.pipeMac.pipeTimes[0] = 14;
         s.pipeMac.values[0] = 0x20;
         s.pipeSticky.pipeTimes[0] = 14;
-        s.pipeSticky.values[0] = 0xff;
+        s.pipeSticky.values[0] = 0x2000ff;
         s.pipeClip.pipeTimes[0] = 12;
         s.pipeClip.values[0] = 0x123456;
         s.nCOP2DF = 1;
@@ -416,7 +418,7 @@ bool pendingImportTests()
         VUShared::CheckFlagPipelineImmediate(VUShared::g_pipeInfoSticky, &vm->m_cpu, cycle);
         VUShared::CheckFlagPipelineImmediate(VUShared::g_pipeInfoClip, &vm->m_cpu, cycle);
         const uint32_t expectedMac[] = {0, 0x8, 0x80, 0x80};
-        const uint32_t expectedSticky[] = {0, 0xf, 0xff, 0};
+        const uint32_t expectedSticky[] = {0, 0xf000f, 0xf000ff, 0xf00000};
         if (s.nCOP2MF != expectedMac[cycle] || s.nCOP2SF != expectedSticky[cycle] ||
             s.nCOP2CF != (cycle == 3 ? 0x123456 : 0)) return false;
     }
@@ -498,6 +500,7 @@ int replayDiagnostic(const char *path)
         s.nCOP2CF = static_cast<uint32_t>(at(before, 617));
         const uint32_t status = static_cast<uint32_t>(at(before, 621));
         s.nCOP2SF = ((status & 0x40u) ? 0x0fu : 0u) | ((status & 0x80u) ? 0xf0u : 0u);
+        s.nCOP2SF |= ((status & 1u) ? 0xf0000u : 0u) | ((status & 2u) ? 0xf00000u : 0u);
         s.nCOP2DF = (status & 0x20u) ? 1u : 0u;
         initializeFlags(s.pipeMac, s.nCOP2MF);
         initializeFlags(s.pipeSticky, s.nCOP2SF);

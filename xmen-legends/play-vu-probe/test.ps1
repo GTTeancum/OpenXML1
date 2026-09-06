@@ -59,6 +59,10 @@ try {
     if (([regex]::Matches($output, '\[play-vu:sticky-reset\] reset=[0-9a-f]+ later=[01] passed=1')).Count -ne 8) {
         throw 'Arithmetic sticky-reset ordering regressions did not pass.'
     }
+    if (([regex]::Matches($output, '\[play-vu:paired-status\] reset=[0-9a-f]+ later=[01] immediate=[01] passed=1')).Count -ne 16 -or
+        !$output.Contains('[play-vu:independent-status] passed=1 cases=16 initial=1 pending-mac-only=1 pending-status=1 reset=1 export=1')) {
+        throw 'Independent MAC/STATUS regressions did not pass.'
+    }
     if (([regex]::Matches($output, '\[play-vu:wait-test\] mode=\d+ passed=1')).Count -ne 7) {
         throw 'Compiled XGKICK wait regressions did not pass.'
     }

@@ -42,6 +42,49 @@ static bool stickyResetTests(CompiledVuSession &session)
     return true;
 }
 
+static bool pairedStatusTests(CompiledVuSession &session)
+{
+    for (uint32_t reset : {0u, 0x40u, 0x80u, 0xc0u})
+    for (bool laterArithmetic : {false, true})
+    for (bool immediatePayload : {false, true})
+    {
+        alignas(16) std::array<uint8_t, 16384> code{}, data{};
+        CVuAssembler a(reinterpret_cast<uint32 *>(code.data()));
+        for (unsigned cycle = 0; cycle < 13; ++cycle)
+        {
+            auto upper = CVuAssembler::Upper::NOP();
+            auto lower = CVuAssembler::Lower::NOP();
+            if (cycle == 0 || cycle == 1 || (cycle == 3 && laterArithmetic))
+                upper = CVuAssembler::Upper::ADDbc(CVuAssembler::DEST_X, CVuAssembler::VF4,
+                    cycle == 0 ? CVuAssembler::VF0 : CVuAssembler::VF1,
+                    CVuAssembler::VF0, CVuAssembler::BC_X);
+            if (cycle == 1) lower = 0x2a000000 | reset;
+            if (cycle == 1 && immediatePayload) upper |= CVuAssembler::Upper::I_BIT;
+            if (cycle == 4 || cycle == 5 || cycle == 7)
+                lower = CVuAssembler::Lower::FSAND(static_cast<CVuAssembler::VI_REGISTER>(cycle - 3), 0xc3);
+            if (cycle == 6) lower = CVuAssembler::Lower::FMAND(CVuAssembler::VI3, CVuAssembler::VI15);
+            if (cycle == 11) upper |= CVuAssembler::Upper::E_BIT;
+            a.Write(upper, lower);
+        }
+        MIPSSTATE initial{};
+        initial.nDelayedJumpAddr = MIPS_INVALID_PC;
+        initial.nCOP2[0].nV3 = 0x3f800000;
+        initial.nCOP2[1].nV0 = 0xbf800000;
+        initial.nCOP2VI[15] = 0xffff;
+        const auto result = session.run(code, data, initial, 1048576);
+        const auto &s = result.state;
+        const uint32_t atReset = immediatePayload ? 0xc2 : (reset | 1);
+        const uint32_t after = immediatePayload ? 0xc2 : (laterArithmetic ? (reset | 0x82) : (reset | 1));
+        const bool passed = result.executed && s.nCOP2[4].nV0 == 0xbf800000 &&
+            s.nCOP2VI[1] == 0x41 && s.nCOP2VI[2] == atReset && s.nCOP2VI[3] == 0x80 && s.nCOP2VI[4] == after &&
+            (!immediatePayload || s.nCOP2I == (0x2a000000 | reset));
+        std::printf("[play-vu:paired-status] reset=%02x later=%u immediate=%u passed=%u before=%02x at=%02x mac=%02x after=%02x\n",
+            reset, unsigned(laterArithmetic), unsigned(immediatePayload), unsigned(passed), s.nCOP2VI[1], s.nCOP2VI[2], s.nCOP2VI[3], s.nCOP2VI[4]);
+        if (!passed) return false;
+    }
+    return true;
+}
+
 bool scalarFlagTests()
 {
     struct Case { uint32_t instruction, numerator, denominator, flags; };
@@ -57,6 +100,7 @@ bool scalarFlagTests()
     };
     CompiledVuSession session;
     if (!stickyResetTests(session)) return false;
+    if (!pairedStatusTests(session)) return false;
     unsigned index = 0;
     for (const auto &test : cases)
     {

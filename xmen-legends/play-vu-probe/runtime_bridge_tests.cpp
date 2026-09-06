@@ -5,8 +5,53 @@
 #include <limits>
 #include <stdexcept>
 
+static bool independentStatusTests()
+{
+    PlayVuRuntimeBridge bridge;
+    unsigned cases = 0;
+    for (uint32_t current = 0; current < 4; ++current)
+    for (uint32_t mac : {8u, 0x80u})
+    for (bool writesStatus : {false, true})
+    {
+        VUCompiledState::Input input{};
+        input.budget = 1048576;
+        input.cycle = input.state.cycles = 100;
+        input.state.vf[0][3] = 1;
+        input.state.vi[15] = 0xffff;
+        input.state.mac = mac;
+        input.state.status = current | 0xc0;
+        input.flagMask = 3;
+        input.flags[0] = {102, 98, 0xf, current ^ 3, 0, 0, true, true, writesStatus, false, false};
+        input.flags[1] = {103, 99, 0, 0x40, 0, 0, true, false, false, true, false};
+        alignas(16) std::array<uint8_t, 16384> code{}, data{};
+        CVuAssembler a(reinterpret_cast<uint32 *>(code.data()));
+        for (unsigned cycle = 0; cycle < 7; ++cycle)
+        {
+            auto lower = CVuAssembler::Lower::NOP();
+            if (cycle < 4) lower = CVuAssembler::Lower::FSAND(static_cast<CVuAssembler::VI_REGISTER>(cycle + 1), 0xc3);
+            if (cycle == 4) lower = CVuAssembler::Lower::FMAND(CVuAssembler::VI5, CVuAssembler::VI15);
+            a.Write(CVuAssembler::Upper::NOP() | (cycle == 5 ? CVuAssembler::Upper::E_BIT : 0), lower);
+        }
+        const auto result = bridge.evaluate(input, code, data);
+        const auto &s = result.output.state;
+        const auto after = writesStatus ? (current ^ 3) : current;
+        if (!result.evaluated || s.vi[1] != (current | 0xc0) || s.vi[2] != (current | 0xc0) ||
+            s.vi[3] != (after | 0xc0) || s.vi[4] != (after | 0x40) || s.vi[5] != 0xf ||
+            s.mac != 0xf || s.status != (after | 0x40))
+        {
+            std::printf("[play-vu:independent-status-error] case=%u status=%03x mac=%04x reason=%s\n",
+                cases, s.status, s.mac, result.reason.c_str());
+            return false;
+        }
+        ++cases;
+    }
+    std::printf("[play-vu:independent-status] passed=1 cases=%u initial=1 pending-mac-only=1 pending-status=1 reset=1 export=1\n", cases);
+    return true;
+}
+
 bool runtimeBridgeTests()
 {
+    if (!independentStatusTests()) return false;
     VUCompiledState::Input input{};
     input.budget = 1048576;
     input.cycle = input.state.cycles = 100;

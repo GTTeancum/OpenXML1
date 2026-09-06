@@ -59,6 +59,7 @@ MIPSSTATE PlayVuRuntimeBridge::importState(const VUCompiledState::Input &input)
     s.nCOP2MF = v.mac & macMask;
     s.nCOP2CF = v.clip;
     s.nCOP2SF = stickyBits(v.status);
+    s.nCOP2SF |= ((v.status & 1u) ? 0xf0000u : 0u) | ((v.status & 2u) ? 0xf00000u : 0u);
     s.nCOP2DF = (v.status & 0x20) ? 1u : 0u;
     initializeFlags(s.pipeMac, s.nCOP2MF);
     initializeFlags(s.pipeClip, s.nCOP2CF);
@@ -133,13 +134,14 @@ MIPSSTATE PlayVuRuntimeBridge::importState(const VUCompiledState::Input &input)
         if (e.writesMac) queue(s.pipeMac, macCount, e.mac & macMask, ready);
         if (e.writesStatus)
         {
+            sticky = (sticky & 0xffffu) | ((e.status & 1u) ? 0xf0000u : 0u) | ((e.status & 2u) ? 0xf00000u : 0u);
             const auto bits = e.status | e.extraSticky;
             sticky |= ((bits & 1u) ? 0xfu : 0u) | ((bits & 2u) ? 0xf0u : 0u);
             queue(s.pipeSticky, stickyCount, sticky, ready);
         }
         if (e.writesSticky)
         {
-            sticky = stickyBits(e.status);
+            sticky = (sticky & 0xffff0000u) | stickyBits(e.status);
             queue(s.pipeSticky, stickyCount, sticky, ready);
         }
         if (e.writesClip) queue(s.pipeClip, clipCount, e.clip, ready);
@@ -175,7 +177,7 @@ VUCompiledState::Output PlayVuRuntimeBridge::exportState(const VUCompiledState::
     v.mac = latestFlag(s.pipeMac, s.nCOP2MF, result.drainedCycle) & macMask;
     v.clip = latestFlag(s.pipeClip, s.nCOP2CF, result.drainedCycle) & 0xffffff;
     const auto sticky = latestFlag(s.pipeSticky, s.nCOP2SF, result.drainedCycle);
-    v.status = ((v.mac & 0xf) ? 1u : 0u) | ((v.mac & 0xf0) ? 2u : 0u) |
+    v.status = ((sticky & 0xf0000) ? 1u : 0u) | ((sticky & 0xf00000) ? 2u : 0u) |
         ((sticky & 0xf) ? 0x40u : 0u) | ((sticky & 0xf0) ? 0x80u : 0u) | (result.scalarStatus & 0xc30u);
     output.elapsed = result.drainedCycle;
     output.statusMask = statusMask;

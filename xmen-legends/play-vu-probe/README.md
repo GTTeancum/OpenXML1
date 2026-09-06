@@ -7,6 +7,49 @@ PS2Recomp state header, but does not link its runtime, read the ISO, create a ga
 window, or enable a replacement engine.
 There is no gameplay FPS claim or interactive handoff yet.
 
+## Independent MAC and STATUS
+
+The opt-in compiler now retains current STATUS lane bits in the high half of
+the existing sticky pipeline values; the low half retains accumulated sticky
+lane bits. MAC continues to use its own pipeline. No MIPS state layout, extra
+pipeline, or per-arithmetic callback is introduced. FSSET keeps the previous
+current STATUS and replaces sticky bits; its simultaneous upper arithmetic
+still produces the vector and MAC result, but not a STATUS update. Lower words
+used as I-bit immediate data do not trigger this suppression.
+
+This follows the flag-setting priority rule in the
+[VU User's Manual, section 3.3.4](https://docs.alexrp.com/mips/ee_vu.pdf#page=40)
+and the four-cycle FSSET definition on page 157. The rule is not inferred
+solely from matching the existing runtime. The public paired regression failed
+before the fix (`STATUS=0x02` rather than preserved `0x01`, with `MAC=0x80`).
+Sixteen paired/immediate cases now pass, plus sixteen typed import/export cases
+where initial MAC and STATUS differ, pending writes affect only MAC or also
+STATUS, and a following sticky reset preserves current STATUS.
+
+Final image `7C43EA3C79BA8C7EAA64187E1203C88AC15BA26AD68363BC1CC7537968433A2E`
+passes these cases and all previous public tests. All 22 eligible recordings
+retain supported STATUS/MAC matches, exact completion cycles and repeated typed
+outputs over 256 warm calls. The known Q differences in original cases 6/14 and
+spread case 29 remain, along with the other numeric/memory differences. STATUS
+coverage remains `0xcf3`, MAC `0x00ff`, and runtime-accepted remains zero.
+
+Three sequential comparisons, using the same baseline `77E6FDB3...` and timer
+scope/exclusions described below (milliseconds across 256 warm repetitions):
+
+| Recording | Round | Baseline All | Baseline Eligible | Typed Call |
+| --- | ---: | ---: | ---: | ---: |
+| Original | 1 | 376.097 | 300.827 | 55.912086 |
+| Original | 2 | 375.357 | 300.250 | 56.541786 |
+| Original | 3 | 384.247 | 309.141 | 56.426186 |
+| Spread | 1 | 156.921 | 78.439 | 20.144892 |
+| Spread | 2 | 164.653 | 83.909 | 19.881392 |
+| Spread | 3 | 158.840 | 80.432 | 20.017892 |
+
+Eligible median ratios remain about 5.33x/4.02x. This is not a measured hybrid or
+gameplay speedup. Next address FMAC overflow/underflow and the remaining numeric
+and VI/store timing differences before runtime acceptance. Everything remains
+local; no game build, push, pull request, or image capture was made.
+
 ## Arithmetic Sticky Reset Ordering
 
 The opt-in compiled FSSET path queues sign/zero sticky resets in the existing
@@ -24,9 +67,9 @@ discarded the older pending zero flag. All eight cases pass after the change.
 Image `1F22FC558565019D3C9E062E39F1A1F233B3C039E44FEB122E560FCC27B53CB7`
 passes the public suite and both existing recordings (14 original/eight spread
 eligible cases), including repeated typed outputs and scalar-status checks.
-This does not complete full flag behavior: same-pair upper arithmetic/FSSET
-STATUS suppression still needs to be handled separately from MAC, as do FMAC
-overflow/underflow and the numeric/timing differences listed below.
+This earlier checkpoint did not yet cover same-pair upper arithmetic/FSSET
+STATUS suppression; that is addressed above. FMAC overflow/underflow and the
+numeric/timing differences listed below remain unresolved.
 No game build, compatibility acceptance, or gameplay FPS gain is claimed.
 The timing table below belongs to the preceding scalar-status image.
 
