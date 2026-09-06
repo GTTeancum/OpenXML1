@@ -4,6 +4,88 @@ The bring-up runtime has an opt-in, process-local VU1 recorder. Use it to check
 and time interpreter changes against actual game work without repeating startup.
 This is not a replacement for first-level gameplay validation.
 
+## Packed Result Normalization
+
+`1395fb9` widens and classifies all four lanes together for native ADD/SUB/MUL
+and multiply-add/subtract instructions, including broadcast, Q/I and ACC forms.
+The original float result is retained for normal lanes; signed zero, underflow
+and overflow replacements follow the existing scalar classifier. Inactive lanes
+keep their exact bits and receive zero lane flags. Cross products and non-AVX2
+builds retain the scalar path. The interpreter and delayed-write scheduler are
+unchanged.
+
+A direct regression exercises 18 boundary values across all 16 masks with
+mixed lanes, including values immediately above/below the float range limits.
+Existing full-state native/interpreter comparisons now start in nearest and
+toward-zero caller rounding modes and check their restoration. Execution itself
+always selects the console's toward-zero mode; these are not two different VU
+arithmetic modes. The timed image
+`650795E6440917576E0A1709AF0D79AAC49F0F29BF4CCC4747B9F2170EB480F7`
+passes 143/143 VU tests and both private captures at normal/1/8/16/64-cycle
+budgets, with identical digests, cycle counts and native/interpreted coverage.
+The helper test also passed before enabling the runtime path.
+
+Seven alternating comparisons against accepted packed-product code with the
+new helper test but no runtime hook, comparator SHA-256
+`A21CC04F90BB9F1EA463E885AAD4F6E44030141D865D41DF47C61C5091B21ACE`:
+
+| Capture | Repeats | Baseline ms | Packed ms | Reduction | Wins |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original | 1024 | 1744.672 | 1654.873 | 5.147% | 7/7 |
+| Spread | 2048 | 1474.394 | 1392.689 | 5.542% | 7/7 |
+
+These are VU execution-only measurements, not whole-game FPS gains. The fixed
+comparison JSON now contains spread results. In the final PE (timestamp
+`0x6a9cf26c`), a native MADD apply path at RVA `0x2eb670` uses `vcvtps2pd`,
+`vmulpd`, then `vaddpd`, followed by one packed normalization call at `0xd0f90`.
+It retains widened non-fused arithmetic and replaces per-lane scalar classifier
+calls. This depends on local native specialization, so it is not a standalone
+upstream PR. Game integration is checked separately below.
+
+The candidate links successfully with the existing duplicate raylib symbol
+warnings: SHA-256 `BF9DED00BE2E4387B2DEF8640EF8A36D62781B4C9F9519FE26FA88A84F74037F`,
+163,360,768 bytes, PE32+ x64, timestamp `0x6a9cf309`. At 2026-09-06T05:02:40Z,
+the unprofiled first-level check exited 0 at vsync 1400 and passed every workload
+gate. It executed 788,701,403 native block pairs. Presents 1152/1280 arrived at
+172.774036/199.8058014 seconds: 128 frames in 27.0317654 seconds, **4.73517 FPS**;
+total runtime 208.0320801 seconds. Host input was disabled, startup restored,
+and the process closed. No invalid guest address was logged in this run.
+
+The newly written runtime-owned present-1280 frame was inspected in the reused
+PPM/PNG slots. Textured NYC/Wolverine and the known black props, absent foliage,
+red player disk and malformed HUD remain. No visual fix or fresh movement/combat
+test is claimed. The preceding 4.63 FPS run is a shared-host observation, not a
+controlled baseline for this game result. Practical playability remains unmet.
+
+`152b089` adds explicit caller-rounding restoration assertions to the expanded
+arithmetic test. Final test SHA-256
+`784D74F1BF49C65E9B863E14A2F85CB56DC6629F825EFCF7043F3AB45FDFF2E9`
+again passes 143/143 tests and all ten replay/budget checks. This test-only
+change does not alter the measured game candidate or the runtime optimization.
+
+The fixed execution profiles were refreshed after this final test link, so
+their matching map timestamp is now `0x6a9cf474`, not the earlier arithmetic
+or pending-clear maps. Three 2048-repeat runs per capture produced 638 original
+samples (5 external, 633 mapped) and 269 spread samples (5 external, 264 mapped),
+with zero drops/failures and exact replay. Sampling excludes setup/serialization.
+
+| In-module family | Original | Spread |
+| --- | ---: | ---: |
+| Instruction execution | 27.01% | 28.03% |
+| Other VU execution | 22.91% | 32.20% |
+| Native block bodies/guards | 20.22% | 12.50% |
+| Pipeline retirement/advance | 14.38% | 14.39% |
+| FMAC flag helpers | 10.58% | 10.61% |
+
+The individual `run` symbol has 46/33 hits (7.27%/12.50%); generic pipeline
+retirement has 34/23 (5.37%/8.71%), and pair-readiness scanning has 25/15
+(3.95%/5.68%). Packed normalization has 36/8 (5.69%/3.03%). These are coarse
+VU-only sample shares, not whole-game time or new timing comparisons. Next
+inspect the matched hot instructions in `run` and its fallback/scheduling path
+to remove repeated work at a larger granularity. Do not infer that flags can
+be discarded, repeat rejected by-reference decode/queue-index experiments, or
+broaden the kernel selection based only on execution counts.
+
 ## Packed Product Sticky Flags
 
 `cb58d43` evaluates the four product lanes together when native VU arithmetic
