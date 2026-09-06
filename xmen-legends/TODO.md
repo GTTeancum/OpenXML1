@@ -20,6 +20,7 @@
 
 ## Input During Testing
 
+- User handoff gate: once a build with measured FPS improvement is ready for interactive testing, clearly announce **Ready for your input test: controls enabled**. Use the ordinary interactive launcher, state that the user can move/test combat, and stop further automated testing or replacement builds while awaiting their feedback. Do not silently enable controls and assume the user knows. Keep the goal incomplete; user verification is a required handoff at that point. Do not launch an unchanged or title-only build for this handoff.
 - The recent automated benchmark runs intentionally set `PS2X_DISABLE_HOST_INPUT=1`; the Pad stub suppresses keyboard/controller reads in that mode. This explains the inability to move during those runs, not proof of a new input regression. Input has not been re-tested interactively this turn.
 - `run-interactive.ps1 -RuntimeVariant Candidate -StartupMovieMode TitleGameplayFirst` clears inherited PS2X settings and enables ordinary controls. Use interactive mode when handing the game to the user. Clearly announce any controlled benchmark that disables input before launching it, and do not present such a run as a playable handoff. Never restart automatically after a user closes the window.
 
