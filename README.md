@@ -32,7 +32,14 @@ The title level reaches a clean, complete Cerebro scene using the game's own GIF
 
 The immediate priority is frame rate and responsiveness. A September 4 same-executable comparison reduced mean CPU rasterization time from 98.98 ms to 63.03 ms by rejecting hidden pixels before texture shading. Replaying all 23,042 triangles in one gameplay frame produced byte-identical graphics memory with and without that optimization. It is submitted upstream as [PS2Recomp PR #246](https://github.com/ran-j/PS2Recomp/pull/246), with 427/427 tests passing on its upstream-main-based branch.
 
-This is not yet a playable-speed build. The latest controlled same-executable comparison over 128 gameplay frames measured **3.47 FPS with native VU blocks versus 3.40 FPS interpreted**, about a 2.2% improvement. An earlier candidate measured a larger 12.1% difference, so these sequential shared-machine samples are not a sustained-speed guarantee. Existing black-prop, missing-foliage, HUD, and effect defects remain. Broader timing identifies vector processing as the main remaining cost. A small operand-preparation optimization is submitted as [PS2Recomp PR #247](https://github.com/ran-j/PS2Recomp/pull/247), and cycle/queue work is submitted as [PR #248](https://github.com/ran-j/PS2Recomp/pull/248). The runner-only IPO toggle required to link this large generated game under the 2 GiB process cap is submitted as [PR #249](https://github.com/ran-j/PS2Recomp/pull/249). The current native-block bring-up passes all 124 VU-related tests; this is not a full-suite pass.
+The September 5 candidate integrates the verified native-block work through PS2Recomp `1c6a874`, including a fix for overlapping register writes. It reaches textured New York and Wolverine through the real New Game handler, but the latest unprofiled 128-frame sample is only **3.11 FPS**. This does not demonstrate an improvement over the earlier 3.97 FPS sample; neither is a controlled before/after comparison. The candidate remains opt-in and the saved primary/staged builds are unchanged. Black props, missing foliage, and HUD/effect defects remain.
+
+A separate gameplay profile attributes about **64.6%** of measured wall time to VU processing and **24.4%** to graphics submission/drawing; waiting is negligible. Practical frame rate remains the main unfinished requirement. The current runtime passes **128/128 VU-related tests** and both private gameplay captures at normal and 1/8/16/64-cycle slicing. This is not a full-suite pass or proof of gameplay fidelity. An arithmetic shortcut passed those checks but measured slower and was removed.
+
+<details>
+<summary>Earlier performance experiments and upstream contributions</summary>
+
+The earlier controlled same-executable comparison over 128 gameplay frames measured **3.47 FPS with native VU blocks versus 3.40 FPS interpreted**, about a 2.2% improvement. An earlier candidate measured a larger 12.1% difference, so these sequential shared-machine samples are not a sustained-speed guarantee. Existing black-prop, missing-foliage, HUD, and effect defects remain. Broader timing identifies vector processing as the main remaining cost. A small operand-preparation optimization is submitted as [PS2Recomp PR #247](https://github.com/ran-j/PS2Recomp/pull/247), and cycle/queue work is submitted as [PR #248](https://github.com/ran-j/PS2Recomp/pull/248). The runner-only IPO toggle required to link this large generated game under the 2 GiB process cap is submitted as [PR #249](https://github.com/ran-j/PS2Recomp/pull/249). That native-block checkpoint passed all 124 VU-related tests; this was not a full-suite pass.
 
 A bounded [VU snapshot/replay test](xmen-legends/VU-REPLAY.md) now reproduces 64 captured game workloads across two private files, checking every register/pipeline field, memory byte, and emitted graphics-packet byte and cycle. The original 32 records all came from one frame; the newer 32 records span 60 gameplay ticks and expose 185 additional instruction addresses. Together the files occupy about 3.8 MB and are not distributed. Both remain exact with short-cycle resumption, and the experimental integer-load block build passes 126/126 VU-related tests. Detailed per-instruction profiling is compiled out of ordinary builds. Selected-source builds rearchive their static library before relinking; previous performance candidates built without that step are not reliable evidence.
 
@@ -57,6 +64,8 @@ The native-upper prototype reached textured first-level gameplay and exited norm
 Whole-block VU execution is now implemented and opt-in, with exact results over the 32 captured workloads, including short-cycle resumption. The active block set retires 59,864 of 80,194 replayed instruction pairs natively. It can continue through bounded PATH1 transfers, pending delayed integer-register writes, and first-instruction vector dependency stalls while preserving original cycle visibility. Seven matched 1024-repeat replay rounds measured 21.7% less VU execution time than exact-pair mode, with the block path winning every round. A complete runner-only non-IPO rebuild and link produces the validated candidate under the unchanged 2 GiB memory limit while keeping runtime/native-kernel optimization enabled. The candidate reached textured first-level gameplay and exited normally in both measured modes. See [the current resume point](xmen-legends/TODO.md) and [validation notes](xmen-legends/VU-REPLAY.md).
 
 Rendering investigation uses `igb-blender` as the authored-format reference. Of 201 map texture bindings, 200 are one-byte PSMT8 indices with 256-entry RGBA CLUTs. Static map geometry carries baked vertex colors and explicitly disables live lighting, matching Alchemy's fixed-function `texture * vertex color * 2` path. The affected black props instead have normals, no baked colors, and inherit live lighting. Runtime tracing observed 79 of 81 unique New York textures; every observed index payload and every CSM1 palette upload matches the plugin data exactly after the game's 0-255 to 0-128 GS alpha conversion. The two unobserved entries are an unpalettized shadow texture and an unused subway texture. All 12 authored lights also arrive with their exact colors and apply enabled before scene traversal restores them. The previously observed zero at `0x752750` is the separate global scene-ambient multiplier, not proof that those live lights were lost. Lighting, effects, and HUD fixes remain tracked for later work.
+
+</details>
 
 Sofdec output remains unfinished and outside the active goal. The demux advances through each movie and its ADX audio header and blocks arrive intact, but visible decoded frames and audible movie playback are not yet correct.
 
@@ -85,6 +94,7 @@ This current-build frame comes from the real Begin Story campaign flow and rende
 | `xmen-legends/dev-overrides/` | Reversible startup and gameplay diagnostic scripts |
 | `xmen-legends/apply-generated-first-level-probe.ps1` | Reapplies the deterministic native New Game probe after regeneration |
 | `xmen-legends/run-guarded-probe.ps1` | Bounded runtime probe and artifact retention |
+| `xmen-legends/run-gameplay-benchmark.ps1` | Fixed first-level startup, bounded logs, phase profiling or unprofiled frame timing |
 | `xmen-legends/cleanup-generated-artifacts.ps1` | Removal of obsolete builds, captures, and logs |
 | `xmen-legends/inspect-igb-scene.py` | Reports authored geometry, PSMT8/CLUT, material, and light state through `igb-blender` |
 
@@ -146,7 +156,15 @@ Launch the current control-first build through the reversible interactive wrappe
 & .\xmen-legends\run-interactive.ps1
 ```
 
-The wrapper selects a staged `ps2EntryRunner.next.exe` when present, starts the real New Game setup, bypasses only Alison's unfinished intro movie, and restores the retail startup package when the user closes the game. The development scripts assume this layout. Compiler, recompiler, CMake, and MSBuild work runs at Below Normal priority with one compiler worker. Interactive and guarded runs keep the visible, user-closable runtime at Normal priority, limit it to four logical processors, and discard or bound diagnostics so repeated investigation does not monopolize the host or grow the workspace indefinitely.
+The wrapper selects a staged `ps2EntryRunner.next.exe` when present, bypasses the unfinished startup movies, and restores the retail startup package when the user closes the game. Choose Begin Story normally, or use `TitleGameplayFirst` to invoke the real New Game handler automatically after title initialization. Compiler, recompiler, CMake, and MSBuild work runs at Below Normal priority with one compiler worker. Interactive and guarded runs keep the visible, user-closable runtime at Normal priority, limit it to four logical processors, and discard or bound diagnostics.
+
+To try the opt-in native-block candidate with ordinary controls and no test timer:
+
+```powershell
+& .\xmen-legends\run-interactive.ps1 -RuntimeVariant Candidate -StartupMovieMode TitleGameplayFirst
+```
+
+For repeatable developer measurements, run `run-gameplay-benchmark.ps1` with `-PhaseProfile -CaptureFrame` for the timing breakdown, or without `-PhaseProfile` for approximate FPS. This wrapper disables host input, verifies the New Game and New York load markers, uses a 1400-vsync stop, restores the startup package, and reuses fixed logs/reports under the build directory. Closing the window ends the run; it is never automatically reopened. Phase-profile timings are not FPS measurements.
 
 ## Controls
 

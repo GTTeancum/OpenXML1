@@ -5,7 +5,7 @@ param(
     [ValidateSet('Debug', 'Release', 'RelWithDebInfo', 'MinSizeRel')]
     [string]$Config = 'Release',
 
-    [ValidateSet('Auto', 'Primary', 'Staged')]
+    [ValidateSet('Auto', 'Primary', 'Staged', 'Candidate')]
     [string]$RuntimeVariant = 'Auto',
 
     # Retained for compatibility with existing launch commands. Fast dispatch is
@@ -36,6 +36,7 @@ $stagedExe = Join-Path $runtimeDirectory 'ps2EntryRunner.next.exe'
 $exe = switch ($RuntimeVariant) {
     'Primary' { $primaryExe }
     'Staged' { $stagedExe }
+    'Candidate' { Join-Path $runtimeDirectory 'ps2EntryRunner.candidate.exe' }
     default {
         if (Test-Path -LiteralPath $stagedExe -PathType Leaf) {
             $stagedExe
@@ -81,6 +82,10 @@ try {
     }
     $startInfo.Environment['PS2X_XMEN_HOST_CLOCK'] = '1'
     $startInfo.Environment['PS2X_FAST_FORWARD_XMEN_LEGAL'] = '1'
+    if ($RuntimeVariant -eq 'Candidate') {
+        $startInfo.Environment['PS2X_VU_NATIVE_PAIRS'] = '1'
+        $startInfo.Environment['PS2X_VU_NATIVE_BLOCKS'] = '1'
+    }
     if ($Diagnostics) {
         $startInfo.Environment['PS2X_XMEN_DIAGNOSTICS'] = '1'
         $startInfo.Environment['PS2X_XMEN_PROGRESS_TRACE'] = '1'
