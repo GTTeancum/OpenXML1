@@ -48,6 +48,7 @@ bool tryCompiledVuDrain(VU1Interpreter &vu, const uint8_t *code, uint32_t codeSi
     if (!input) return reject("Unsupported VU entry or budget");
 
     PlayVuRuntimeBridge::Result result;
+    CompiledVuSession::CacheStatistics cache;
     try
     {
         thread_local PlayVuRuntimeBridge bridge;
@@ -57,6 +58,7 @@ bool tryCompiledVuDrain(VU1Interpreter &vu, const uint8_t *code, uint32_t codeSi
             std::memcpy(privateData.data(), data, privateData.size());
         });
         result = bridge.evaluate(*input, privateCode, privateData);
+        cache = bridge.cacheStatistics();
     }
     catch (const std::exception &e)
     {
@@ -89,9 +91,15 @@ bool tryCompiledVuDrain(VU1Interpreter &vu, const uint8_t *code, uint32_t codeSi
     counters.cycles += result.output.elapsed;
     static const bool report = std::getenv("PS2X_VU_COMPILED_STATS") != nullptr;
     if (report && counters.accepted <= 262144 && (counters.accepted & 4095) == 1)
+    {
         std::fprintf(stderr, "[vu:compiled] accepted=%llu attempts=%llu cycles=%llu\n",
             static_cast<unsigned long long>(counters.accepted),
             static_cast<unsigned long long>(counters.attempted),
             static_cast<unsigned long long>(counters.cycles));
+        std::fprintf(stderr, "[vu:compiled-cache] compiled=%llu hits=%llu clears=%llu changes=%llu blocks=%zu bytes=%zu\n",
+            static_cast<unsigned long long>(cache.compiled), static_cast<unsigned long long>(cache.hits),
+            static_cast<unsigned long long>(cache.clears), static_cast<unsigned long long>(cache.codeChanges),
+            cache.blocks, cache.bytes);
+    }
     return true;
 }

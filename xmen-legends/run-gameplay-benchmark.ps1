@@ -1,12 +1,15 @@
 param(
-    [ValidateSet('Primary', 'Staged', 'Candidate')]
+    [ValidateSet('Primary', 'Staged', 'Candidate', 'Profile')]
     [string]$RuntimeVariant = 'Candidate',
     [switch]$PhaseProfile,
     [switch]$CoverageProfile,
     [switch]$CpuRasterProfile,
     [switch]$CaptureFrame,
+    [switch]$CaptureVu,
+    [ValidateRange(0, 1400)][int]$CaptureVuStartTick = 1100,
     [switch]$CompiledVu,
     [switch]$CompiledRetry,
+    [switch]$RetainVuCache,
     [switch]$BestFitHeap,
     [switch]$InPlaceRealloc,
     [switch]$HeapDiagnostics,
@@ -29,6 +32,7 @@ $name = switch ($RuntimeVariant) {
     'Primary' { 'ps2EntryRunner.exe' }
     'Staged' { 'ps2EntryRunner.next.exe' }
     'Candidate' { 'ps2EntryRunner.candidate.exe' }
+    'Profile' { 'ps2EntryRunner.profile.exe' }
 }
 $exe = (Resolve-Path -LiteralPath (Join-Path $build "ps2xRuntime/Release/$name")).Path
 if (Get-Process -Name 'ps2EntryRunner*' -ErrorAction SilentlyContinue) {
@@ -67,9 +71,14 @@ if ($CompiledRetry) {
     if (!$CompiledVu) { throw 'CompiledRetry requires CompiledVu.' }
     $stem += '-retry'
 }
+if ($RetainVuCache) {
+    if (!$CompiledVu) { throw 'RetainVuCache requires CompiledVu.' }
+    $stem += '-cache'
+}
 if ($BestFitHeap) { $stem += '-best-fit' }
 if ($InPlaceRealloc) { $stem += '-realloc' }
 if ($HeapDiagnostics) { $stem += '-heap-audit' }
+if ($CaptureVu) { $stem += '-vu-capture' }
 $outLog = Join-Path $build "$stem.out.log"
 $errLog = Join-Path $build "$stem.err.log"
 $start = [Diagnostics.ProcessStartInfo]::new($exe)
@@ -92,6 +101,7 @@ foreach ($key in @('PS2X_DISABLE_HOST_INPUT', 'PS2X_XMEN_HOST_CLOCK',
 $start.Environment['PS2X_RUN_VSYNC_LIMIT'] = '1400'
 if ($VulkanGs) { $start.Environment['PS2X_GS_PLAY_VULKAN'] = '1' }
 if ($CompiledRetry) { $start.Environment['PS2X_VU_COMPILED_RETRY'] = '1' }
+if ($RetainVuCache) { $start.Environment['PS2X_VU_RETAIN_BLOCK_CACHE'] = '1' }
 if ($BestFitHeap) { $start.Environment['PS2X_GUEST_BUMP_BEST_FIT'] = '1' }
 if ($InPlaceRealloc) { $start.Environment['PS2X_GUEST_BUMP_REALLOC'] = '1' }
 if ($HeapDiagnostics) { $start.Environment['PS2X_GUEST_BUMP_DIAGNOSTICS'] = '1' }
@@ -112,6 +122,10 @@ if ($CpuRasterProfile) { $start.Environment['PS2X_GS_CPU_PROFILE'] = '1' }
 if ($AuditBilinear) { $start.Environment['PS2X_GS_VERIFY_BILINEAR'] = '1' }
 if ($CoverageProfile) { $start.Environment['PS2X_VU_COVERAGE_PROFILE'] = '1' }
 if ($CaptureFrame) { $start.Environment['PS2X_DUMP_PRESENT_RANGE'] = '1280-1280' }
+if ($CaptureVu) {
+    $start.Environment['PS2X_VU_REPLAY_CAPTURE'] = Join-Path $disc 'vu-gameplay-current.bin'
+    $start.Environment['PS2X_VU_REPLAY_CAPTURE_START_TICK'] = "$CaptureVuStartTick"
+}
 
 $identity = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
 $startup = Join-Path $PSScriptRoot 'dev-overrides/set-startup-movie-bypass.ps1'
@@ -123,6 +137,8 @@ $markers = @{}
 $blockPairs = 0L
 $compiledCalls = 0L
 $compiledRetryCalls = 0L
+$captureComplete = $false
+$cacheHits = 0L
 $bestFitActive = $false
 $reallocCalls = 0L
 $publicFreeCalls = 0L
@@ -183,6 +199,14 @@ try {
                 if ($line -match '^\[run:probe-limit\] vsync=1400\b') { $reachedLimit = $true }
                 if ($line -match '^\[vu:blocks\] stopped .* pairs=(\d+)') { $blockPairs = [long]$Matches[1] }
                 if ($line -match '^\[vu:compiled\] accepted=(\d+)') { $compiledCalls = [long]$Matches[1] }
+                if ($line -match '^\[vu:compiled-cache\] compiled=\d+ hits=(\d+)') { $cacheHits = [long]$Matches[1] }
+                if ($CaptureVu -and $line -match '^\[vu-replay:capture\] short=16 long=16 .* saved=1 ') {
+                    $captureComplete = $true
+                    if (!$process.HasExited) {
+                        try { $process.Kill() }
+                        catch [InvalidOperationException] { if (!$process.HasExited) { throw } }
+                    }
+                }
                 if ($line -match '^\[vu:compiled-retry\] accepted=(\d+)') { $compiledRetryCalls = [long]$Matches[1] }
                 if ($line -eq '[heap:best-fit] active=1') { $bestFitActive = $true }
                 if ($line -match '^\[heap:realloc-in-place\] accepted=(\d+)') { $reallocCalls = [long]$Matches[1] }
@@ -243,13 +267,14 @@ try {
         (!$VulkanGs -or ($vulkanActive -and $vulkanPresents -ge 1152 -and $vulkanSubmits -gt 0 -and $vulkanNonblack -gt 0)) -and
         (!$CompiledVu -or $compiledCalls -gt 0) -and
         (!$CompiledRetry -or ($CompiledVu -and $compiledRetryCalls -gt 0)) -and
+        (!$RetainVuCache -or ($CompiledVu -and $cacheHits -gt 0)) -and
         (!$AuditBilinear -or $bilinearSamples -gt 0) -and
         (!$PreparedTexture -or $preparedTextureActive) -and
         (!$AuditPreparedTexture -or ($PreparedTexture -and $preparedTextureSamples -gt 0)) -and
         $reachedLimit -and $blockPairs -gt 0 -and
         $newGameHandler -and $levelPackage -and
         $markers.ContainsKey('1152') -and $markers.ContainsKey('1280')
-    $verified = $completed -and !$AuditCompiledVu -and !$AuditBilinear -and !$AuditPreparedTexture -and !$HeapDiagnostics -and !$HeapTrace
+    $verified = $completed -and !$AuditCompiledVu -and !$AuditBilinear -and !$AuditPreparedTexture -and !$HeapDiagnostics -and !$HeapTrace -and !$CaptureVu
     $report = [ordered]@{
         RecordedAtUtc = [DateTime]::UtcNow.ToString('o')
         Executable = $exe; Sha256 = $identity; PhaseProfile = [bool]$PhaseProfile
@@ -257,6 +282,8 @@ try {
         CpuRasterProfile = [bool]$CpuRasterProfile
         CompiledVu = [bool]$CompiledVu; CompiledCallsLowerBound = $compiledCalls
         CompiledRetry = [bool]$CompiledRetry; CompiledRetryCallsLowerBound = $compiledRetryCalls
+        RetainVuCache = [bool]$RetainVuCache; CacheHitsLowerBound = $cacheHits
+        CaptureVu = [bool]$CaptureVu; CaptureVuStartTick = $CaptureVuStartTick; CaptureComplete = $captureComplete
         BestFitHeap = [bool]$BestFitHeap; BestFitActive = $bestFitActive
         InPlaceRealloc = [bool]$InPlaceRealloc; InPlaceReallocCallsLowerBound = $reallocCalls
         PublicFreeCallsLowerBound = $publicFreeCalls; PublicFreeBytesLowerBound = $publicFreeBytes
@@ -288,7 +315,7 @@ try {
     $report | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $reportPath
     $reportWritten = $true
     [pscustomobject]$report | Format-List
-    if (!$completed) {
+    if (!$completed -and !($CaptureVu -and $captureComplete -and $guestFaultLines -eq 0 -and $heapFailures -eq 0)) {
         throw 'Run did not complete the native-block workload; do not use it as a gameplay benchmark.'
     }
 } catch {
@@ -297,6 +324,8 @@ try {
             RecordedAtUtc=[DateTime]::UtcNow.ToString('o'); Executable=$exe; Sha256=$identity
             Status='Incomplete'; Error=$_.Exception.Message; ElapsedSeconds=$watch.Elapsed.TotalSeconds
             CompiledCallsLowerBound=$compiledCalls; CompiledRetryCallsLowerBound=$compiledRetryCalls
+            RetainVuCache=[bool]$RetainVuCache; CacheHitsLowerBound=$cacheHits
+            CaptureVu=[bool]$CaptureVu; CaptureVuStartTick=$CaptureVuStartTick; CaptureComplete=$captureComplete
             HeapFailureLines=$heapFailures; GuestFaultLines=$guestFaultLines; FirstGuestFault=$firstGuestFault
             NewGameHandler=$newGameHandler; LevelPackage=$levelPackage; Presents=$markers
             WorkloadVerified=$false; AuditVerified=$false; Fps=$null; HostInput=$false

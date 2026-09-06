@@ -14,6 +14,14 @@ class CompiledVuSession
 public:
     enum class Arithmetic { Separate, RuntimeFused };
     enum class Emission { Environment, Helpers, Direct };
+    enum class Cache { Environment, Discard, Retain };
+    struct CacheStatistics
+    {
+        uint64_t compiled = 0, hits = 0, clears = 0, codeChanges = 0;
+        size_t blocks = 0, bytes = 0;
+    };
+    static constexpr size_t cacheBlockLimit = 2048;
+    static constexpr size_t cacheByteLimit = 8 * 1024 * 1024;
     struct Result
     {
         bool executed = false;
@@ -28,8 +36,10 @@ public:
         uint64_t scalarEnd = 0;
         bool scalarFlagsValid = false;
     };
-    explicit CompiledVuSession(Arithmetic = Arithmetic::Separate, Emission = Emission::Environment);
+    explicit CompiledVuSession(Arithmetic = Arithmetic::Separate, Emission = Emission::Environment,
+        Cache = Cache::Environment);
     uint64_t directInstructionsCompiled() const;
+    CacheStatistics cacheStatistics() const;
     ~CompiledVuSession();
     CompiledVuSession(const CompiledVuSession &) = delete;
     CompiledVuSession &operator=(const CompiledVuSession &) = delete;

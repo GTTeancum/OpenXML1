@@ -25,6 +25,19 @@ class GuardedVuExecutor : public CVuExecutor
 {
 public:
     using CVuExecutor::CVuExecutor;
+    CompiledVuSession::CacheStatistics statistics;
+    bool boundedCache = false;
+    void Reset() override
+    {
+        CVuExecutor::Reset();
+        statistics.bytes = statistics.blocks = 0;
+        ++statistics.clears;
+    }
+    void invalidate(bool retain)
+    {
+        if (retain) ClearActiveBlocksInRange(0, 16384, false);
+        else Reset();
+    }
 protected:
     BasicBlockPtr BlockFactory(CMIPS &cpu, uint32 begin, uint32 end) override
     {
@@ -37,7 +50,19 @@ protected:
                 function >= 0x70 && function <= 0x7d && function != 0x7b)
                 throw UnsupportedEfu();
         }
-        return CVuExecutor::BlockFactory(cpu, begin, end);
+        const auto before = m_cachedBlocks.size();
+        auto block = CVuExecutor::BlockFactory(cpu, begin, end);
+        if (m_cachedBlocks.size() != before)
+        {
+            ++statistics.compiled;
+            statistics.bytes += block->GetCompiledSize();
+        }
+        else ++statistics.hits;
+        statistics.blocks = m_cachedBlocks.size();
+        if (boundedCache && (statistics.blocks > CompiledVuSession::cacheBlockLimit ||
+            statistics.bytes > CompiledVuSession::cacheByteLimit))
+            throw std::runtime_error("Compiled VU code cache capacity exceeded");
+        return block;
     }
 };
 
@@ -75,9 +100,17 @@ struct CompiledVuSession::Impl
     uint32_t top = 0, itop = 0;
     std::string error;
     uint64_t directInstructions = 0;
+    bool retainBlocks = false;
 
-    explicit Impl(Arithmetic arithmetic, Emission emission)
+    explicit Impl(Arithmetic arithmetic, Emission emission, Cache cache)
     {
+        const char *cacheValue = std::getenv("PS2X_VU_RETAIN_BLOCK_CACHE");
+        retainBlocks = cache == Cache::Retain || (cache == Cache::Environment &&
+            cacheValue && !std::strcmp(cacheValue, "1"));
+        executor.boundedCache = retainBlocks;
+        // Play's lookup storage requires initialization before range invalidation.
+        executor.Reset();
+        executor.statistics = {};
         cpu.m_vuFmacCompiler = arithmetic == Arithmetic::RuntimeFused ? selectFmacRuntimeFused : selectFmac;
         if (emission == Emission::Direct || (emission == Emission::Environment && std::getenv("PS2X_VU_DIRECT_FMAC")))
             cpu.m_vuFmacEmitter = [this](CMIPS *context, CMipsJitter *jitter, uint32 opcode, uint32 cycle, uint32 hints) {
@@ -128,9 +161,11 @@ struct CompiledVuSession::Impl
     }
 };
 
-CompiledVuSession::CompiledVuSession(Arithmetic arithmetic, Emission emission) : impl(std::make_unique<Impl>(arithmetic, emission)) {}
+CompiledVuSession::CompiledVuSession(Arithmetic arithmetic, Emission emission, Cache cache)
+    : impl(std::make_unique<Impl>(arithmetic, emission, cache)) {}
 CompiledVuSession::~CompiledVuSession() = default;
 uint64_t CompiledVuSession::directInstructionsCompiled() const { return impl->directInstructions; }
+CompiledVuSession::CacheStatistics CompiledVuSession::cacheStatistics() const { return impl->executor.statistics; }
 
 uint64_t compiledVuDrainCycle(const MIPSSTATE &s, uint64_t transferEnd)
 {
@@ -163,7 +198,8 @@ CompiledVuSession::Result CompiledVuSession::run(const std::array<uint8_t, 16384
         auto &vm = *impl;
         if (!vm.codeLoaded || vm.code != code)
         {
-            vm.executor.Reset();
+            vm.executor.invalidate(vm.retainBlocks);
+            ++vm.executor.statistics.codeChanges;
             vm.code = code;
             vm.codeLoaded = true;
             vm.referenceEntries.reset();
@@ -206,7 +242,7 @@ CompiledVuSession::Result CompiledVuSession::run(const std::array<uint8_t, 16384
         result = {};
         result.reason = e.what();
         impl->referenceEntries.set(state.nPC / 8);
-        impl->executor.Reset();
+        impl->executor.invalidate(impl->retainBlocks);
     }
     catch (const std::exception &e)
     {

@@ -17,6 +17,7 @@ public:
     static VUCompiledState::Output exportState(const VUCompiledState::Input &, CompiledVuSession::Result);
     Result evaluate(const VUCompiledState::Input &, const std::array<uint8_t, 16384> &code,
         const std::array<uint8_t, 16384> &data);
+    CompiledVuSession::CacheStatistics cacheStatistics() const { return session.cacheStatistics(); }
 private:
     CompiledVuSession session{CompiledVuSession::Arithmetic::RuntimeFused};
 };

@@ -2,12 +2,93 @@
 #include "VuAssembler.h"
 #include "transfer_timeline.h"
 #include <cfenv>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <xmmintrin.h>
 
+static bool cacheRetentionTests()
+{
+    using Session = CompiledVuSession;
+    Session discarded(Session::Arithmetic::RuntimeFused, Session::Emission::Helpers, Session::Cache::Discard);
+    Session retained(Session::Arithmetic::RuntimeFused, Session::Emission::Helpers, Session::Cache::Retain);
+    std::array<std::array<uint8_t, 16384>, 8> programs{};
+    std::array<uint8_t, 16384> data{};
+    MIPSSTATE initial{};
+    initial.nDelayedJumpAddr = MIPS_INVALID_PC;
+    initial.nCOP2[0].nV3 = 0x3f800000;
+    initial.nCOP2[1].nV0 = 0x40000000;
+    const auto nop = CVuAssembler::Upper::NOP();
+    for (unsigned variant = 0; variant < programs.size(); ++variant)
+    {
+        CVuAssembler a(reinterpret_cast<uint32 *>(programs[variant].data()));
+        const auto target = a.CreateLabel();
+        a.Write(nop | 0x80000000u, 0x3f800000u + (variant << 15));
+        a.Write(CVuAssembler::Upper::MULi(CVuAssembler::DEST_X, CVuAssembler::VF2, CVuAssembler::VF1), CVuAssembler::Lower::NOP());
+        a.Write(nop, CVuAssembler::Lower::B(target));
+        a.Write(nop, CVuAssembler::Lower::NOP());
+        a.Write(nop, CVuAssembler::Lower::IADDIU(CVuAssembler::VI1, CVuAssembler::VI0, variant));
+        a.MarkLabel(target);
+        a.Write(nop, CVuAssembler::Lower::SQ(CVuAssembler::DEST_XYZW, CVuAssembler::VF2, 4, CVuAssembler::VI0));
+        a.Write(nop | CVuAssembler::Upper::E_BIT, CVuAssembler::Lower::NOP());
+        a.Write(nop, CVuAssembler::Lower::NOP());
+    }
+    int64_t discardedNs = 0, retainedNs = 0;
+    for (unsigned run = 0; run < 256; ++run)
+    {
+        const auto &code = programs[run % programs.size()];
+        const auto begin = std::chrono::steady_clock::now();
+        const auto a = discarded.run(code, data, initial, 1048576);
+        const auto middle = std::chrono::steady_clock::now();
+        const auto b = retained.run(code, data, initial, 1048576);
+        const auto finish = std::chrono::steady_clock::now();
+        discardedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(middle - begin).count();
+        retainedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(finish - middle).count();
+        if (!a.executed || !b.executed || std::memcmp(&a.state, &b.state, sizeof(a.state)) ||
+            a.data != b.data || a.packets != b.packets || a.completionCycles != b.completionCycles ||
+            a.transferEnd != b.transferEnd || a.drainedCycle != b.drainedCycle ||
+            a.scalarStatus != b.scalarStatus || a.scalarEnd != b.scalarEnd) return false;
+    }
+    const auto off = discarded.cacheStatistics(), on = retained.cacheStatistics();
+    if (!on.hits || on.compiled >= off.compiled || on.codeChanges != 256 || on.clears) return false;
+    auto unsupported = programs[0];
+    const uint32_t efu = CVuAssembler::Lower::ERLENG(CVuAssembler::VF1);
+    std::memcpy(unsupported.data() + 40, &efu, 4);
+    if (retained.run(unsupported, data, initial, 1048576).executed) return false;
+    const auto beforeRecovery = retained.cacheStatistics().compiled;
+    if (!retained.run(programs[0], data, initial, 1048576).executed ||
+        retained.cacheStatistics().compiled != beforeRecovery) return false;
+    Session pressure(Session::Arithmetic::RuntimeFused, Session::Emission::Helpers, Session::Cache::Retain);
+    auto code = programs[0];
+    code.fill(0);
+    unsigned rejected = 0;
+    for (unsigned variant = 0; variant < Session::cacheBlockLimit + 8; ++variant)
+    {
+        CVuAssembler a(reinterpret_cast<uint32 *>(code.data()));
+        a.Write(nop | 0xc0000000u, 0x3f000000u + variant);
+        a.Write(nop, CVuAssembler::Lower::NOP());
+        const auto result = pressure.run(code, data, initial, 1048576);
+        if (!result.executed)
+        {
+            if (result.reason != "Compiled VU code cache capacity exceeded" || !result.packets.empty() ||
+                result.data != data) return false;
+            ++rejected;
+        }
+        else if (result.state.nCOP2I != 0x3f000000u + variant) return false;
+        const auto stats = pressure.cacheStatistics();
+        if (stats.blocks > Session::cacheBlockLimit || stats.bytes > Session::cacheByteLimit) return false;
+    }
+    if (!rejected || !pressure.run(programs[0], data, initial, 1048576).executed) return false;
+    std::printf("[play-vu:retained-cache] passed=1 replacements=256 compiled=%llu/%llu hits=%llu bytes=%zu "
+        "discarded-ms=%.3f retained-ms=%.3f capacity-rejections=%u recovery=1\n",
+        static_cast<unsigned long long>(on.compiled), static_cast<unsigned long long>(off.compiled),
+        static_cast<unsigned long long>(on.hits), on.bytes, discardedNs / 1e6, retainedNs / 1e6, rejected);
+    return true;
+}
+
 bool compiledSessionTests()
 {
+    if (!cacheRetentionTests()) return false;
     {
         std::array<uint8_t, 16384> data{};
         const uint64_t tag = 0x1000000000008fffull;

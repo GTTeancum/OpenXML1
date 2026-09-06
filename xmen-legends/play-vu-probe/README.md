@@ -9,6 +9,26 @@ Bounded first-level timing is recorded below. The user subsequently confirmed
 movement on the performance candidate, but rejected its roughly 5 FPS; combat
 was not tested in that session. See the current TODO before launching anything.
 
+## Retained Block Cache
+
+`PS2X_VU_RETAIN_BLOCK_CACHE=1` opts into content-addressed compiled block reuse
+across microcode changes and unsupported EFU fallback. Active links are removed
+before a new program is installed. The default still discards cached programs.
+Each session caps retained blocks at 2,048 and generated code at 8 MiB; a capacity
+rejection publishes no partial output and returns to the reference engine.
+This byte count excludes host allocation overhead. Constructor initialization,
+alternating programs, branch relinking, EFU recovery and capacity recovery are
+covered by the public detached-session tests. Runtime benchmark flag:
+`-CompiledVu -CompiledRetry -RetainVuCache`.
+
+All 163 VU tests pass with cache off/on, and eight private recordings pass at
+full/1/8/16/64-cycle slices. The synthetic switch test reduces compilations from
+512 to 9 across 256 changes; this is not a live FPS claim. The combined candidate
+completes the fixed game workload at **5.44334 FPS**, still unacceptable. Its
+300-second compiled audit reaches presentation 1152 without a logged mismatch
+but remains incomplete. Keep cache retention opt-in and do not treat this as
+an interactive handoff. Current evidence is in `../HEAP-CHECKPOINT.md`.
+
 ## Bounded Compiled Retry
 
 September 6, 19:44 UTC: the saved tick-542 failure is fixed. An ILW issued at

@@ -1,3 +1,37 @@
+diff --git a/Source/BasicBlock.cpp b/Source/BasicBlock.cpp
+index 4c460e6..9c7c3a7 100644
+--- a/Source/BasicBlock.cpp
++++ b/Source/BasicBlock.cpp
+@@ -349,6 +349,15 @@ uint32 CBasicBlock::GetBeginAddress() const
+ 	return m_begin;
+ }
+ 
++size_t CBasicBlock::GetCompiledSize() const
++{
++#ifndef AOT_USE_CACHE
++	return m_function.GetSize();
++#else
++	return 0;
++#endif
++}
++
+ uint32 CBasicBlock::GetEndAddress() const
+ {
+ 	return m_end;
+diff --git a/Source/BasicBlock.h b/Source/BasicBlock.h
+index 56ef0ad..eb19017 100644
+--- a/Source/BasicBlock.h
++++ b/Source/BasicBlock.h
+@@ -80,7 +80,8 @@ public:
+ 
+ 	uint32 GetBeginAddress() const;
+ 	uint32 GetEndAddress() const;
+-	bool IsCompiled() const;
++	bool IsCompiled() const;
++	size_t GetCompiledSize() const;
+ 	bool IsEmpty() const;
+ 
+ 	uint32 GetRecycleCount() const;
 diff --git a/Source/MIPS.h b/Source/MIPS.h
 index fc28a8f..3d0383b 100644
 --- a/Source/MIPS.h

@@ -26,12 +26,15 @@ $markers = @{ '1152' = 1; '1280' = 2 }
 $guestFaultLines = 0
 $CompiledVu = $false
 $CompiledRetry = $false
+$RetainVuCache = $false
+$cacheHits = 0L
 $compiledRetryCalls = 0L
 $BestFitHeap = $false
 $InPlaceRealloc = $false
 $reallocCalls = 0L
 $HeapDiagnostics = $false
 $HeapTrace = $false
+$CaptureVu = $false
 $bestFitActive = $false
 $heapFailures = 0L
 $AuditCompiledVu = $false
@@ -48,6 +51,9 @@ $vulkanPresents = 0L
 $vulkanSubmits = 0L
 $vulkanNonblack = 0L
 if (!(& $check)) { throw 'Healthy workload rejected.' }
+$CaptureVu = $true
+if (& $check) { throw 'VU recording accepted as FPS.' }
+$CaptureVu = $false
 $HeapTrace = $true
 if (& $check) { throw 'Heap trace accepted as FPS.' }
 $HeapTrace = $false
@@ -84,6 +90,11 @@ $CompiledVu = $true
 if (& $check) { throw 'Requested compiled engine was accepted without execution evidence.' }
 $compiledCalls = 1L
 if (!(& $check)) { throw 'Verified compiled workload rejected.' }
+$RetainVuCache = $true
+if (& $check) { throw 'Retained VU cache accepted without reuse evidence.' }
+$cacheHits = 1L
+if (!(& $check)) { throw 'Executed retained VU cache rejected.' }
+$RetainVuCache = $false
 $CompiledRetry = $true
 if (& $check) { throw 'Compiled retry accepted without execution evidence.' }
 $compiledRetryCalls = 1L

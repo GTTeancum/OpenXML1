@@ -4,6 +4,66 @@ September 6, 2026. Work is local only; no pushes or PRs. Movement was confirmed
 by the user on an earlier build; attacking was not tested there. The performance
 target remains 30 FPS. No result below is an interactive handoff.
 
+## Retained Compiled Blocks (Current Work)
+
+The current healthy-heap candidate's phase profile attributes 123,594.776 ms
+of 128,468.865 ms to VU exclusive time on its busy thread across 89 windows,
+ticks 558..634 (96.206%). This is not a GPU bottleneck measurement or FPS.
+A bounded earlier capture now records canonical reference results starting
+at an optional tick, preserving the original 16-short/16-long quotas and
+4 MiB limit. `-CaptureVu -CaptureVuStartTick 550 -RuntimeVariant Profile`
+completed at 225.989 seconds with no logged heap/guest faults. The private
+`disc/vu-gameplay-current.bin` is 1,915,688 bytes, SHA256
+`CBAE282147204131268441035DF5EA4F2D91AD32FF2A06F15C89AB4FC0FEC7C9`.
+It has eight distinct microcode images and 32 cases, ticks 550..613. Reference,
+native and compiled/retry replay agree on digest `e941ad49d2248a18`.
+
+The opt-in `PS2X_VU_RETAIN_BLOCK_CACHE=1` / benchmark `-RetainVuCache` keeps
+content-addressed Play blocks while unlinking active blocks on code changes
+and unsupported EFU fallback. Defaults remain unchanged. Each session is
+bounded to 2,048 blocks / 8 MiB generated code; exceeding either discards the
+private attempt, clears the cache and uses reference fallback. Generated code
+bytes exclude allocator/page overhead, so this is not a process RAM cap.
+The first synthetic run exposed uninitialized lookup storage; constructor
+initialization fixes it before range invalidation can occur.
+
+Standalone `F45A493282A39C8E2B96ADCE8E1702CD5FD07D8FFC164E49B1FA060107296696`
+passes all public checks. Across 256 alternating programs, retained/discarded
+compilation counts are 9/512, 503 hits, with exact state/data/packet/timing
+agreement; capacity rejection and subsequent recovery also pass. Synthetic
+164.057/5.055 ms timings are not game FPS. All 163 VU tests pass with cache
+off and on; eight recordings pass full/1/8/16/64-cycle replay (40 checks).
+Runtime test SHA256:
+`39639BBE1BA34814D9984E60CE7FF6B5F2F85C7112B2DBA78C87D05D9FBF415F`.
+Logs: `vu-cache-{0,1}-tests.log`, `vu-cache-replays.log` in the active build.
+The existing candidate slot now contains performance candidate SHA256
+`117EFB1091AE41CB653CBD28AB3CCFA0F16E3FACE4E0166E22523D3E19EB8190`.
+Runtime capture changes are checkpointed locally as `8b3e64d`.
+The 300-second cache audit is INCOMPLETE, not a pass: it reached presentation
+1152 at 260.454 seconds, with at least 258,049 compiled calls, 73,729 retries
+and 549,355 cache hits, no logged heap/guest/compiled mismatch. The cache cleared
+once for capacity, then stabilized around 1,173 blocks / 2,570,624 code bytes
+at the last bounded statistics report. Audit FPS remains null.
+
+The same candidate's unaudited cache run completes the full workload at
+192.502 seconds, zero logged heap/guest faults. Presentations 1152 and 1280
+arrive at 151.734187 and 175.249157 seconds: 128 / 23.514970 = **5.44334 FPS**.
+This is shared-host approximate presentation timing, not an acceptable result
+or proof of playability. It remains in the rejected single-digit range. The
+older healthy-heap no-cache run did not finish the workload at 300 seconds;
+this establishes better completion, NOT a same-image percentage FPS gain.
+Both owned game processes closed and startup was restored. No input, screenshots,
+interactive handoff, push or PR. Logs and JSON use the fixed stems
+`gameplay-vulkan-{audit,rate}-retry-cache-realloc` in the active build.
+
+NEXT: measure CURRENT cached execution with existing `-PhaseProfile -CompiledVu
+-CompiledRetry -RetainVuCache -VulkanGs -InPlaceRealloc`, without rebuilding.
+The previous 96% VU attribution predates cache reuse and must not be treated
+as the new breakdown. If VU still dominates, separate compiled execution,
+bridge conversion and reference fallback costs; existing bridge stage profiling
+is in `play-vu-probe/bridge_profile.h`. Keep the cache opt-in until a complete
+live audit. Do not send another single-digit candidate for interactive testing.
+
 ## Integer Load Retirement (19:44 UTC)
 
 The tick-542 timing failure is fixed offline. ILW at PC `0x598` issues at

@@ -32,6 +32,10 @@ try {
     $errors
     'SHA256=' + (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
     if ($process.ExitCode -ne 0) { throw "VU probe failed: exit $($process.ExitCode)" }
+    if (!$output.Contains('[play-vu:retained-cache] passed=1 replacements=256') -or
+        $output -notmatch 'capacity-rejections=[1-9]\d* recovery=1') {
+        throw 'Retained block cache replacement, bounded capacity and recovery regressions did not pass.'
+    }
     if (!$output.Contains('[play-vu:synthetic-abi] xmm-corrupt-mask=0x0 output-errors=0')) {
         throw 'Public synthetic Windows register-preservation regression did not pass.'
     }
