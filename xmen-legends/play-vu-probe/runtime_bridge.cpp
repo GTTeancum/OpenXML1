@@ -8,9 +8,10 @@ namespace
 {
 constexpr uint32_t statusMask = 0xcf3, macMask = 0xff;
 
-uint32_t stickyBits(uint32_t status)
+uint32_t fmacLanes(uint32_t bits)
 {
-    return ((status & 0x40) ? 0xfu : 0u) | ((status & 0x80) ? 0xf0u : 0u);
+    return ((bits & 1) ? 0xfu : 0u) | ((bits & 2) ? 0xf0u : 0u) |
+        ((bits & 4) ? 0xf00u : 0u) | ((bits & 8) ? 0xf000u : 0u);
 }
 
 void initializeFlags(FLAG_PIPELINE &pipe, uint32_t value)
@@ -56,10 +57,9 @@ MIPSSTATE PlayVuRuntimeBridge::importState(const VUCompiledState::Input &input)
     s.nCOP2I = std::bit_cast<uint32_t>(v.i);
     s.nCOP2R = v.r;
     s.nPC = v.pc;
-    s.nCOP2MF = v.mac & macMask;
+    s.nCOP2MF = v.mac;
     s.nCOP2CF = v.clip;
-    s.nCOP2SF = stickyBits(v.status);
-    s.nCOP2SF |= ((v.status & 1u) ? 0xf0000u : 0u) | ((v.status & 2u) ? 0xf00000u : 0u);
+    s.nCOP2SF = fmacLanes(v.status >> 6) | (fmacLanes(v.status) << 16);
     s.nCOP2DF = (v.status & 0x20) ? 1u : 0u;
     initializeFlags(s.pipeMac, s.nCOP2MF);
     initializeFlags(s.pipeClip, s.nCOP2CF);
@@ -131,17 +131,17 @@ MIPSSTATE PlayVuRuntimeBridge::importState(const VUCompiledState::Input &input)
     {
         const auto &e = input.flags[order[i]];
         const auto ready = static_cast<uint32_t>(e.ready - input.cycle);
-        if (e.writesMac) queue(s.pipeMac, macCount, e.mac & macMask, ready);
+        if (e.writesMac) queue(s.pipeMac, macCount, e.mac & 0xffff, ready);
         if (e.writesStatus)
         {
-            sticky = (sticky & 0xffffu) | ((e.status & 1u) ? 0xf0000u : 0u) | ((e.status & 2u) ? 0xf00000u : 0u);
+            sticky = (sticky & 0xffffu) | (fmacLanes(e.status) << 16);
             const auto bits = e.status | e.extraSticky;
-            sticky |= ((bits & 1u) ? 0xfu : 0u) | ((bits & 2u) ? 0xf0u : 0u);
+            sticky |= fmacLanes(bits);
             queue(s.pipeSticky, stickyCount, sticky, ready);
         }
         if (e.writesSticky)
         {
-            sticky = (sticky & 0xffff0000u) | stickyBits(e.status);
+            sticky = (sticky & 0xffff0000u) | fmacLanes(e.status >> 6);
             queue(s.pipeSticky, stickyCount, sticky, ready);
         }
         if (e.writesClip) queue(s.pipeClip, clipCount, e.clip, ready);

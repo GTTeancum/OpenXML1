@@ -30,8 +30,8 @@ public:
     ~CompiledVuSession();
     CompiledVuSession(const CompiledVuSession &) = delete;
     CompiledVuSession &operator=(const CompiledVuSession &) = delete;
-    // nCOP2SF/pipeSticky use sticky S/Z lanes in bits 0..7 and current STATUS
-    // S/Z lanes in bits 16..23. Use the typed bridge to import architectural state.
+    // nCOP2SF/pipeSticky pack sticky Z/S/U/O lane masks in bits 0..15 and
+    // current masks in bits 16..31. Use the typed bridge for architectural input.
     Result run(const std::array<uint8_t, 16384> &code,
         const std::array<uint8_t, 16384> &data, const MIPSSTATE &state,
         uint32_t budget, uint32_t top = 0, uint32_t itop = 0,

@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "compiled_session.h"
+#include "fmac.h"
 #include "transfer_timeline.h"
 #include "ee/MA_VU.h"
 #include "ee/VuExecutor.h"
@@ -46,6 +47,7 @@ struct CompiledVuSession::Impl
 
     Impl()
     {
+        cpu.m_vuFmacCompiler = selectFmac;
         cpu.m_pMemoryMap->InsertReadMap(0, 16383, data.data(), 0);
         cpu.m_pMemoryMap->InsertWriteMap(0, 16383, data.data(), 0);
         cpu.m_pMemoryMap->InsertInstructionMap(0, 16383, code.data(), 1);

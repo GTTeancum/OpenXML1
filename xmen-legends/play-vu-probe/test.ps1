@@ -60,8 +60,12 @@ try {
         throw 'Arithmetic sticky-reset ordering regressions did not pass.'
     }
     if (([regex]::Matches($output, '\[play-vu:paired-status\] reset=[0-9a-f]+ later=[01] immediate=[01] passed=1')).Count -ne 16 -or
-        !$output.Contains('[play-vu:independent-status] passed=1 cases=16 initial=1 pending-mac-only=1 pending-status=1 reset=1 export=1')) {
+        !$output.Contains('[play-vu:independent-status] passed=1 cases=64 initial=1 pending-mac-only=1 pending-status=1 reset=1 export=1')) {
         throw 'Independent MAC/STATUS regressions did not pass.'
+    }
+    if (([regex]::Matches($output, '\[play-vu:fmac-range\] case=\d+ passed=1')).Count -ne 6 -or
+        !$output.Contains('[play-vu:fmac-parity] passed=1 cases=1152')) {
+        throw 'FMAC range/result regressions did not pass.'
     }
     if (([regex]::Matches($output, '\[play-vu:wait-test\] mode=\d+ passed=1')).Count -ne 7) {
         throw 'Compiled XGKICK wait regressions did not pass.'

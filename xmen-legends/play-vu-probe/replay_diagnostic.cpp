@@ -2,6 +2,7 @@
 #include "replay_diagnostic.h"
 #include "transfer_timeline.h"
 #include "compiled_session.h"
+#include "fmac.h"
 #include "runtime_bridge.h"
 #include "TestVm.h"
 #include "VuAssembler.h"
@@ -171,6 +172,7 @@ struct DrainedControl
 {
     uint64_t cycle;
     uint32_t q, p, mac, clip, status;
+    uint32_t fullMac, fmacStatus;
     static constexpr uint32_t statusMask = 0xe3;
     static constexpr uint32_t macMask = 0xff;
 };
@@ -186,12 +188,15 @@ DrainedControl drainControl(const MIPSSTATE &s, uint64_t transferEnd)
         }
         return mirror;
     };
-    const uint32_t mac = latest(s.pipeMac, s.nCOP2MF) & DrainedControl::macMask;
+    const uint32_t fullMac = latest(s.pipeMac, s.nCOP2MF) & 0xffff;
+    const uint32_t mac = fullMac & DrainedControl::macMask;
     const uint32_t sticky = latest(s.pipeSticky, s.nCOP2SF);
     const uint32_t status = ((sticky & 0xf0000) ? 1u : 0u) | ((sticky & 0xf00000) ? 2u : 0u) |
         ((sticky & 0xf) ? 0x40u : 0u) | ((sticky & 0xf0) ? 0x80u : 0u) | (s.nCOP2DF ? 0x20u : 0u);
+    const uint32_t fmacStatus = (status & 0xc3) | ((sticky & 0xf000000) ? 4u : 0u) |
+        ((sticky & 0xf0000000) ? 8u : 0u) | ((sticky & 0xf00) ? 0x100u : 0u) | ((sticky & 0xf000) ? 0x200u : 0u);
     return {end, s.pipeQ.heldValue, s.pipeP.heldValue, mac,
-        latest(s.pipeClip, s.nCOP2CF) & 0xffffffu, status};
+        latest(s.pipeClip, s.nCOP2CF) & 0xffffffu, status, fullMac, fmacStatus};
 }
 
 void importPending(MIPSSTATE &s, const Bytes &state)
@@ -249,19 +254,22 @@ void importPending(MIPSSTATE &s, const Bytes &state)
     {
         ++pendingFlags;
         const auto ready = static_cast<uint32_t>(at(state, offset, 8) - cycle);
-        if (state[offset + 33]) queueFlag(s.pipeMac, static_cast<uint32_t>(at(state, offset + 16)) & 0xffu, ready);
+        if (state[offset + 33]) queueFlag(s.pipeMac, static_cast<uint32_t>(at(state, offset + 16)) & 0xffffu, ready);
         if (state[offset + 34])
         {
             const uint32_t current = static_cast<uint32_t>(at(state, offset + 20));
             sticky = (sticky & 0xffffu) | ((current & 1u) ? 0xf0000u : 0u) | ((current & 2u) ? 0xf00000u : 0u);
+            sticky |= ((current & 4u) ? 0xf000000u : 0u) | ((current & 8u) ? 0xf0000000u : 0u);
             const uint32_t bits = static_cast<uint32_t>(at(state, offset + 20) | at(state, offset + 24));
             sticky |= ((bits & 1u) ? 0x0fu : 0u) | ((bits & 2u) ? 0xf0u : 0u);
+            sticky |= ((bits & 4u) ? 0xf00u : 0u) | ((bits & 8u) ? 0xf000u : 0u);
             queueFlag(s.pipeSticky, sticky, ready);
         }
         if (state[offset + 35])
         {
             const auto status = static_cast<uint32_t>(at(state, offset + 20));
             sticky = (sticky & 0xffff0000u) | ((status & 0x40u) ? 0x0fu : 0u) | ((status & 0x80u) ? 0xf0u : 0u);
+            sticky |= ((status & 0x100u) ? 0xf00u : 0u) | ((status & 0x200u) ? 0xf000u : 0u);
             queueFlag(s.pipeSticky, sticky, ready);
         }
         if (state[offset + 36]) queueFlag(s.pipeClip, static_cast<uint32_t>(at(state, offset + 28)), ready);
@@ -496,11 +504,13 @@ int replayDiagnostic(const char *path)
         s.nCOP2I = static_cast<uint32_t>(at(before, 601));
         s.nCOP2R = static_cast<uint32_t>(at(before, 605));
         s.nPC = static_cast<uint32_t>(at(before, 609));
-        s.nCOP2MF = static_cast<uint32_t>(at(before, 613)) & 0xffu;
+        s.nCOP2MF = static_cast<uint32_t>(at(before, 613)) & 0xffffu;
         s.nCOP2CF = static_cast<uint32_t>(at(before, 617));
         const uint32_t status = static_cast<uint32_t>(at(before, 621));
         s.nCOP2SF = ((status & 0x40u) ? 0x0fu : 0u) | ((status & 0x80u) ? 0xf0u : 0u);
         s.nCOP2SF |= ((status & 1u) ? 0xf0000u : 0u) | ((status & 2u) ? 0xf00000u : 0u);
+        s.nCOP2SF |= ((status & 0x100u) ? 0xf00u : 0u) | ((status & 0x200u) ? 0xf000u : 0u) |
+            ((status & 4u) ? 0xf000000u : 0u) | ((status & 8u) ? 0xf0000000u : 0u);
         s.nCOP2DF = (status & 0x20u) ? 1u : 0u;
         initializeFlags(s.pipeMac, s.nCOP2MF);
         initializeFlags(s.pipeSticky, s.nCOP2SF);
@@ -512,6 +522,7 @@ int replayDiagnostic(const char *path)
             s.savedNextBlockIntRegVal = static_cast<uint32_t>(at(before, 4672));
         }
         std::vector<Bytes> actualPackets, expectedPackets;
+        vm->m_cpu.m_vuFmacCompiler = selectFmac;
         std::string callbackError;
         TransferTimeline timeline(vm->m_vuMem);
         std::string timelineError;
@@ -677,6 +688,9 @@ int replayDiagnostic(const char *path)
         const auto expectedStatus = static_cast<uint32_t>(at(after, 621));
         const auto actualScalar = directScalar.finish(std::max(drained.cycle, directScalar.deadline()));
         if (actualScalar != detached.scalarStatus) throw std::runtime_error("Detached scalar status diverged");
+        const uint32_t fullStatus = drained.fmacStatus | actualScalar;
+        std::printf("[play-vu:fmac-status] case=%u match=%u mac=%04x/%04x status=%03x/%03x\n", current,
+            unsigned(drained.fullMac == expectedMac && fullStatus == expectedStatus), drained.fullMac, expectedMac, fullStatus, expectedStatus);
         std::printf("[play-vu:scalar-status] case=%u match=%u flags=%03x/%03x coverage=cf3\n", current,
             unsigned((expectedStatus & 0xc30) == actualScalar), actualScalar, expectedStatus & 0xc30);
         const bool controlMatches = drained.cycle == expectedEnd && drained.q == at(after, 593) &&

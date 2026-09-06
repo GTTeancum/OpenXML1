@@ -1,8 +1,8 @@
 diff --git a/Source/MIPS.h b/Source/MIPS.h
-index fc28a8f..10694ec 100644
+index fc28a8f..6080dcc 100644
 --- a/Source/MIPS.h
 +++ b/Source/MIPS.h
-@@ -172,6 +172,12 @@ public:
+@@ -172,6 +172,15 @@ public:
  	void** m_pageLookup = nullptr;
  
  	std::function<void(CMIPS*)> m_emptyBlockHandler;
@@ -12,11 +12,14 @@ index fc28a8f..10694ec 100644
 +	std::function<uint32(CMIPS*, uint32, uint32)> m_vuXgkickWait;
 +	// Optional VU status extension. Install before compilation; reset cached code when changed.
 +	std::function<uint32(CMIPS*, uint32, uint32, uint32)> m_vuStatusObserver;
++	using VuFmacOperation = uint32 (*)(CMIPS*, uint32);
++	// Compile-time arithmetic selection; changing this requires cache invalidation.
++	std::function<VuFmacOperation(uint32)> m_vuFmacCompiler;
  
  	CMIPSArchitecture* m_pArch = nullptr;
  	CMIPSCoprocessor* m_pCOP[4];
 diff --git a/Source/ee/MA_VU_Lower.cpp b/Source/ee/MA_VU_Lower.cpp
-index 62b3f2c..15abf50 100644
+index 62b3f2c..1218425 100644
 --- a/Source/ee/MA_VU_Lower.cpp
 +++ b/Source/ee/MA_VU_Lower.cpp
 @@ -18,6 +18,28 @@
@@ -48,14 +51,15 @@ index 62b3f2c..15abf50 100644
  CMA_VU::CLower::CLower(uint32 vuMemAddressMask)
      : CMIPSInstructionFactory(MIPS_REGSIZE_32)
      , m_vuMemAddressMask(vuMemAddressMask)
-@@ -296,6 +318,25 @@ void CMA_VU::CLower::FCOR()
+@@ -296,6 +318,26 @@ void CMA_VU::CLower::FCOR()
  //15
  void CMA_VU::CLower::FSSET()
  {
 +	if(m_pCtx->m_vuStatusObserver)
 +	{
 +		// Preserve older arithmetic until retirement; later arithmetic accumulates from this reset.
-+		const uint32 sticky = ((m_nImm12 & 0x40) ? 0x0F : 0) | ((m_nImm12 & 0x80) ? 0xF0 : 0);
++		const uint32 sticky = ((m_nImm12 & 0x40) ? 0x0F : 0) | ((m_nImm12 & 0x80) ? 0xF0 : 0) |
++			((m_nImm12 & 0x100) ? 0xF00 : 0) | ((m_nImm12 & 0x200) ? 0xF000 : 0);
 +		m_codeGen->PushRelAddrRef(offsetof(CMIPS, m_State.pipeSticky.values));
 +		m_codeGen->PushRel(offsetof(CMIPS, m_State.pipeSticky.index));
 +		m_codeGen->PushCst(1);
@@ -74,7 +78,7 @@ index 62b3f2c..15abf50 100644
  	m_codeGen->PushCst(m_nImm12);
  	m_codeGen->PullRel(offsetof(CMIPS, m_State.nCOP2T));
  	VUShared::SetStatus(m_codeGen, offsetof(CMIPS, m_State.nCOP2T));
-@@ -306,7 +347,9 @@ void CMA_VU::CLower::FSAND()
+@@ -306,7 +348,9 @@ void CMA_VU::CLower::FSAND()
  {
  	if((m_nIT & 0xF) == 0) return;
  
@@ -85,7 +89,7 @@ index 62b3f2c..15abf50 100644
  
  	//Mask result
  	VUShared::PushIntegerRegister(m_codeGen, m_nIT);
-@@ -320,7 +363,9 @@ void CMA_VU::CLower::FSOR()
+@@ -320,7 +364,9 @@ void CMA_VU::CLower::FSOR()
  {
  	if((m_nIT & 0xF) == 0) return;
  
@@ -96,7 +100,7 @@ index 62b3f2c..15abf50 100644
  
  	//Mask result
  	VUShared::PushIntegerRegister(m_codeGen, m_nIT);
-@@ -593,6 +638,7 @@ void CMA_VU::CLower::LQI()
+@@ -593,6 +639,7 @@ void CMA_VU::CLower::LQI()
  void CMA_VU::CLower::DIV()
  {
  	VUShared::DIV(m_codeGen, m_nIS, m_nFSF, m_nIT, m_nFTF, m_relativePipeTime);
@@ -104,7 +108,7 @@ index 62b3f2c..15abf50 100644
  }
  
  //0F
-@@ -747,6 +793,7 @@ void CMA_VU::CLower::SQI()
+@@ -747,6 +794,7 @@ void CMA_VU::CLower::SQI()
  void CMA_VU::CLower::SQRT()
  {
  	VUShared::SQRT(m_codeGen, m_nIT, m_nFTF, m_relativePipeTime);
@@ -112,7 +116,7 @@ index 62b3f2c..15abf50 100644
  }
  
  //0F
-@@ -854,6 +901,7 @@ void CMA_VU::CLower::LQD()
+@@ -854,6 +902,7 @@ void CMA_VU::CLower::LQD()
  void CMA_VU::CLower::RSQRT()
  {
  	VUShared::RSQRT(m_codeGen, m_nIS, m_nFSF, m_nIT, m_nFTF, m_relativePipeTime);
@@ -120,15 +124,43 @@ index 62b3f2c..15abf50 100644
  }
  
  //0F
+diff --git a/Source/ee/MA_VU_Upper.cpp b/Source/ee/MA_VU_Upper.cpp
+index 7200729..cc53e3c 100644
+--- a/Source/ee/MA_VU_Upper.cpp
++++ b/Source/ee/MA_VU_Upper.cpp
+@@ -28,7 +28,17 @@ void CMA_VU::CUpper::CompileInstruction(uint32 nAddress, CMipsJitter* codeGen, C
+ 
+ 	m_nBc = (uint8)((m_nOpcode >> 0) & 0x0003);
+ 
+-	((this)->*(m_pOpVector[m_nOpcode & 0x3F]))();
++	auto fmac = pCtx->m_vuFmacCompiler ? pCtx->m_vuFmacCompiler(m_nOpcode) : nullptr;
++	if(fmac)
++	{
++		m_codeGen->PushCtx();
++		m_codeGen->PushCst(m_nOpcode);
++		m_codeGen->Call(reinterpret_cast<void*>(fmac), 2, Jitter::CJitter::RETURN_VALUE_32);
++		if(m_nDest)
++			VUShared::QueueFmacFlags(m_codeGen, m_relativePipeTime, m_compileHints & ~VUShared::COMPILEHINT_SKIP_FMAC_UPDATE);
++		else m_codeGen->PullTop();
++	}
++	else ((this)->*(m_pOpVector[m_nOpcode & 0x3F]))();
+ 
+ 	auto setTDBitException = [&](uint32 exceptionValue) {
+ 		//Only set TD bit exception if there's no other outstanding
 diff --git a/Source/ee/VUShared.cpp b/Source/ee/VUShared.cpp
-index 52360eb..5797086 100644
+index 52360eb..d353202 100644
 --- a/Source/ee/VUShared.cpp
 +++ b/Source/ee/VUShared.cpp
-@@ -264,9 +264,19 @@ void VUShared::TestSZFlags(CMipsJitter* codeGen, uint8 dest, size_t regOffset, u
+@@ -264,9 +264,29 @@ void VUShared::TestSZFlags(CMipsJitter* codeGen, uint8 dest, size_t regOffset, u
  		codeGen->And();
  	}
  
-+	// Opt-in STATUS keeps current lane flags in the high half, separate from MAC.
++	QueueFmacFlags(codeGen, relativePipeTime, compileHints);
++}
++
++void VUShared::QueueFmacFlags(CMipsJitter* codeGen, uint32 relativePipeTime, uint32 compileHints)
++{
++	// Input: current MAC in the low half, extra product sticky flags in the high half.
 +	const bool packedStatus = (compileHints & COMPILEHINT_PACKED_STATUS) != 0;
 +	const bool suppressStatus = (compileHints & COMPILEHINT_SUPPRESS_STATUS) != 0;
  	//Update sticky flags
@@ -137,14 +169,19 @@ index 52360eb..5797086 100644
  		codeGen->PushTop();
 +		if(packedStatus)
 +		{
++			codeGen->PushCst(0xFFFF);
++			codeGen->And();
 +			codeGen->PushTop();
 +			codeGen->Shl(16);
++			codeGen->Or();
++			codeGen->PushIdx(1);
++			codeGen->Srl(16);
 +			codeGen->Or();
 +		}
  
  		//Load previous value
  		{
-@@ -281,6 +291,11 @@ void VUShared::TestSZFlags(CMipsJitter* codeGen, uint8 dest, size_t regOffset, u
+@@ -281,10 +301,20 @@ void VUShared::TestSZFlags(CMipsJitter* codeGen, uint8 dest, size_t regOffset, u
  			codeGen->LoadFromRefIdx();
  		}
  
@@ -156,7 +193,16 @@ index 52360eb..5797086 100644
  		codeGen->Or();
  		QueueInFlagPipeline(g_pipeInfoSticky, codeGen, LATENCY_MAC, relativePipeTime);
  	}
-@@ -295,7 +310,7 @@ void VUShared::TestSZFlags(CMipsJitter* codeGen, uint8 dest, size_t regOffset, u
+ 
++	if(packedStatus)
++	{
++		codeGen->PushCst(0xFFFF);
++		codeGen->And();
++	}
+ 	if((compileHints & COMPILEHINT_SKIP_FMAC_UPDATE) == 0)
+ 	{
+ 		QueueInFlagPipeline(g_pipeInfoMac, codeGen, LATENCY_MAC, relativePipeTime);
+@@ -295,7 +325,7 @@ void VUShared::TestSZFlags(CMipsJitter* codeGen, uint8 dest, size_t regOffset, u
  	}
  }
  
@@ -165,7 +211,7 @@ index 52360eb..5797086 100644
  {
  	//Get STATUS flag using information from other values (MACflags and sticky flags)
  
-@@ -307,8 +322,8 @@ void VUShared::GetStatus(CMipsJitter* codeGen, size_t dstOffset, uint32 relative
+@@ -307,8 +337,8 @@ void VUShared::GetStatus(CMipsJitter* codeGen, size_t dstOffset, uint32 relative
  	codeGen->PullRel(dstOffset);
  
  	//Check Z flag
@@ -176,7 +222,7 @@ index 52360eb..5797086 100644
  	codeGen->And();
  	codeGen->PushCst(0);
  	codeGen->BeginIf(Jitter::CONDITION_NE);
-@@ -321,8 +336,8 @@ void VUShared::GetStatus(CMipsJitter* codeGen, size_t dstOffset, uint32 relative
+@@ -321,8 +351,8 @@ void VUShared::GetStatus(CMipsJitter* codeGen, size_t dstOffset, uint32 relative
  	codeGen->EndIf();
  
  	//Check S flag
@@ -187,8 +233,35 @@ index 52360eb..5797086 100644
  	codeGen->And();
  	codeGen->PushCst(0);
  	codeGen->BeginIf(Jitter::CONDITION_NE);
+@@ -374,7 +404,25 @@ void VUShared::GetStatus(CMipsJitter* codeGen, size_t dstOffset, uint32 relative
+ 	}
+ 	codeGen->EndIf();
+ 
+-	//TODO: Check other flags
++	if(packedStatus)
++	{
++		for(unsigned flag = 2; flag < 4; ++flag)
++		{
++			for(unsigned sticky = 0; sticky < 2; ++sticky)
++			{
++				codeGen->PushRel(offsetof(CMIPS, m_State.nCOP2SF));
++				codeGen->PushCst(0xFu << (flag * 4 + (sticky ? 0 : 16)));
++				codeGen->And();
++				codeGen->PushCst(0);
++				codeGen->BeginIf(Jitter::CONDITION_NE);
++				codeGen->PushRel(dstOffset);
++				codeGen->PushCst(1u << (flag + (sticky ? 6 : 0)));
++				codeGen->Or();
++				codeGen->PullRel(dstOffset);
++				codeGen->EndIf();
++			}
++		}
++	}
+ }
+ 
+ void VUShared::SetStatus(CMipsJitter* codeGen, size_t srcOffset)
 diff --git a/Source/ee/VUShared.h b/Source/ee/VUShared.h
-index a2991f1..4b4947a 100644
+index a2991f1..bdb931a 100644
 --- a/Source/ee/VUShared.h
 +++ b/Source/ee/VUShared.h
 @@ -98,6 +98,8 @@ namespace VUShared
@@ -200,9 +273,11 @@ index a2991f1..4b4947a 100644
  	};
  
  	static bool UseClamping(uint32 compileHints)
-@@ -127,7 +129,7 @@ namespace VUShared
+@@ -126,8 +128,9 @@ namespace VUShared
+ 
  	void MakeComparableFromFloat(CMipsJitter*);
  	void TestSZFlags(CMipsJitter*, uint8, size_t, uint32, uint32);
++	void QueueFmacFlags(CMipsJitter*, uint32, uint32);
  
 -	void GetStatus(CMipsJitter*, size_t, uint32);
 +	void GetStatus(CMipsJitter*, size_t, uint32, bool packedStatus = false);

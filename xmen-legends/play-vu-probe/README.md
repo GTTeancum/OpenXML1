@@ -7,6 +7,64 @@ PS2Recomp state header, but does not link its runtime, read the ISO, create a ga
 window, or enable a replacement engine.
 There is no gameplay FPS claim or interactive handoff yet.
 
+## FMAC Range Prototype
+
+The detached path now selects host-compiled arithmetic functions for ADD/SUB,
+MUL, MADD/MSUB, their accumulator/broadcast/Q/I forms, and cross products.
+Selection occurs when compiling a block, not on every execution. Functions
+snapshot operands before aliased writes, normalize input encodings, retain
+unfused float results and use widened calculations for range flags. Returned
+current and product-sticky lane masks enter the existing timed flag queues.
+Full incoming MAC and Z/S/U/O current/sticky state is now preserved independently.
+
+`fmac.cpp` is compiled as scalar/SSE2 and AVX2 objects in the same build. CPUID,
+OSXSAVE and XCR0 checks gate the AVX2 selector; unsupported hosts keep the scalar
+implementation. There is no extra checkout or game build. This prototype does
+make one arithmetic function call per FMAC instruction, unlike the earlier
+incomplete inline arithmetic path. Its cost is material and is not hidden below.
+
+Six explicit range/value cases cover signed underflow, overflow saturation,
+current versus product-sticky flags, accumulator writes, four-cycle visibility
+and reset timing. The pre-helper test failed with MAC `0x004d` instead of
+`0x2c4d` and STATUS `0x0c3` instead of `0x3cf`. All six now pass, along with
+1,152 scalar/AVX2 comparisons across operation forms, masks, aliases, VF0 and
+edge encodings. Independent initial/pending/reset state tests expand to 64 cases.
+The AVX2 path was exercised on this host. All prior public tests still pass.
+
+Final image `B7C7B9BDD388C423D7C98246C00BF316DB92A086B42F07C0B9E851389BE1FB72`
+matches **full MAC and STATUS values in all 22 eligible recordings**, with exact
+completion cycles and repeatable typed outputs. Existing Q, vertex and memory
+differences remain. Export acceptance masks deliberately remain `0xcf3/0x00ff`;
+recording agreement is not evidence for promoting all arithmetic forms or timing
+states into the game. Runtime-accepted remains zero.
+
+Before widening those masks, audit exceptional MADD/MSUB product/ACC overflow
+interactions, including overflow followed by cancellation, cross-product mask
+semantics and remaining VI/store timing. A widened final expression is not a
+complete model of every two-stage VU exception. The distinction between final
+and product-sticky flags is described in the
+[VU manual, sections 3.3.2 and 3.3.6](https://docs.alexrp.com/mips/ee_vu.pdf#page=40).
+No full hardware-fidelity or gameplay-readiness claim is made here.
+
+Final three-round measurements, same baseline `77E6FDB3...`, 256 warm repetitions
+and the established complete-call timer scope/exclusions:
+
+| Recording | Round | Baseline All ms | Baseline Eligible ms | Typed Call ms |
+| --- | ---: | ---: | ---: | ---: |
+| Original | 1 | 388.873 | 311.138 | 129.886786 |
+| Original | 2 | 388.283 | 310.581 | 127.142986 |
+| Original | 3 | 388.110 | 310.970 | 125.856286 |
+| Spread | 1 | 161.709 | 81.200 | 38.781792 |
+| Spread | 2 | 167.665 | 85.481 | 39.166792 |
+| Spread | 3 | 165.170 | 83.733 | 38.926492 |
+
+Eligible median ratios are about 2.45x/2.15x, down from the preceding incomplete
+path's roughly 5x/4x. The scalar-only prototype was slower still (approximately
+170/51 ms in its initial observation). Do not package this as a gameplay FPS
+improvement. Reduce arithmetic-call/classification cost and resolve the remaining
+correctness gaps before integrating a measured runtime replacement. No push,
+pull request, game run or screenshot was made.
+
 ## Independent MAC and STATUS
 
 The opt-in compiler now retains current STATUS lane bits in the high half of

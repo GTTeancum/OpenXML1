@@ -3,6 +3,7 @@
 #include "VuAssembler.h"
 #include "replay_diagnostic.h"
 #include "compiled_session.h"
+#include "fmac.h"
 #include "runtime_bridge.h"
 #include "FpUtils.h"
 #include "AddTest.h"
@@ -98,6 +99,7 @@ int main(int argc, const char **argv)
     if (!compiledSessionTests()) return 9;
     if (!runtimeBridgeTests()) return 10;
     if (!scalarFlagTests()) return 11;
+    if (!fmacTests()) return 12;
     if (argc == 2)
     {
         try { return replayDiagnostic(argv[1]); }
