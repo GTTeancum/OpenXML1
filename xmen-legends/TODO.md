@@ -1,5 +1,13 @@
 # X-Men Legends PS2Recomp TODO
 
+## September 6 Restart Checkpoint
+
+- The user-requested restart completed at 04:11 UTC: exit 0 at vsync 1400, real New Game/NYC/native-block workload verified, startup restored, and game closed. Candidate SHA-256 `74C32DFFDD87EF3AB05784D6BDB57ABB63A1EC76976061175EA75732540E8AFB` includes reset profiling but not the experimental math helper. Unprofiled 128 presents took 30.9132713 seconds (4.14062 FPS), total 234.3204689 seconds. This shared-host observation is not a controlled speedup claim; no new visual inspection or input test was performed.
+- `054b629` measures scheduler initialization separately. The prior completed phase run contains 66 reports ending at ticks 1100-1388, 69,356.215 ms wall: vector execution 59.60%, drawing 28.15%, scheduler reset 0.895% (288,813 calls, 620.54 ms). Leave reset behavior unchanged; its measured cost does not justify that optimization lead. Fixed `gameplay-phase.*` holds this run, not the older coverage run.
+- Experimental checkpoint `3b728bb` extracts the unchanged exact FMAC normalization body into a translation-unit-local inline helper. BelowNormal single-worker build completed successfully. Test SHA-256 `4452C95C2E58DA6F2DF6177D9DCB1CF8EA6D87955E4C54C165FD072C802210B5` passes 140/140 VU tests and both captures at normal/1/8/16/64-cycle budgets, with unchanged digests and cycles. This is correctness evidence only; do not promote the change to the game executable or claim a performance gain yet.
+- Next: inspect emitted code for helper-call removal and retained widened arithmetic; run seven alternating comparisons per capture against the existing `ps2x_tests.flag-pack-base.exe` comparator, SHA-256 `A7070757320A690E255846B8702C6C8785BB8B133435E569E620D2F49BDE6677`. Keep the experiment only with repeatable benefit; otherwise undo only its scoped math change. The game candidate and primary/staged executables are unchanged by this experiment.
+- The restarted game, compiler build, and correctness tests are all terminal. No new screenshot, executable slot, clone, or worktree was created. Existing unrelated edits remain untouched. Entries below describe earlier checkpoints.
+
 Practical first-level playability remains unmet. The updated opt-in candidate completed at 2026-09-06 03:46 UTC: exit 0, verified New Game/NYC/native blocks, 128 presents in 31.493247 seconds (4.06436 FPS), total 261.275584 seconds. The prior user-requested unchanged-candidate rerun measured 3.71035 FPS. These shared-host observations do not establish a sustained speedup. Startup was restored and both tests closed normally.
 
 ## Current XGKICK Work
