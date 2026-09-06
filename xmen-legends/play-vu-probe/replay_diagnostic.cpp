@@ -2,6 +2,7 @@
 #include "replay_diagnostic.h"
 #include "transfer_timeline.h"
 #include "compiled_session.h"
+#include "runtime_bridge.h"
 #include "TestVm.h"
 #include "VuAssembler.h"
 #include "VUShared.h"
@@ -96,6 +97,65 @@ void initializeFlags(FLAG_PIPELINE &pipeline, uint32_t value)
 {
     pipeline = {};
     std::fill(std::begin(pipeline.values), std::end(pipeline.values), value);
+}
+
+VUCompiledState::Input typedInput(const Bytes &state, uint32_t budget)
+{
+    if (!importable(state)) throw std::runtime_error("Unsupported replay state for typed bridge");
+    VUCompiledState::Input input{};
+    auto &s = input.state;
+    std::memcpy(s.vf, state.data() + 1, sizeof(s.vf));
+    std::memcpy(s.vi, state.data() + 513, sizeof(s.vi));
+    std::memcpy(s.acc, state.data() + 577, sizeof(s.acc));
+    std::memcpy(&s.q, state.data() + 593, 4);
+    std::memcpy(&s.p, state.data() + 597, 4);
+    std::memcpy(&s.i, state.data() + 601, 4);
+    s.r = static_cast<uint32_t>(at(state, 605));
+    s.pc = static_cast<uint32_t>(at(state, 609));
+    s.mac = static_cast<uint32_t>(at(state, 613));
+    s.clip = static_cast<uint32_t>(at(state, 617));
+    s.status = static_cast<uint32_t>(at(state, 621));
+    s.cycles = at(state, 625, 8);
+    s.top = static_cast<uint32_t>(at(state, 639));
+    s.itop = static_cast<uint32_t>(at(state, 643));
+    s.branchTarget = static_cast<uint32_t>(at(state, 648));
+    s.branchDelay = static_cast<uint32_t>(at(state, 652));
+    input.cycle = at(state, 4640, 8);
+    input.nextSequence = at(state, 4648, 8);
+    input.budget = budget;
+    input.flagMask = static_cast<uint32_t>(at(state, 2251));
+    input.vfMask = static_cast<uint32_t>(at(state, 2259));
+    std::memcpy(&input.branchBackupValue, state.data() + 4672, 4);
+    input.branchBackupReg = state[4676];
+    input.branchBackupValid = state[4677] != 0;
+    for (unsigned reg = 0; reg < 32; ++reg)
+        for (unsigned lane = 0; lane < 4; ++lane)
+        {
+            input.vfReady[reg][lane] = at(state, 2272 + (reg * 4 + lane) * 8, 8);
+            input.vfLatest[reg][lane] = at(state, 3456 + (reg * 4 + lane) * 8, 8);
+        }
+    for (size_t slot = 0; slot < input.vfWrites.size(); ++slot)
+    {
+        const size_t offset = 1243 + slot * 35;
+        if (!state[offset + 34]) continue;
+        auto &e = input.vfWrites[slot];
+        e.ready = at(state, offset, 8);
+        e.sequence = at(state, offset + 8, 8);
+        std::memcpy(e.words.data(), state.data() + offset + 16, 16);
+        e.reg = state[offset + 32];
+        e.lanes = state[offset + 33];
+        e.valid = true;
+    }
+    for (size_t slot = 0; slot < input.flags.size(); ++slot)
+    {
+        const size_t offset = 656 + slot * 37;
+        if (!state[offset + 32]) continue;
+        input.flags[slot] = {at(state, offset, 8), at(state, offset + 8, 8),
+            static_cast<uint32_t>(at(state, offset + 16)), static_cast<uint32_t>(at(state, offset + 20)),
+            static_cast<uint32_t>(at(state, offset + 24)), static_cast<uint32_t>(at(state, offset + 28)),
+            true, state[offset + 33] != 0, state[offset + 34] != 0, state[offset + 35] != 0, state[offset + 36] != 0};
+    }
+    return input;
 }
 
 void importScalars(MIPSSTATE &s, const Bytes &state)
@@ -386,6 +446,7 @@ bool pendingImportTests()
 int replayDiagnostic(const char *path)
 {
     CompiledVuSession detachedSession;
+    PlayVuRuntimeBridge runtimeBridge;
     unsigned memoryTraceCase = 64;
     if (const char *value = std::getenv("PS2X_VU_REPLAY_MEMORY_TRACE_CASE"))
     {
@@ -514,6 +575,10 @@ int replayDiagnostic(const char *path)
             current, s.nPC, status & ~0xe3u);
         std::fflush(stdout);
         const MIPSSTATE initial = s;
+        const auto runtimeInput = typedInput(before, budget);
+        const auto typedInitial = PlayVuRuntimeBridge::importState(runtimeInput);
+        if (std::memcmp(&typedInitial, &initial, sizeof(initial)))
+            throw std::runtime_error("Typed runtime import diverged from recorded-state importer");
         alignas(16) const uint32_t sentinel[] = {0x3f123456, 0x40123456, 0x41123456, 0x42123456};
         uint32_t actualRegisters[40]{};
         playVuCheckRegisters([](void *context) {
@@ -547,6 +612,54 @@ int replayDiagnostic(const char *path)
             current, unsigned(detachedMatches), detached.reason.c_str());
         if (!detachedMatches) throw std::runtime_error("Detached session diverged from direct compiled diagnostic");
         const auto drained = drainControl(s, timeline.time);
+        const auto runtimeOutput = PlayVuRuntimeBridge::exportState(runtimeInput, detached);
+        const bool exportMatches = !std::memcmp(runtimeOutput.state.vf, s.nCOP2, sizeof(runtimeOutput.state.vf)) &&
+            !std::memcmp(runtimeOutput.state.vi, s.nCOP2VI, sizeof(runtimeOutput.state.vi)) &&
+            !std::memcmp(runtimeOutput.state.acc, &s.nCOP2A, sizeof(runtimeOutput.state.acc)) &&
+            !std::memcmp(&runtimeOutput.state.q, &drained.q, 4) && !std::memcmp(&runtimeOutput.state.p, &drained.p, 4) &&
+            runtimeOutput.elapsed == drained.cycle && runtimeOutput.state.cycles == runtimeInput.cycle + drained.cycle &&
+            runtimeOutput.state.mac == drained.mac && runtimeOutput.state.clip == drained.clip && runtimeOutput.state.status == drained.status &&
+            runtimeOutput.statusMask == DrainedControl::statusMask && runtimeOutput.macMask == DrainedControl::macMask &&
+            runtimeOutput.data == detached.data && runtimeOutput.packets.size() == detached.packets.size();
+        if (!exportMatches) throw std::runtime_error("Typed runtime export diverged from completed-state diagnostic");
+        for (size_t i = 0; i < runtimeOutput.packets.size(); ++i)
+            if (runtimeOutput.packets[i].bytes != detached.packets[i] ||
+                runtimeOutput.packets[i].cycle != detached.completionCycles[i])
+                throw std::runtime_error("Typed runtime export changed staged graphics");
+        std::printf("[play-vu:typed-bridge] case=%u import-match=1 export-match=1 runtime-accepted=0\n", current);
+        const auto sameExport = [&](const PlayVuRuntimeBridge::Result &r) {
+            if (!r.evaluated) return false;
+            const auto &a = r.output;
+            const auto &b = runtimeOutput;
+            if (a.elapsed != b.elapsed || a.macMask != b.macMask || a.statusMask != b.statusMask ||
+                a.data != b.data || a.packets.size() != b.packets.size() ||
+                std::memcmp(a.state.vf, b.state.vf, sizeof(a.state.vf)) ||
+                std::memcmp(a.state.vi, b.state.vi, sizeof(a.state.vi)) ||
+                std::memcmp(a.state.acc, b.state.acc, sizeof(a.state.acc)) ||
+                std::memcmp(&a.state.q, &b.state.q, 4) || std::memcmp(&a.state.p, &b.state.p, 4) ||
+                std::memcmp(&a.state.i, &b.state.i, 4) || a.state.r != b.state.r || a.state.pc != b.state.pc ||
+                a.state.cycles != b.state.cycles || a.state.mac != b.state.mac ||
+                a.state.status != b.state.status || a.state.clip != b.state.clip ||
+                a.state.top != b.state.top || a.state.itop != b.state.itop ||
+                a.state.ebit || a.state.haltAfterDelaySlot || a.state.branchPending) return false;
+            for (size_t i = 0; i < a.packets.size(); ++i)
+                if (a.packets[i].bytes != b.packets[i].bytes || a.packets[i].cycle != b.packets[i].cycle) return false;
+            return true;
+        };
+        const auto typedCold = runtimeBridge.evaluate(runtimeInput, bridgeCode, bridgeData);
+        if (!sameExport(typedCold)) throw std::runtime_error("Combined typed bridge changed the cold result: " + typedCold.reason);
+        constexpr unsigned bridgeRepeats = 256;
+        int64_t bridgeNs = 0;
+        for (unsigned repeat = 0; repeat < bridgeRepeats; ++repeat)
+        {
+            const auto begin = std::chrono::steady_clock::now();
+            const auto result = runtimeBridge.evaluate(runtimeInput, bridgeCode, bridgeData);
+            bridgeNs += std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - begin).count();
+            if (!sameExport(result)) throw std::runtime_error("Typed bridge changed a warm result: " + result.reason);
+        }
+        std::printf("[play-vu:typed-timing] case=%u repeats=%u complete-call-ms=%.6f mean-us=%.6f "
+            "repeatable=1 includes-import-export-copy-fp=1 runtime-commit-included=0 runtime-accepted=0\n",
+            current, bridgeRepeats, bridgeNs / 1.0e6, bridgeNs / (1.0e3 * bridgeRepeats));
         const uint64_t expectedEnd = at(after, 625, 8) - at(before, 625, 8);
         const auto expectedMac = static_cast<uint32_t>(at(after, 613));
         const auto expectedStatus = static_cast<uint32_t>(at(after, 621));

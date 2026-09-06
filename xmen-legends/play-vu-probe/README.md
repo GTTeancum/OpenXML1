@@ -2,9 +2,71 @@
 
 This builds only the VU compiler, its supporting stream code, and the 21 existing
 VU test cases from [Play!](https://github.com/jpd002/Play-), plus isolated contract
-tests and an optional private VU-recording diagnostic. It does not link to
-PS2Recomp, read the ISO, create a game window, or enable a replacement engine.
+tests and an optional private VU-recording diagnostic. A typed bridge uses the
+PS2Recomp state header, but does not link its runtime, read the ISO, create a game
+window, or enable a replacement engine.
 There is no gameplay FPS claim or interactive handoff yet.
+
+## Typed Runtime Bridge
+
+`play_vu_runtime_bridge` now translates `VUCompiledState::Input` directly into a
+detached compiled session and returns a staged `VUCompiledState::Output`. Its
+library has no recording parser, `TestVm`, GS callback, or host input dependency.
+It imports pending VF values with per-lane ownership/readiness checks, pending
+flags in stable deadline order, idle Q/P held values, and integer branch backup.
+Invalid queue masks, missing/duplicate owners, unsupported deadlines, malformed
+entry state and elapsed-time overflow reject before execution. Exports include
+registers, completed time, memory, and ordered packet bytes/completion times.
+
+The PS2Recomp side is commit `3060eab`: capture rejects unsupported running states;
+commit validates the complete batch before any memory/state/graphics publication.
+It requires full MAC/STATUS masks and completed incoming deadlines. State checks
+compare fields and raw float bits, not struct padding. VF0 uses canonical bits,
+including rejection of negative zero and NaN even with fast floating-point builds.
+The API assumes serialized ownership of the interpreter and its code/data memory;
+the state token is not a concurrent memory transaction. No execution hook is set.
+
+**Current outputs are not acceptable for game execution:** STATUS coverage remains
+`0x0e3`, MAC coverage `0x00ff`. Unknown bits are not copied from the expected replay
+or fabricated. General VI/store timing and existing arithmetic/state differences
+also remain unresolved. The strict commit path therefore rejects every current
+compiled output. Next work must address these semantics, not add another wrapper
+or relink the game merely to expose an inactive bridge.
+
+Public bridge regressions cover pending values, stable flag ordering, scalar and
+branch state, immutable inputs, staged output, malformed-entry rejection and
+recovery. Both recordings verify exact typed import against the independent byte
+importer and exact typed export against the completed compiled diagnostic: 14
+original and eight spread records. All 22 combined bridge calls repeat identical
+outputs over 256 warm executions. This is parity with the compiled diagnostic,
+not proof of PS2Recomp or game compatibility. Play! image:
+`DF4A313485CCB15E4DFC23D5B38B2A772E00CE68B250B4E5CA97F5F7622BAC69`.
+
+PS2Recomp test image
+`77E6FDB365436C8B1E38E218E9DC3A0106FCB0D54CD6ACAB4CB019A8EEE95782`
+passes all 147 VU tests and both captures at normal/1/8/16/64-cycle budgets,
+including commit rejection and resuming through the existing runtime afterward.
+
+Three sequential comparisons, 256 warm runs per record, Normal priority and
+affinity `0xF`, in milliseconds:
+
+| Recording | Round | Baseline All | Baseline Eligible | Typed Bridge Eligible |
+| --- | ---: | ---: | ---: | ---: |
+| Original | 1 | 399.855 | 320.304 | 54.734586 |
+| Original | 2 | 407.188 | 326.109 | 54.151586 |
+| Original | 3 | 400.754 | 319.729 | 55.899986 |
+| Spread | 1 | 168.598 | 85.822 | 19.830692 |
+| Spread | 2 | 163.993 | 82.432 | 19.481892 |
+| Spread | 3 | 166.057 | 84.409 | 19.450092 |
+
+The typed timer surrounds `evaluate`, including import/export, internal copies,
+FP save/restore and graphics staging. It excludes cold compilation, runtime
+capture/commit, real graphics submission and disposal of the returned output.
+Eligible median ratios are about 5.85x/4.33x. This is not a measured hybrid runtime
+or gameplay FPS increase; the recordings are not gameplay-frequency weighted.
+Unlike the older direct diagnostic, the reusable session does not perform a
+second legacy packet readback, so these figures are not a same-work comparison
+against that older diagnostic timer.
 
 ## Sources
 
@@ -31,6 +93,10 @@ VU memory observer are patched. Their notices are also retained in
 notices if these components are distributed.
 
 ## Build And Run
+
+The local `PS2Recomp` checkout must contain `3060eab` (or a compatible descendant
+of `codex/xmen-legends-bringup`) for the typed state header used by the bridge.
+This does not build or link the game runtime into the probe.
 
 From the OpenXML1 root, apply the patch once to the pinned CodeGen checkout:
 
@@ -382,17 +448,13 @@ the session matches the direct probe's full raw MIPS state, final memory, staged
 packet bytes, completion times and transfer end. This is parity with the probe,
 not PS2Recomp compatibility: its existing arithmetic/flag differences persist.
 
-The session is not linked into the game and has no measured runtime speedup yet.
-Next add the game-side state adapter, acceptance policy and atomic result commit,
-then measure complete calls including copies and environment restoration before
-promoting a gameplay build. Current engine fallback must happen before external
-side effects. Two obsolete probe-target object files were removed after moving
-their sources into the library; the existing checkout/build is reused.
-
-Next: complete that runtime bridge and validate architectural results,
-memory writes, and packet ordering against the existing private recordings before
-measuring throughput. Those recordings contain mid-program state, not fresh VU
-entry snapshots, so importing their visible registers alone is invalid.
+This is the earlier detached-library checkpoint. The typed adapter and complete
+call measurements above supersede its next-step plan. The session is still not
+linked into the game. Current engine fallback must happen before external side
+effects. Two obsolete probe-target object files were removed after moving their
+sources into the library; the existing checkout/build is reused. Recordings
+contain mid-program state, not fresh VU entry snapshots, so importing their
+visible registers alone is invalid.
 
 No game executable should be linked or packaged until the larger performance
 change has measured benefit. The title/FPS counter stays queued for that build.

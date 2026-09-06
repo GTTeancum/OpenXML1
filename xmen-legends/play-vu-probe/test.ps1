@@ -49,6 +49,9 @@ try {
     if (!$output.Contains('[play-vu:session-test] passed=1 detached=1 fp-restored=1 cache-replaced=1 rejection-recovered=1')) {
         throw 'Detached compiled session regressions did not pass.'
     }
+    if (!$output.Contains('[play-vu:typed-bridge-test] passed=1 pending-import=1 staged-export=1 partial-flags=1 runtime-accepted=0')) {
+        throw 'Typed runtime bridge regressions did not pass.'
+    }
     if (([regex]::Matches($output, '\[play-vu:wait-test\] mode=\d+ passed=1')).Count -ne 7) {
         throw 'Compiled XGKICK wait regressions did not pass.'
     }

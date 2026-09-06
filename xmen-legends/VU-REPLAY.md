@@ -4,6 +4,26 @@ The bring-up runtime has an opt-in, process-local VU1 recorder. Use it to check
 and time interpreter changes against actual game work without repeating startup.
 This is not a replacement for first-level gameplay validation.
 
+## Compiled State Boundary
+
+PS2Recomp `3060eab` adds `VUCompiledState::capture/commit` without enabling a new
+engine. Capture supports running full-drain entries with bounded pending VF/flag
+writes, excluding active transfers, pending scalars/stores/VI/ACC, branches and
+short budgets. Commit rejects stale state, partial MAC/STATUS coverage, unretired
+incoming writes, invalid architectural state and malformed/out-of-order graphics
+before publishing any output. Canonical VF0 uses raw bits, and state comparison
+does not depend on padding. Callers must serialize interpreter and code/data
+ownership; rejection is not a concurrent-memory rollback mechanism.
+
+Test image `77E6FDB365436C8B1E38E218E9DC3A0106FCB0D54CD6ACAB4CB019A8EEE95782`
+passes 147 VU tests and all ten capture/budget checks, unchanged digests. The new
+regression also resumes through the existing engine after a successful commit.
+The isolated Play! bridge consumes these typed inputs, but its incomplete flags
+mean no compiled result can pass the runtime commit gate yet. See
+`play-vu-probe/README.md` for exact coverage and complete-call timings. The game
+candidate remains `61E24D60BF559B6BA7382E498905D6287171E8F3A5DF738D99CAB029E6D91D09`;
+no game relink, controls-enabled handoff or gameplay FPS improvement is claimed.
+
 ## Cold Memory Trace
 
 `PS2X_VU_REPLAY_MEMORY_TRACE_CASE` selects one zero-based recording index (0-63)

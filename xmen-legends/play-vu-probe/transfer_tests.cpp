@@ -35,7 +35,7 @@ static bool runXgkickWaitTests()
             } catch (const std::exception &e) { error = e.what(); return 0; }
         };
         vm->m_cpu.m_pMemoryMap->InsertWriteMap(0x8410u, 0x8413u,
-            [](uint32, uint32) -> uint32 { return 0; }, 1u);
+            CMemoryMap::MemoryMapHandlerType{[](uint32, uint32) -> uint32 { return 0; }}, 1u);
         const uint64_t firstTag = mode == 3 ? 0x1000000000008008ull : 0x1000000000008001ull;
         const uint64_t secondTag = 0x1000000000008001ull;
         std::memcpy(vm->m_vuMem + 64, &firstTag, 8);
@@ -107,7 +107,7 @@ bool runTransferTests()
             } catch (const std::exception &e) { error = e.what(); }
         };
         vm->m_cpu.m_pMemoryMap->InsertWriteMap(0x8410u, 0x8413u,
-            [](uint32, uint32) -> uint32 { return 0; }, 1u);
+            CMemoryMap::MemoryMapHandlerType{[](uint32, uint32) -> uint32 { return 0; }}, 1u);
         const uint64_t tag = mode == 3 ? 0x1000000000008008ull : 0x1000000000008001ull;
         const uint32_t oldWord = 0x12345678, newWord = 0x55667788;
         const unsigned source = mode == 4 ? 1023 : 4;
