@@ -4,6 +4,98 @@ The bring-up runtime has an opt-in, process-local VU1 recorder. Use it to check
 and time interpreter changes against actual game work without repeating startup.
 This is not a replacement for first-level gameplay validation.
 
+## September 6 Arithmetic Rejection And Profile
+
+The exact FMAC helper-inline experiment (`3b728bb`) passed all 140 VU tests
+and both captures at normal/1/8/16/64-cycle budgets, but was slower in matched
+seven-round alternating tests against accepted comparator `A7070757...`:
+
+| Capture | Repeats | Baseline ms | Inline ms | Regression | Wins |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original | 1024 | 1970.423 | 2141.593 | 8.687% | 0/7 |
+| Spread | 2048 | 1999.975 | 2199.185 | 9.961% | 1/7 |
+
+`e0abe98` removes the experiment. No game executable contained it. Restored
+test image SHA-256 `98665AEB795D9C2240D9DED0A356296E4069B2A452C10F154D7DF477A26B13AD`
+passes all 140 tests and ten capture/budget checks. The fixed comparator
+remains `A7070757320A690E255846B8702C6C8785BB8B133435E569E620D2F49BDE6677`.
+
+Refreshed `execution-profile-original.*` and `execution-profile-spread.*`
+now belong to restored image `98665AEB...`, map timestamp `0x6a9ce90f`.
+Each aggregates three execution-only runs of 2048 repeats. Original totals:
+774 samples, 16 external, 758 in-module. Spread: 322 samples, 6 external,
+316 in-module. All samples resolve, with zero drops/failures and exact replay.
+These replace the pre-XGKICK-optimization profiles described below.
+
+| In-module family | Original | Spread |
+| --- | ---: | ---: |
+| Instruction execution | 23.09% | 21.84% |
+| Other VU execution | 21.24% | 27.22% |
+| Native block bodies/guards | 20.71% | 16.14% |
+| Pipeline retirement/advance | 17.02% | 22.15% |
+| FMAC flag helpers | 14.51% | 10.76% |
+
+The previous external copy hotspot is absent: original has one VCRUNTIME
+sample, spread none. Remaining external samples are mostly UCRT sign helpers.
+Sample shares guide investigation, not game-frame timing claims. Matched
+disassembly shows repeated aggregate-zero stack construction and reloads in
+pending VF/VI/ACC/store retirement and enqueue paths. Test direct clearing
+there while preserving every field, deadline, mask and issue-order check.
+
+## Direct Pending Entry Clearing
+
+`280147c` clears pending VF/VI/ACC/store and scalar entries in place instead
+of assigning an aggregate temporary. Both interpreted and compiled-block
+enqueue/retirement paths keep all field values, readiness tests, slot order,
+write-sequence checks and lane masks. A compile-time check confirms positive
+float zero has the all-zero representation used by these entries.
+
+Test image `79F54B78AF4C79FF21037B29F686DF780D35D53E5EEF12F4B92823A5C6A881F8`
+passes 140/140 VU tests and both captures at normal/1/8/16/64-cycle budgets.
+Recorded states, memory, packet data/cycles and replay digests remain exact.
+Matched disassembly confirms aggregate zero temporaries are gone. General
+retirement shrinks from 1648 to 1488 bytes, native VF retirement from 416 to
+368, and native store retirement from 288 to 256. Partial-store merging still
+uses its required data temporary; only zero-initialization copies were changed.
+
+| Capture | Repeats | Baseline ms | Direct clear ms | Reduction | Wins |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original | 1024 | 2120.947 | 2049.752 | 3.357% | 7/7 |
+| Spread | 2048 | 1637.766 | 1532.869 | 6.405% | 7/7 |
+
+These seven-round alternating VU-only comparisons use unchanged `A7070757...`
+as the baseline and do not establish game FPS. The fixed profile logs still
+belong to pre-clear restored image `98665AEB...`; do not map them using the
+new executable's linker map.
+
+The updated game candidate SHA-256 is
+`67C66DEBBB0286EC4A90EF40AC459FB4465CE91A68D99E6CD330919F624835BB`
+(163,363,840 bytes, PE timestamp `0x6a9ceab1`). At 04:27 UTC it completed the
+real New Game/NYC test, exit 0 at vsync 1400. Presents 1152/1280 arrived at
+188.4271364 / 217.6270008 seconds: 128 frames in 29.1998644 seconds, 4.38358
+FPS. Total 231.2623991 seconds, 775,779,683 whole-run native block pairs.
+This shared-host observation is not a controlled gameplay gain. Runtime-owned
+present 1280 still shows the known prop/foliage/HUD/player-effect defects.
+The game closed and startup was restored; primary/staged binaries are unchanged.
+
+Standalone [PR #252](https://github.com/ran-j/PS2Recomp/pull/252) is `1e73f01`,
+based directly on upstream `14b1e5c`, without the local compiled-block path.
+All 426 upstream-based tests pass before and after the change. Its additional
+regression checks all 16 masks, raw signed-zero/NaN/infinity/subnormal bits,
+and VF/VI/store visibility one cycle at a time. Baseline test image:
+`95EB3AFA64C7291991D8DE152C07A12F46422740B76FE11CD382117B83DA897D`;
+optimized: `F9B6B95759521479A49D56849A294811EE37D793D9D14A5ECEF9EA12FF2DF53A`.
+The first test draft passed the budget in the TOP argument slot; that fixture
+error was corrected and cycle-count assertions added before either passing run.
+
+The same regression is retained locally. Final test image
+`B4C96193B519A08B3E2F7584DC44C7EB3D7B068D6E90EF57C8D1FDC923B82D40`
+passes 141/141 VU tests and all ten capture/budget checks. This test-only
+addition does not alter the integrated game executable or the recorded timing
+results. All owned build/test/game processes are terminal. Existing artifact
+slots were reused; workspace remains about 8.000 GiB with no old disc images
+eligible for the 12-hour cleanup threshold.
+
 ## XGKICK Storage Reuse
 
 PS2Recomp `304e2a1` removes a 64 KiB temporary clear and copy from each
