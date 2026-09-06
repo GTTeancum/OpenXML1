@@ -7,7 +7,7 @@ An experimental static recompilation of the North American PlayStation 2 release
 
 ## Acceptance Target
 
-The active goal is basic first-level playability on PC: reliable campaign startup, movement and combat, and a practical interactive frame rate. Gameplay fidelity remains important, but detailed visual polish and Sofdec (SFD) movie playback are deferred. The original defect-free retail boot target is not the current acceptance gate.
+The active goal is basic first-level playability on PC: reliable campaign startup, movement and combat, and sustained **30 FPS**. 20 FPS is an interim performance checkpoint, not acceptance. Gameplay fidelity remains important, but detailed visual polish and Sofdec (SFD) movie playback are deferred. The original defect-free retail boot target is not the current acceptance gate.
 
 | Milestone | Current state |
 | --- | --- |
@@ -18,6 +18,8 @@ The active goal is basic first-level playability on PC: reliable campaign startu
 | Playable release | Not yet |
 
 ## Current Status
+
+The next FPS-improving gameplay build will also include a resident title-bar counter (`X-Men Legends | ... FPS`). Its tests pass, but it has not been linked into the game yet. It counts fresh game-frame presentations rather than repeated host-window redraws. Automated benchmarks disable input; use the interactive launcher below for ordinary movement and combat controls.
 
 The game now executes far beyond initial boot and has reached each of these milestones in the native PC runtime:
 

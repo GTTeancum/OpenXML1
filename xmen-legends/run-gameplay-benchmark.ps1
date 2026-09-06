@@ -3,6 +3,7 @@ param(
     [string]$RuntimeVariant = 'Candidate',
     [switch]$PhaseProfile,
     [switch]$CoverageProfile,
+    [switch]$CpuRasterProfile,
     [switch]$CaptureFrame,
     [ValidateRange(30, 1800)]
     [int]$TimeoutSeconds = 600
@@ -43,7 +44,7 @@ try {
     }
 } finally { $archive.Dispose() }
 
-$stem = if ($PhaseProfile -or $CoverageProfile) { 'gameplay-phase' } else { 'gameplay-rate' }
+$stem = if ($PhaseProfile -or $CoverageProfile -or $CpuRasterProfile) { 'gameplay-phase' } else { 'gameplay-rate' }
 $outLog = Join-Path $build "$stem.out.log"
 $errLog = Join-Path $build "$stem.err.log"
 $start = [Diagnostics.ProcessStartInfo]::new($exe)
@@ -65,6 +66,7 @@ foreach ($key in @('PS2X_DISABLE_HOST_INPUT', 'PS2X_XMEN_HOST_CLOCK',
 }
 $start.Environment['PS2X_RUN_VSYNC_LIMIT'] = '1400'
 if ($PhaseProfile) { $start.Environment['PS2X_RUNTIME_PHASE_PROFILE'] = '1' }
+if ($CpuRasterProfile) { $start.Environment['PS2X_GS_CPU_PROFILE'] = '1' }
 if ($CoverageProfile) { $start.Environment['PS2X_VU_COVERAGE_PROFILE'] = '1' }
 if ($CaptureFrame) { $start.Environment['PS2X_DUMP_PRESENT_RANGE'] = '1280-1280' }
 
@@ -150,6 +152,7 @@ try {
         RecordedAtUtc = [DateTime]::UtcNow.ToString('o')
         Executable = $exe; Sha256 = $identity; PhaseProfile = [bool]$PhaseProfile
         CoverageProfile = [bool]$CoverageProfile
+        CpuRasterProfile = [bool]$CpuRasterProfile
         Coverage = $coverage
         StartupMode = 'TitleGameplayFirst'; HostInput = $false
         ExitCode = $process.ExitCode; ReachedLimit = $reachedLimit; BlockPairs = $blockPairs
@@ -159,7 +162,7 @@ try {
         Frames = 128; FrameSeconds = $null; Fps = $null
         TimingMethod = 'External stderr line observation; shared-host approximate timing'
     }
-    if (!$PhaseProfile -and !$CoverageProfile -and $verified) {
+    if (!$PhaseProfile -and !$CoverageProfile -and !$CpuRasterProfile -and $verified) {
         $report.FrameSeconds = $markers['1280'] - $markers['1152']
         if ($report.FrameSeconds -gt 0) { $report.Fps = 128 / $report.FrameSeconds }
     }

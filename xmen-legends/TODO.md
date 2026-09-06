@@ -1,5 +1,28 @@
 # X-Men Legends PS2Recomp TODO
 
+## Immediate Performance Target
+
+- The user's target is sustained 30 FPS in controllable first-level gameplay. 20 FPS is only an interim checkpoint requested within the next few hours, not acceptance or goal completion. Current verified measurements are still roughly 4 FPS; no delivery-time guarantee is established.
+- Stop treating percent-level instruction tweaks as sufficient progress toward responsiveness. Investigate block-level VU execution and drawing cost reductions, preserving comparison paths and checking complete game workloads before claiming a gain. The prior phase split was about 57% VU / 30% GS, so both paths matter.
+- No ready-made GPU backend or replacement VU engine was identified in the current upstream PR inventory. Evaluate a larger execution replacement in isolation; the earlier guest fault remains open independently.
+- Flag-batch prototype test image `0622A760270F06710F8410330A331D7D88BBDBD3CC1D9EC8D73ADF6A70D7F2BC` passes 146 VU tests and both recordings at normal/1/8/16/64-cycle budgets with identical state/memory, cycles and digests. Normal-budget batched coverage is 50,596 / 13,722 pairs including cold pass. First three-round same-executable original comparison is negative: 1694.118 ms serial / 1738.007 ms batched, 2.591% slower, 1/3 wins. Do not promote this version.
+- Cached-plan prototype `16F0F0D9BED5FED154AD5C99463A55A86A2A97A912B5AA80BC2D6C05787207B7` passes 146 VU tests and all ten capture/budget checks with identical state, memory, cycles and digests. Three alternating same-executable comparisons: original 1647.406 / 1562.436 ms (5.158% lower), spread 1362.890 / 1309.283 ms (3.933% lower), 3/3 wins each. This is insufficient for the required scale, not a gameplay FPS gain. Checkpointed as PS2Recomp `b7aface`, then removed from the active runtime along with its switches/counters. Keep the new incoming-flag/tail regression and public synthetic seed.
+- Restoring the experiment returns the VU class layout to `fd41350`. The game candidate never contained the flag-batch experiment; do not relink old generated objects against the experimental class layout. The benchmark's independent `-CpuRasterProfile` switch is retained.
+- Current candidate `61E24D60...` phase/CPU-raster run completed 2026-09-06 06:37 UTC: exit 0, vsync 1400, zero guest faults, New Game/NYC/native-block gates verified, startup restored and test closed. Across 181 presents (1100-1280), CPU drawing averages 62.668 ms: 11,342.902 ms total, 10,471.130 textured; triangle strips 6637.420, fans 4021.696, sprites 683.588 ms. This profile is not an FPS measurement.
+- A single ignored, shallow Play! reference checkout now exists at `.tools/Play-VU`, pinned to `83700b2c31e593bc94e845b4b31b797be84dda59`, with only Framework, CodeGen and Dependencies submodules initialized. BSD-2-Clause license must be preserved. No Play! code is integrated or built yet. Investigate standalone VU tests, exact cycle-budget behavior, flag differences and ordered XGKICK memory visibility before a bridge; never simply swap engines or discard timing contracts.
+
+## Live FPS Title
+
+- Do not link, package, or launch a game build just for the title/counter. The user requires FPS-improving changes before the next gameplay build; include this queued feature in that build. This turn built tests only, not a new game executable.
+- User requested `X-Men Legends` as the window title with a resident FPS counter. The change measures newly latched, valid game-frame presentations, excludes duplicate host redraws, samples real monotonic time once per second, and reports zero during no-frame windows. Warmup reads `X-Men Legends | -- FPS`.
+- Focused deterministic tests cover 4 FPS among 100 host redraws, 30 FPS among 60 redraws, sample reset, stalls and multi-second frames. Both pass on test image `572A59384879D900A6ECB8864457E52475464875350F668D0EFA198181A1FF93`. Initial exact-double assertions failed at normal rounding precision and were corrected to a 1e-9 tolerance; title formatting already passed. The restored runtime also passes all 146 VU tests and ten exact capture/budget checks on preceding test-only image `602CBB3B...`. Game-level title verification is deferred to the next FPS-improving build.
+- Current game candidate remains `61E24D60BF559B6BA7382E498905D6287171E8F3A5DF738D99CAB029E6D91D09`. No new game executable was linked or launched for this feature, and no game is left running. No new screenshot was taken; the bounded Play! reference is 31.79 MiB.
+
+## Input During Testing
+
+- The recent automated benchmark runs intentionally set `PS2X_DISABLE_HOST_INPUT=1`; the Pad stub suppresses keyboard/controller reads in that mode. This explains the inability to move during those runs, not proof of a new input regression. Input has not been re-tested interactively this turn.
+- `run-interactive.ps1 -RuntimeVariant Candidate -StartupMovieMode TitleGameplayFirst` clears inherited PS2X settings and enables ordinary controls. Use interactive mode when handing the game to the user. Clearly announce any controlled benchmark that disables input before launching it, and do not present such a run as a playable handoff. Never restart automatically after a user closes the window.
+
 ## Current Register-Forwarding Work
 
 - Local regression `a36c659` adds 128 cases covering every ACC mask, four VI boundary values, an older pending ILW, old-value branch backup, ignored VI0 writes, four-cycle MADD results and zero/one-cycle slices. Explicit expected values pass before changing runtime; serialized before/after state and memory retain queued-baseline fingerprint `00d374d94b9195ad`.
