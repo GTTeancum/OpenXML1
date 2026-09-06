@@ -1,4 +1,5 @@
 #include "runtime_bridge.h"
+#include "bridge_profile.h"
 #include <algorithm>
 #include <bit>
 #include <limits>
@@ -202,15 +203,21 @@ PlayVuRuntimeBridge::Result PlayVuRuntimeBridge::evaluate(const VUCompiledState:
     Result result;
     try
     {
-        const auto imported = importState(input);
-        const auto scalar = importScalarFlags(input);
-        auto compiled = session.run(code, data, imported, input.budget, input.state.top, input.state.itop, &scalar);
+        const auto imported = VuBridgeProfile::measure(VuBridgeProfile::Stage::Import,
+            [&] { return importState(input); });
+        const auto scalar = VuBridgeProfile::measure(VuBridgeProfile::Stage::ScalarImport,
+            [&] { return importScalarFlags(input); });
+        // Include cold compilation and executions that later reject publication.
+        auto compiled = VuBridgeProfile::measure(VuBridgeProfile::Stage::Execute,
+            [&] { return session.run(code, data, imported, input.budget,
+                input.state.top, input.state.itop, &scalar); });
         if (!compiled.executed)
         {
             result.reason = std::move(compiled.reason);
             return result;
         }
-        result.output = exportState(input, std::move(compiled));
+        result.output = VuBridgeProfile::measure(VuBridgeProfile::Stage::Export,
+            [&] { return exportState(input, std::move(compiled)); });
         result.evaluated = true;
     }
     catch (const std::exception &e)

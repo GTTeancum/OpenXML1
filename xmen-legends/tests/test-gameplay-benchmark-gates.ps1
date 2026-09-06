@@ -25,6 +25,8 @@ $levelPackage = $true
 $markers = @{ '1152' = 1; '1280' = 2 }
 $guestFaultLines = 0
 $CompiledVu = $false
+$CompiledRetry = $false
+$compiledRetryCalls = 0L
 $AuditCompiledVu = $false
 $AuditBilinear = $false
 $PreparedTexture = $false
@@ -55,6 +57,14 @@ $CompiledVu = $true
 if (& $check) { throw 'Requested compiled engine was accepted without execution evidence.' }
 $compiledCalls = 1L
 if (!(& $check)) { throw 'Verified compiled workload rejected.' }
+$CompiledRetry = $true
+if (& $check) { throw 'Compiled retry accepted without execution evidence.' }
+$compiledRetryCalls = 1L
+if (!(& $check)) { throw 'Executed compiled retry rejected.' }
+$CompiledVu = $false
+if (& $check) { throw 'Compiled retry accepted without compiled mode.' }
+$CompiledVu = $true
+$CompiledRetry = $false
 $AuditCompiledVu = $true
 if (& $check) { throw 'Diagnostic double-execution was accepted as an FPS measurement.' }
 if (!(& $completeCheck)) { throw 'Successful VU audit did not complete its workload.' }

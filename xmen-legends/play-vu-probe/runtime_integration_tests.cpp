@@ -10,6 +10,8 @@
 #include <stdexcept>
 #include <sstream>
 #include <cstdio>
+#include <cfenv>
+#include <cstdlib>
 
 namespace
 {
@@ -82,6 +84,54 @@ void register_compiled_vu_producer_tests()
     MiniTest::Case("PS2VU1CompiledProducer", [](TestCase &tc)
     {
 #if defined(PS2X_TEST_COMPILED_VU_HOOK)
+        tc.Run("Bounded compiled retry preserves prefix effects budgets and rounding", [](TestCase &t)
+        {
+            const bool retry = std::getenv("PS2X_VU_COMPILED_RETRY") != nullptr;
+            for (unsigned variant = 0; variant < 4; ++variant)
+            for (uint32_t slice : {1u, 64u, 65u, 72u, 73u, 128u, 4096u})
+            {
+                Fixture fast, reference;
+                if (!fast.init() || !reference.init()) { t.Fail("Fixtures initialize"); return; }
+                for (auto* fx : {&fast, &reference})
+                {
+                    fx->vu.state().vf[1][0] = 8.0f;
+                    fx->vu.state().vf[2][0] = 4.0f;
+                    fx->vu.state().vf[3][0] = 123.0f;
+                    fx->pair(96, lowerNop, (8u << 21) | (1u << 11) | (4u << 6) | 0x1c);
+                    fx->pair(160, (1u << 25) | (15u << 21) | (3u << 11) | 12u);
+                    fx->pair(176, lowerNop, upperNop | end);
+                    if (variant == 0) fx->pair(8, 0x80020bbc); // Pending DIV.
+                    if (variant == 1)
+                    {
+                        const uint64_t packet[] = {0x1000000000008001ull, 0xe, 0xffffffff11223344ull, 0x60};
+                        std::memcpy(fx->data + 64, packet, sizeof(packet));
+                        fx->vu.state().vi[1] = 4;
+                        fx->pair(8, 0x80000efc);
+                        fx->pair(128, 0x80000efc);
+                    }
+                    if (variant == 2) fx->pair(8, 0x40000002); // Pending branch.
+                    if (variant == 3) fx->pair(8, lowerNop, upperNop | end);
+                }
+                { ScopedCompiledVuMode disabled(false); fast.start(2); reference.start(2); reference.resume(slice); }
+                const auto before = compiledVuCounters();
+                struct RestoreRounding
+                {
+                    int mode = std::fegetround();
+                    ~RestoreRounding() { if (mode != -1) std::fesetround(mode); }
+                } restoreRounding;
+                t.IsTrue(std::fesetround(FE_UPWARD) == 0, "Test rounding mode is available");
+                { ScopedCompiledVuMode enabled(true); fast.resume(slice); }
+                const bool roundingPreserved = std::fegetround() == FE_UPWARD;
+                const auto after = compiledVuCounters();
+                t.IsTrue(roundingPreserved, "Retry restores the caller's rounding mode");
+                t.IsTrue(sameArchitecture(fast.vu.state(), reference.vu.state()), "Prefix and compiled tail preserve architecture and elapsed cycles");
+                t.IsTrue(!std::memcmp(fast.data, reference.data, 16384), "Prefix and tail memory effects match");
+                t.Equals(fast.packets, reference.packets, "Prefix packets are neither lost nor duplicated");
+                t.Equals(after.accepted - before.accepted, uint64_t(retry && slice > 72 && variant < 3),
+                    "Only supported long slices retry after retiring pending work");
+                t.IsTrue(after.attempted - before.attempted <= 2, "Retry count remains bounded");
+            }
+        });
         tc.Run("FTOI saturates positive overflow without changing masks or flags", [](TestCase &t)
         {
             for (unsigned scale : {0u, 4u, 12u, 15u})

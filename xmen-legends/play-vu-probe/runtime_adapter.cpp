@@ -1,5 +1,6 @@
 #include "runtime_adapter.h"
 #include "runtime_bridge.h"
+#include "bridge_profile.h"
 #include "runtime/ps2_vu1_replay.h"
 #include "runtime/ps2_memory.h"
 #include <cstring>
@@ -41,7 +42,9 @@ bool tryCompiledVuDrain(VU1Interpreter &vu, const uint8_t *code, uint32_t codeSi
     };
     if (!code || !data || codeSize != 16384 || dataSize != 16384)
         return reject("Unsupported VU memory shape");
-    const auto input = VUCompiledState::capture(vu, budget);
+    // Rejected entries still pay this validation cost before fallback.
+    const auto input = VuBridgeProfile::measure(VuBridgeProfile::Stage::Capture,
+        [&] { return VUCompiledState::capture(vu, budget); });
     if (!input) return reject("Unsupported VU entry or budget");
 
     PlayVuRuntimeBridge::Result result;
@@ -49,8 +52,10 @@ bool tryCompiledVuDrain(VU1Interpreter &vu, const uint8_t *code, uint32_t codeSi
     {
         thread_local PlayVuRuntimeBridge bridge;
         std::array<uint8_t, 16384> privateCode, privateData;
-        std::memcpy(privateCode.data(), code, privateCode.size());
-        std::memcpy(privateData.data(), data, privateData.size());
+        VuBridgeProfile::measure(VuBridgeProfile::Stage::Copy, [&] {
+            std::memcpy(privateCode.data(), code, privateCode.size());
+            std::memcpy(privateData.data(), data, privateData.size());
+        });
         result = bridge.evaluate(*input, privateCode, privateData);
     }
     catch (const std::exception &e)
@@ -77,7 +82,8 @@ bool tryCompiledVuDrain(VU1Interpreter &vu, const uint8_t *code, uint32_t codeSi
             throw std::runtime_error("Compiled VU audit stopped before live publication: " + difference);
         }
     }
-    if (!VUCompiledState::commit(vu, *input, result.output, data, dataSize, gs, memory))
+    if (!VuBridgeProfile::measure(VuBridgeProfile::Stage::Commit,
+        [&] { return VUCompiledState::commit(vu, *input, result.output, data, dataSize, gs, memory); }))
         return reject("Runtime rejected compiled output before publication");
     ++counters.accepted;
     counters.cycles += result.output.elapsed;

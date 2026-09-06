@@ -9,6 +9,110 @@ Bounded first-level timing is recorded below. The user subsequently confirmed
 movement on the performance candidate, but rejected its roughly 5 FPS; combat
 was not tested in that session. See the current TODO before launching anything.
 
+## Bounded Compiled Retry
+
+September 6: `PS2X_VU_COMPILED_RETRY=1` enables one additional compiled-drain
+attempt after at least eight cycles of normal VU1 execution. It is OFF by
+default and requires compiled mode. The remaining budget must still exceed
+64 cycles. VU0, short slices, stopped programs and ended programs do not retry.
+Prefix instructions, pending operations and packets are actually executed, not
+discarded or approximated. Successful publication retains the existing typed
+state validation; the caller's rounding mode is restored on the early return.
+
+Profiling identified expensive recordings rejected at entry, before any private
+compiled execution. State conversion/copying was much smaller than execution.
+The prefix allows pending-entry work to retire and makes those recordings
+eligible without extending the typed ABI to every pending pipeline shape.
+Compiled coverage rises from 14 to 16 of the 32 original cases, and from 8 to
+15 of the 32 spread cases. Short-slice cases still use the original engine.
+
+Final test image:
+`7AE3D3C9E7B73D9E23D7367DC60457C1BCA1BFC76911948EA7CCD5C6AFD95983`.
+All 162 VU tests pass, including 28 new boundary combinations for pending DIV,
+XGKICK, branches and E-bit termination across 1/64/65/72/73/128/4096 budgets.
+They compare architecture, elapsed cycles, all 16 KiB data, packet counts,
+bounded attempts and caller rounding. Both complete recordings retain their
+state/memory/timed-packet checks and digests. Eight short-slice replay runs at
+1/8/16/64 cycles and the four saved EFU/entry-wait/Q-call/FTOI failures pass.
+Fixed evidence: `vu-retry-checks.log` and `vu-retry-regressions.log`.
+
+Five alternating same-image ON/OFF pairs per recording, 1,024 warm repeats:
+
+| Recording | OFF ms (rounds 0..4) | ON ms (rounds 0..4) | Median paired reduction |
+| --- | --- | --- | --- |
+| Original | 1081.007, 1179.441, 1149.195, 1234.479, 1185.652 | 787.838, 838.092, 644.721, 868.300, 722.351 | 29.66% |
+| Spread | 767.919, 775.679, 679.052, 780.846, 673.937 | 484.182, 477.495, 472.206, 491.112, 548.733 | 36.95% |
+
+Every pair improved in this shared-host experiment. These are replay execution
+times, NOT whole-game FPS or a guaranteed sustained speedup. The fixed
+`vu-retry-comparison.json` records all identities and rounds. All work is local.
+
+### Game Validation: Not Promoted
+
+Combined Vulkan/retry candidate:
+`7F5AE058415EFEB2812512F708DE7B2E85F8801E9556BB06E360E6F5AA298408`.
+The full first-level compiled audit passes: at least 258,049 compiled calls,
+110,593 accepted retries, zero mismatches or logged guest faults, present 1280
+and the 1400-vsync limit. Audit timing is deliberately excluded from FPS.
+
+The uninstrumented retry run FAILS before the measurement window: guest PC
+`0xa3a310`, RA `0x396e84`, `s0=s1=a0=v0=0`. Host exit 0 and the eventual vsync
+limit do not make this a successful game run. Fixed private evidence is retained
+in `gameplay-vulkan-retry-failure.{err.log,out.log,json}`. No retry gameplay FPS
+or stability gain is claimed, and the option remains disabled by default.
+
+Same-executable Vulkan control with retry disabled completes at
+2026-09-06 17:04 UTC: all workload gates, zero logged guest faults,
+128 presents / 22.361309 seconds = **5.724173 FPS**. This is an approximate
+shared-host baseline, not a measured retry speedup or an acceptable handoff.
+Both benchmarks and the audit close their owned processes and restore startup.
+Input was disabled; movement remains user-confirmed only on the earlier build,
+attacking untested there. No new image, interactive input, push or PR.
+
+Disassembly narrows the fault investigation: `0x396dfc` obtains the singleton
+from `0x38cfd0`; the latter requests `0x48d90` bytes through `0x14cae0` and stores
+the result at `0x79a980`. The fault snapshot has a null singleton in `s1`.
+`0x396e2c` obtains a pool slot through `0x396c40`; `0x307a70` and `0x398630`
+both simply return their second argument, so neither repairs a null pool slot.
+The subsequent virtual dispatches dereference that result. The logs contain
+16 rejected null-page memsets of size `0x48d90` in BOTH the successful audit
+and failed retry run; that marker alone does not distinguish them. Next trace
+the allocator result and singleton/pool state at these boundaries, including
+why the fault path is reached only in some runs. Do not bypass null dispatch,
+assume heap exhaustion, or dismiss the retry's possible contribution because
+earlier candidates failed nearby. The original Vulkan failure is still retained.
+
+The candidate also assembles each black-present diagnostic into one stderr
+write, addressing the previously observed activation-marker interleaving.
+This is a logging correction, not a rendering change or a general atomicity
+claim for all diagnostics. Benchmark gates require positive retry execution
+and keep audits and guest-fault runs out of FPS reports.
+
+### Bridge Diagnostics
+
+`PS2X_VU_BRIDGE_PROFILE=1` adds per-thread, opt-in capture/copy/import/scalar-
+import/execute/export/commit timings, emitted at thread teardown. Rejections
+and cold execution are included; these are not warm-only or whole-runtime
+totals, and they exclude ordinary fallback execution. No per-instruction timer
+is added. Disabled mode produces no bridge profile records.
+
+The initial profiling image `97BB6360...` passes both recordings with profiling
+ON and OFF. At 512 repeats, measured execute stages total 273.5004 / 194.0928 ms
+(original/spread); capture 2.2478 / 2.3632, copy 6.2811 / 4.1337, import
+2.4409 / 2.1768, scalar import 0.3301 / 0.2234, export 12.6075 / 10.5244,
+commit 11.1031 / 7.4421. Those stage logs retain their original executable hash.
+
+```powershell
+& ./xmen-legends/run-vu-bridge-profile.ps1 -Capture Original -Profile
+& ./xmen-legends/run-vu-bridge-profile.ps1 -Capture Spread -Retry
+& ./xmen-legends/run-vu-bridge-profile.ps1 -Capture Spread
+```
+
+The runner uses hidden, bounded test processes at Normal/0xF, clears inherited
+PS2X settings, requires 32 cases and the known recording digest, verifies the
+executable identity, and reuses fixed logs. It does not launch the game or
+capture images. Build only tests through the BelowNormal wrapper for this stage.
+
 ## Direct Arithmetic Experiment
 
 September 6: `PS2X_VU_DIRECT_FMAC` enables an experimental JIT emitter for
