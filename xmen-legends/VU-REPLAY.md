@@ -4,6 +4,119 @@ The bring-up runtime has an opt-in, process-local VU1 recorder. Use it to check
 and time interpreter changes against actual game work without repeating startup.
 This is not a replacement for first-level gameplay validation.
 
+## XGKICK Storage Reuse
+
+PS2Recomp `304e2a1` removes a 64 KiB temporary clear and copy from each
+`startXgkick` call. Packet bytes remain in allocated storage; all transfer
+metadata is reset, and `progressXgkick` overwrites each qword before increasing
+the copied prefix. Transfer timing, packet lengths, state serialization, and
+the reset/initialization path are unchanged.
+
+The new regression sends 4096-, 32-, and 80-byte packets consecutively. It
+checks every output byte and exact lengths, then compares serialized final
+state across 4096/1/3/8/64-cycle budgets. It passes before and after the change.
+The optimized image passes **139/139 VU-related tests** and both private captures
+at normal and 1/8/16/64-cycle slicing, with unchanged digests/cycles/coverage.
+
+Seven alternating, uninstrumented comparisons:
+
+| Capture | Repeats | Baseline ms | Optimized ms | Reduction | Wins |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original | 1024 | 2727.913 | 2305.994 | 15.467% | 7/7 |
+| Spread | 2048 | 2106.688 | 1734.131 | 17.684% | 7/7 |
+
+The reused comparator slot now holds test baseline
+`72653FAE930438FB5EBE21A95FA5A8980AF26F94FBCF58B0060B612F5D3402E4`.
+The optimized test executable is
+`F056E7FE393773086A3A91D3CCF86D46F4729AD290B9AD8497CCD68C1D2A3154`,
+map timestamp `0x6a9ce024`. Binary inspection confirms that `startXgkick` no
+longer calls memset/memcpy or reserves the old approximately 64 KiB stack frame.
+The fixed comparison JSON contains the spread series. These are VU-only
+measurements, not an FPS improvement claim.
+
+### Integrated Gameplay Check
+
+The opt-in candidate now includes `304e2a1`: SHA-256
+`13715A67FF82743E96E8F9805A4E69696AEB5AE0868669D35FC5F4F91A3685F2`,
+163,368,448 bytes, PE32+/x64 timestamp `0x6a9ce0d6`. Primary and staged hashes
+remain unchanged. Linking used BelowNormal/one worker/affinity 0xF and retained
+the existing duplicate raylib/User32 symbol warnings; successful startup and
+normal exit were checked, not inferred from linker exit alone.
+
+`run-gameplay-benchmark.ps1 -CaptureFrame` completed at 2026-09-06 03:46 UTC,
+exit 0 at vsync 1400, with real New Game/NYC load and native blocks verified.
+Presents 1152/1280 arrived at 216.9667881 / 248.4600351 seconds: 128 frames in
+31.493247 seconds, **4.06436 FPS**, total 261.275584 seconds. Startup scripts
+were restored and the owned process closed. The prior user-requested older
+candidate rerun completed at 03:30 UTC at 3.71035 FPS. Shared-host timing and
+different whole-run native-block counts preclude treating this pair as a
+controlled FPS improvement: 630,871,823 block pairs now, 340,133,123 before.
+
+The reused native `gs-present-1280.ppm`/PNG was inspected: textured New York,
+Wolverine, fences, and yellow marker are present. Black props/missing foliage,
+the solid red player disk, and malformed HUD/potion glyphs remain. Repeated
+null-page memset warnings also occur in the older phase log; they are not new
+evidence of an XGKICK regression. Practical playability remains unmet.
+
+### Upstream Submission
+
+[PR #251](https://github.com/ran-j/PS2Recomp/pull/251) is open, commit `9649cf4`
+on `codex/vu-xgkick-storage`, based directly on upstream `14b1e5c` in the
+existing `C:/Programming/GitHub/PS2Recomp` checkout. Its two-file diff contains
+only the metadata reset change and a standalone synthetic test. No local
+sampler, replay machinery, private kernels, or game data are included.
+
+The upstream regression verifies full packet bytes and completion cycles
+511/514/523 at all five budgets. Upstream resume has no persistent `isRunning`
+API and can continue after a halted program; the test therefore stops when
+all three packets are delivered instead of issuing an extra resume after halt.
+The initial incompatible test assumptions were corrected before validation.
+
+Release full suite: **426/426 pass** both with the new regression and original
+runtime (test SHA `A3114F04D77002F216FEBBBC94FA3EEE9E04515951D58478A2177F3613CABE06`)
+and after the optimization (`DE7184B9EC61652C23EB05D6E75538B2D42FC3726CA278EBAC8591CAB5173CE9`).
+All builds stayed BelowNormal, single-worker, affinity 0xF, 2048 MiB compiler
+cap. Existing build/log/executable/image slots were reused; final OpenXML1
+inventory is 8.004 GiB / 30,327 files. No owned test/game process remains.
+
+### External Sample Attribution
+
+PS2Recomp `49347fe` adds bounded external module/RVA sampling to the test
+harness only: at most 64 module identities and 4096 external addresses.
+Metadata resolution occurs after resuming the target thread; no allocation,
+logging, or loader calls happen while it is suspended. Unresolved and dropped
+samples are explicit. Two tests cover live module resolution, private-memory
+rejection, identity separation, capacity limits, and repeated hits at capacity.
+
+`summarize-vu-sampler.ps1 -External -All` reports DLL path, PE timestamp/image
+size, RVA, hits, and shares of external/all execution samples. Tests cover
+module-ID reuse between runs, image mismatch, range/accounting errors, and
+partial attribution. The ordinary in-module report still requires a matching
+linker map and now rejects mixed image timestamps throughout a combined log.
+
+The fixed `execution-profile-original.*` and `execution-profile-spread.*` logs
+currently describe the **pre-optimization** sampler image
+`06542E8302735645F0F9E21B93C179AD3C58877E9E34A6FAB486014198836B03`,
+not the latest linker map. Three 2048-repeat runs per recording all remain
+exact, with zero failures, dropped samples, or unresolved external samples:
+
+| Capture | Execution samples | External | VCRUNTIME140 | ucrtbase |
+| --- | ---: | ---: | ---: | ---: |
+| Original | 1042 | 138 | 118 (11.32%) | 20 (1.92%) |
+| Spread | 380 | 62 | 56 (14.74%) | 6 (1.58%) |
+
+Percentages use all warm-execution samples. Matching DLL binaries identify
+`VCRUNTIME140.dll` timestamp `0x4260df93`, image size `0x1e000`, and
+`ucrtbase.dll` timestamp `0xc38f7a35`, size `0x14c000`. Disassembly finds the
+dominant copy helper at RVA `0x1065b` (`rep movsb`) and memset stores around
+`0x12814`; ucrtbase samples are mostly `_dsign`/`_ldsign` at `0x83190`.
+The sampled IPs alone do not identify callers. Inspection of `startXgkick`
+independently established the redundant bulk work, and the alternating
+comparison above verifies that removing it benefits both recordings.
+
+Older checkpoint sections below are historical; their references to current
+binary slots or fixed profile logs must not supersede this section.
+
 ## Direct Deferred Output Rejected
 
 The next experiment redirected compiled upper VF results into their pending
