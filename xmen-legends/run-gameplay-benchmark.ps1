@@ -10,6 +10,7 @@ param(
     [switch]$BestFitHeap,
     [switch]$InPlaceRealloc,
     [switch]$HeapDiagnostics,
+    [switch]$HeapTrace,
     [switch]$AuditCompiledVu,
     [switch]$AuditBilinear,
     [switch]$PreparedTexture,
@@ -20,6 +21,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+if ($HeapTrace -and !$HeapDiagnostics) { throw 'HeapTrace requires HeapDiagnostics; trace runs are never FPS measurements.' }
 $root = Split-Path -Parent $PSScriptRoot
 $disc = Join-Path $PSScriptRoot 'disc'
 $build = Join-Path $root 'PS2Recomp/out/xmen-final3-build'
@@ -93,6 +95,7 @@ if ($CompiledRetry) { $start.Environment['PS2X_VU_COMPILED_RETRY'] = '1' }
 if ($BestFitHeap) { $start.Environment['PS2X_GUEST_BUMP_BEST_FIT'] = '1' }
 if ($InPlaceRealloc) { $start.Environment['PS2X_GUEST_BUMP_REALLOC'] = '1' }
 if ($HeapDiagnostics) { $start.Environment['PS2X_GUEST_BUMP_DIAGNOSTICS'] = '1' }
+if ($HeapTrace) { $start.Environment['PS2X_GUEST_HEAP_TRACE'] = Join-Path $build 'gameplay-heap-trace.bin' }
 if ($AuditCompiledVu -and !$CompiledVu) { throw 'AuditCompiledVu requires CompiledVu' }
 if ($AuditPreparedTexture -and !$PreparedTexture) { throw 'AuditPreparedTexture requires PreparedTexture' }
 if ($PreparedTexture) { $start.Environment['PS2X_GS_PREPARED_TEXTURE'] = '1' }
@@ -240,7 +243,7 @@ try {
         $reachedLimit -and $blockPairs -gt 0 -and
         $newGameHandler -and $levelPackage -and
         $markers.ContainsKey('1152') -and $markers.ContainsKey('1280')
-    $verified = $completed -and !$AuditCompiledVu -and !$AuditBilinear -and !$AuditPreparedTexture -and !$HeapDiagnostics
+    $verified = $completed -and !$AuditCompiledVu -and !$AuditBilinear -and !$AuditPreparedTexture -and !$HeapDiagnostics -and !$HeapTrace
     $report = [ordered]@{
         RecordedAtUtc = [DateTime]::UtcNow.ToString('o')
         Executable = $exe; Sha256 = $identity; PhaseProfile = [bool]$PhaseProfile
@@ -252,6 +255,7 @@ try {
         InPlaceRealloc = [bool]$InPlaceRealloc; InPlaceReallocCallsLowerBound = $reallocCalls
         PublicFreeCallsLowerBound = $publicFreeCalls; PublicFreeBytesLowerBound = $publicFreeBytes
         HeapDiagnostics = [bool]$HeapDiagnostics; HeapFailureLines = $heapFailures
+        HeapTrace = [bool]$HeapTrace
         VulkanGs = [bool]$VulkanGs; VulkanActive = $vulkanActive
         VulkanPresents = $vulkanPresents; VulkanSubmits = $vulkanSubmits; VulkanNonblack = $vulkanNonblack
         AuditCompiledVu = [bool]$AuditCompiledVu

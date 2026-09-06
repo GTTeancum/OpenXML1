@@ -4,6 +4,83 @@ September 6, 2026. Work is local only; no pushes or PRs. Movement was confirmed
 by the user on an earlier build; attacking was not tested there. The performance
 target remains 30 FPS. No result below is an interactive handoff.
 
+## Allocation Replay And VU Blocker (19:20 UTC)
+
+Local runtime commit `ccb3f60` repairs three sources of fragmentation: split
+remainders keep their address order, a freed frontier is joined to untouched
+space BEFORE advancing the bump pointer (not only at exhaustion), and alignment
+gaps are returned to the free list. The arena boundary is unchanged. In-place
+realloc is still opt-in; no FPS or full-level success is claimed.
+
+Opt-in `PS2X_GUEST_HEAP_TRACE` records allocation/free/in-place-resize/failure
+events under the heap mutex. The file has a 32-byte versioned header and 32-byte
+records, capped at 262,144 events (8 MiB plus header/footer). It closes on the
+first failure; the parser rejects truncated, capped and missing-footer traces.
+It stores addresses/sizes/call origins, not memory contents or images. The
+benchmark's `-HeapTrace` requires `-HeapDiagnostics` and is explicitly excluded
+from FPS. `replay-heap-trace.py` checks bounds, alignment, overlap, free ownership
+and resize ownership, then replays the captured lifetimes under separate models.
+Alternative placements cannot predict guest control flow beyond that prefix.
+
+The first trace, from candidate `5AD96907...`, has 143,269 events, 53,360 live
+allocations, 13,806,696 requested / 14,116,480 padded bytes. The `runtime` model
+matches EVERY recorded allocation address and the 32 KiB failure exactly.
+Ordered splitting alone still leaves fragmentation; joining the frontier early
+preserves 1,552,544 bytes of untouched tail after the failed request in replay.
+This motivated the actual changes, not a speculative policy sweep.
+
+That first trace is retained in `gameplay-heap-baseline.zip` (566,629 bytes),
+containing a 4,584,672-byte `gameplay-heap-trace.bin`, SHA256
+`A295ED6F977D8D4E60F293599A6550D4948F1AF5EA627AAD50D34A2086D15EF2`.
+The second trace remains in the fixed `gameplay-heap-trace.bin`: 5,128,480 bytes,
+SHA256 `56B32BAA4117D0F8C1F4651E27E1670DC90E2FBFFCD3ECC0325F2F214917E3A1`.
+It comes from candidate `64DE1281...` after ordered splitting/frontier reuse,
+before alignment-gap recovery. Its 160,263 events match `runtime-frontier-first`
+with zero address differences and the later 298,384-byte failure exactly:
+60,117 live; 14,941,553 requested / 15,285,088 padded bytes; peak padded
+15,513,968. The largest unowned gap is 298,080, just below the request; the
+runtime's largest tracked free extent is only 135,552. Recovering alignment
+gaps in replay satisfies that request without enlarging the arena.
+
+Reproduce the second proof:
+
+```powershell
+python xmen-legends/replay-heap-trace.py PS2Recomp/out/xmen-final3-build/gameplay-heap-trace.bin --expect-model runtime-frontier-first
+```
+
+Current test image
+`D8864E50774DC7AD10D65D28DC2ED99E5883C5A02E20914FA302893C41B56BC6`
+passes 59 fresh-process checks with diagnostics/trace and 59 without (118 total),
+plus eight recorded ownership replays, 12 Python replay tests and benchmark
+gate tests. The fixed heap-check log holds the last diagnostics-OFF run; ON
+results were also observed. New regressions cover free-list split ordering,
+frontier reuse before exhaustion and alignment-gap ownership.
+
+Current game candidate:
+`51C7B4CBC54DF1130662AAA4803D4B6BD6BDB93064A7F9175D5080AD3C7A3A1E`.
+Its latest in-place/compiled-retry/Vulkan audit reports NO heap failure before
+stopping on `[vu:compiled-audit-failed] accepted=29899 tick=542 pc=0x580
+cycle=117875042`. This is a DIFFERENT blocker, not a healthy workload/FPS pass.
+It does not prove no later heap failures exist. Four automated game runs this
+turn total, all closed and startup restored. No input or images were captured.
+
+The new private VU recording is `disc/vu-compiled-failure.bin`, 58,560 bytes,
+SHA256 `22FA0FF341D073B68F2C33CD756AE2403075C195A3EE91E81E7C5DA9DA8F8C20`.
+Fresh-process runtime replay at one repeat proves reference and native-pair
+execution both pass (106 cycles, digest `0cfab35f3f93ce6f`). Compiled replay fails:
+first differing state word `117875147/117875148`, state offset 625, data=1,
+gifs=1. The reported first difference is one final cycle; do not assume all
+remaining state fields match until enumerated. Standalone Play probe
+`93F1B470...` also fails detached-versus-direct comparison for this recording.
+
+NEXT: fix the saved compiled VU timing disagreement before another game run.
+Use `MINITEST_FILTER=recorded VU slices reproduce`, `PS2X_VU_REPLAY_FILE` pointing
+to this recording, `PS2X_VU_REPLAY_REPEATS=1`; compiled reproduction additionally
+sets `PS2X_VU_REPLAY_COMPILED`, `PS2X_VU_COMPILED_RETRY`, `PS2X_VU_REPLAY_PAIRS`
+and `PS2X_VU_REPLAY_BLOCKS` to 1. Keep the saved case until it is fixed. Then
+complete the full audit and only afterward measure FPS. 30 FPS remains unmet,
+movement remains user-confirmed on the earlier build, attacking untested there.
+
 ## Command Recording And Tail Join (18:51 UTC)
 
 Local runtime commit `8520160` adds a bounded active call chain (maximum 12

@@ -1,6 +1,7 @@
-param([switch]$Diagnostics)
+param([switch]$Diagnostics, [switch]$Trace)
 
 $ErrorActionPreference = 'Stop'
+if ($Trace -and !$Diagnostics) { throw 'Trace requires Diagnostics.' }
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $recomp = Join-Path $root 'PS2Recomp'
 $build = Join-Path $recomp 'out/xmen-final3-build'
@@ -14,7 +15,8 @@ $cases = @(
             foreach ($inPlace in @($false, $true)) {
                 foreach ($filter in @('public allocator dispatch',
                     'reallocation preserves ownership', 'best fit preserves a large',
-                    'free frontier joins untouched tail')) {
+                    'free frontier joins untouched tail', 'reuse free frontier before exhaustion',
+                    'split free extent retains address order', 'bump alignment gap remains reusable')) {
                     [pscustomobject]@{ Fast = $fast; BestFit = $bestFit; InPlace = $inPlace; Filter = $filter }
                 }
             }
@@ -42,6 +44,8 @@ foreach ($case in $cases) {
     if ($case.BestFit) { $start.Environment['PS2X_GUEST_BUMP_BEST_FIT'] = '1' }
     if ($case.InPlace) { $start.Environment['PS2X_GUEST_BUMP_REALLOC'] = '1' }
     if ($Diagnostics) { $start.Environment['PS2X_GUEST_BUMP_DIAGNOSTICS'] = '1' }
+    $traceCase = $Trace -and $case.Filter -eq 'public allocator dispatch'
+    if ($traceCase) { $start.Environment['PS2X_GUEST_HEAP_TRACE'] = Join-Path $build 'heap-ownership-trace.bin' }
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $start
     $started = $false
@@ -77,6 +81,12 @@ foreach ($case in $cases) {
             throw 'Heap failure attribution exceeded its output bound.'
         }
         "PASS $label"
+        if ($traceCase) {
+            $traceReport = & python (Join-Path $root 'xmen-legends/replay-heap-trace.py') (Join-Path $build 'heap-ownership-trace.bin')
+            if ($LASTEXITCODE -ne 0) { throw "Heap event trace failed validation: $label" }
+            $traceReport | Add-Content -LiteralPath $log
+            "PASS trace ownership replay: $label"
+        }
     } finally {
         if ($started -and !$process.HasExited) { $process.Kill(); $process.WaitForExit() }
         $process.Dispose()

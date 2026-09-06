@@ -11,9 +11,18 @@ was not tested in that session. See the current TODO before launching anything.
 
 ## Bounded Compiled Retry
 
-Current follow-up: [heap investigation](../HEAP-CHECKPOINT.md) confirms allocation
-failures and fixes the test trigger's heap-address assumption. Neither allocator
-policy yet completes a healthy first-level audit; no new FPS gain is claimed.
+Current blocker (September 6, 19:20 UTC): the
+[heap investigation](../HEAP-CHECKPOINT.md) repaired split ordering, stranded
+frontier space and lost alignment gaps. Candidate `51C7B4CB...` now reaches a
+compiled VU mismatch at tick 542, PC `0x580`, with no allocation failure reported
+before the stop. The private `disc/vu-compiled-failure.bin` has SHA256
+`22FA0FF341D073B68F2C33CD756AE2403075C195A3EE91E81E7C5DA9DA8F8C20`.
+Reference/native replay both pass at 106 cycles, digest `0cfab35f3f93ce6f`;
+compiled replay reports first differing cycle word `117875147/117875148`, with
+matching data and packet bytes. Standalone detached/direct comparison also fails.
+Fix this saved case before another game run. No full audit or new FPS pass.
+Historical successful-audit claims below predate the allocation-failure gates
+and must not be used as evidence that current level loading is healthy.
 
 September 6: `PS2X_VU_COMPILED_RETRY=1` enables one additional compiled-drain
 attempt after at least eight cycles of normal VU1 execution. It is OFF by
