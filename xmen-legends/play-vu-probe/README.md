@@ -302,7 +302,55 @@ case. This uses the optional store observer; trace work is disabled before warm
 repetitions. Matching baseline tracing is documented in `../VU-REPLAY.md`.
 Private trace logs stay ignored and reuse two small fixed files, not new captures.
 
-Next: bridge exact short-cycle budgets and validate architectural results,
+## Completed Control-State Retirement
+
+The diagnostic now computes the final drained time from the instruction clock,
+transfer tail, scalar deadlines, flag queues and outgoing VF hazard masks. It
+selects retired flag values instead of returning stale Play! mirrors. Q/P come
+from their held results. This is a nonmutating diagnostic conversion, not a
+production state exporter: integer/store scheduling, unsupported flags and
+short-slice architectural visibility still need a runtime bridge.
+
+A public test checks delayed Q/P, wrapped flag-ring ordering, sticky Z/S,
+division status, CLIP, VF-only drain, a longer transfer tail and no mutation of
+the source state. All public tests and both diagnostics pass on image
+`16A8B4C85C187B1B9EFB651822A327D1C1110F1651F3E0C6055F6735F9326950`.
+All 22 eligible records match drained time, supported MAC bits, CLIP and supported
+STATUS bits. Nineteen also match both scalar results. Original cases 6/14 and
+spread case 29 retain Q differences of one/two/one ULP respectively. STATUS
+coverage is explicitly limited to mask `0x0e3`, MAC to `0x00ff`; unknown bits are
+not filled from expected output or called compatible. Full-state acceptance
+remains zero.
+
+## Guarded Integration Feasibility
+
+Three sequential comparisons of the existing 32-record sets measured 256 warm
+runs per case, at Normal priority on four logical processors. Baseline image
+`E399C97D...` retains exact replay digests; compiled image `6E00516C...` includes
+the wait/scalar-import fixes but not the later cold-only control report.
+
+| Capture | Round | Baseline all cases ms | Baseline eligible ms | Compiled eligible ms |
+| --- | ---: | ---: | ---: | ---: |
+| Original | 1 | 395.502 | 316.301 | 82.074786 |
+| Original | 2 | 397.280 | 317.560 | 80.261686 |
+| Original | 3 | 399.951 | 321.666 | 79.991086 |
+| Spread | 1 | 167.285 | 83.932 | 24.409492 |
+| Spread | 2 | 169.159 | 84.584 | 24.743192 |
+| Spread | 3 | 169.579 | 84.666 | 24.610292 |
+
+Eligible work accounts for roughly 80%/50% of baseline time in these two bounded
+recordings. Adding compiled eligible time to unchanged fallback time projects
+about 160/109 ms, versus 397/169 ms baseline medians. This is arithmetic on
+separate measurements, not a measured hybrid runtime. Import/export, compilation,
+unknown flags and correctness gaps remain; sampling of the original captures is
+not gameplay workload frequency. No gameplay FPS prediction follows from it.
+
+This supports prioritizing a guarded full-drain integration with the current
+engine handling unsupported cases, while retaining exact short-cycle handling
+as a separate requirement. Both paths must preserve guest-visible state and
+graphics ordering. It does not justify installing the diagnostic unchanged.
+
+Next: build that runtime bridge and validate architectural results,
 memory writes, and packet ordering against the existing private recordings before
 measuring throughput. Those recordings contain mid-program state, not fresh VU
 entry snapshots, so importing their visible registers alone is invalid.

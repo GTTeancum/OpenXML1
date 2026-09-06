@@ -106,6 +106,40 @@ void importScalars(MIPSSTATE &s, const Bytes &state)
     s.pipeP = {0, s.nCOP2P};
 }
 
+struct DrainedControl
+{
+    uint64_t cycle;
+    uint32_t q, p, mac, clip, status;
+    static constexpr uint32_t statusMask = 0xe3;
+    static constexpr uint32_t macMask = 0xff;
+};
+
+DrainedControl drainControl(const MIPSSTATE &s, uint64_t transferEnd)
+{
+    uint64_t end = std::max<uint64_t>(s.pipeTime, transferEnd);
+    end = std::max<uint64_t>(end, std::max(s.pipeQ.counter, s.pipeP.counter));
+    for (const auto *pipe : {&s.pipeMac, &s.pipeSticky, &s.pipeClip})
+        for (const auto ready : pipe->pipeTimes) end = std::max<uint64_t>(end, ready);
+    for (unsigned remaining = 0; remaining < 3; ++remaining)
+        for (const auto mask : s.pipeFmacWrite[remaining].nV)
+            if (mask) end = std::max<uint64_t>(end, uint64_t(s.pipeTime) + remaining + 1);
+    if (end - s.pipeTime > 1048576) throw std::runtime_error("VU drain exceeds diagnostic cycle limit");
+    const auto latest = [&](const FLAG_PIPELINE &pipe, uint32_t mirror) {
+        for (unsigned i = 0; i < FLAG_PIPELINE_SLOTS; ++i)
+        {
+            const auto index = (pipe.index + i) & (FLAG_PIPELINE_SLOTS - 1);
+            if (pipe.pipeTimes[index] <= end) mirror = pipe.values[index];
+        }
+        return mirror;
+    };
+    const uint32_t mac = latest(s.pipeMac, s.nCOP2MF) & DrainedControl::macMask;
+    const uint32_t sticky = latest(s.pipeSticky, s.nCOP2SF);
+    const uint32_t status = ((mac & 0xf) ? 1u : 0u) | ((mac & 0xf0) ? 2u : 0u) |
+        ((sticky & 0xf) ? 0x40u : 0u) | ((sticky & 0xf0) ? 0x80u : 0u) | (s.nCOP2DF ? 0x20u : 0u);
+    return {end, s.pipeQ.heldValue, s.pipeP.heldValue, mac,
+        latest(s.pipeClip, s.nCOP2CF) & 0xffffffu, status};
+}
+
 void importPending(MIPSSTATE &s, const Bytes &state)
 {
     const uint64_t cycle = at(state, 4640, 8);
@@ -216,6 +250,36 @@ unsigned differences(const uint8_t *actual, const Bytes &expected)
 
 bool pendingImportTests()
 {
+    {
+        MIPSSTATE s{};
+        s.pipeTime = 10;
+        s.nCOP2Q = s.nCOP2P = 0;
+        s.pipeQ = {13, 0x3f000000};
+        s.pipeP = {19, 0x3e800000};
+        initializeFlags(s.pipeMac, 0xff);
+        initializeFlags(s.pipeSticky, 0);
+        initializeFlags(s.pipeClip, 0);
+        s.pipeMac.index = s.pipeSticky.index = s.pipeClip.index = 1;
+        s.pipeMac.pipeTimes[0] = 14;
+        s.pipeMac.values[0] = 0x20;
+        s.pipeSticky.pipeTimes[0] = 14;
+        s.pipeSticky.values[0] = 0xff;
+        s.pipeClip.pipeTimes[0] = 12;
+        s.pipeClip.values[0] = 0x123456;
+        s.nCOP2DF = 1;
+        s.pipeFmacWrite[2].nV0 = 0x800;
+        const MIPSSTATE before = s;
+        const auto actual = drainControl(s, 11);
+        const bool passed = actual.cycle == 19 && actual.q == 0x3f000000 && actual.p == 0x3e800000 &&
+            actual.mac == 0x20 && actual.clip == 0x123456 && actual.status == 0xe2 &&
+            !std::memcmp(&before, &s, sizeof(s)) && DrainedControl::statusMask == 0xe3;
+        std::printf("[play-vu:drain-test] passed=%u cycle=%llu status=%03x known-mask=%03x\n",
+            unsigned(passed), static_cast<unsigned long long>(actual.cycle), actual.status, DrainedControl::statusMask);
+        if (!passed) return false;
+        s.pipeQ.counter = s.pipeP.counter = 0;
+        for (auto *pipe : {&s.pipeMac, &s.pipeSticky, &s.pipeClip}) initializeFlags(*pipe, 0);
+        if (drainControl(s, 11).cycle != 13 || drainControl(s, 17).cycle != 17) return false;
+    }
     {
         Bytes scalarState(4682);
         const uint32_t q = 0x3f000000, p = 0x3e800000;
@@ -474,6 +538,17 @@ int replayDiagnostic(const char *path)
         const auto coldPackets = actualPackets;
         const auto coldStreamingPackets = timeline.packets;
         const auto coldCompletionCycles = timeline.completionCycles;
+        const auto drained = drainControl(s, timeline.time);
+        const uint64_t expectedEnd = at(after, 625, 8) - at(before, 625, 8);
+        const auto expectedMac = static_cast<uint32_t>(at(after, 613));
+        const auto expectedStatus = static_cast<uint32_t>(at(after, 621));
+        const bool controlMatches = drained.cycle == expectedEnd && drained.q == at(after, 593) &&
+            drained.p == at(after, 597) && drained.mac == (expectedMac & DrainedControl::macMask) &&
+            drained.clip == at(after, 617) && drained.status == (expectedStatus & DrainedControl::statusMask);
+        std::printf("[play-vu:drained-control] case=%u match=%u cycle=%llu/%llu mac=%04x/%04x "
+            "status=%03x/%03x known-status-mask=%03x full-state-accepted=0\n", current, unsigned(controlMatches),
+            static_cast<unsigned long long>(drained.cycle), static_cast<unsigned long long>(expectedEnd),
+            drained.mac, expectedMac, drained.status, expectedStatus, DrainedControl::statusMask);
         if (!callbackError.empty()) throw std::runtime_error(callbackError);
         if (s.nHasException != MIPS_EXCEPTION_VU_EBIT)
             throw std::runtime_error("Diagnostic did not terminate at E bit");

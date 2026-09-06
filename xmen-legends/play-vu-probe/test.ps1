@@ -43,6 +43,9 @@ try {
     if (!$output.Contains('[play-vu:scalar-import-test] passed=1 vf=3f000000 q=3f000000 p=3e800000')) {
         throw 'Idle scalar pipeline import regression did not pass.'
     }
+    if (!$output.Contains('[play-vu:drain-test] passed=1 cycle=19 status=0e2 known-mask=0e3')) {
+        throw 'Completed control-state drain regression did not pass.'
+    }
     if (([regex]::Matches($output, '\[play-vu:wait-test\] mode=\d+ passed=1')).Count -ne 7) {
         throw 'Compiled XGKICK wait regressions did not pass.'
     }
