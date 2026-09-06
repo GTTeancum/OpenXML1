@@ -19,7 +19,7 @@ The active goal is basic first-level playability on PC: reliable campaign startu
 
 ## Current Status
 
-The performance candidate includes a resident title-bar counter (`X-Men Legends | ... FPS`). It counts fresh game-frame presentations rather than repeated host-window redraws. Automated benchmarks disable input; a controls-enabled handoff for the current performance candidate is still pending.
+The performance candidate includes a resident title-bar counter (`X-Men Legends | ... FPS`). It counts fresh game-frame presentations rather than repeated host-window redraws. Automated benchmarks disable input. On September 6 the same audited candidate reached New York with host controls and compiled VU enabled in the untimed interactive launcher; current-build manual movement/combat confirmation is awaiting user testing.
 
 The latest candidate measured **6.05 FPS** with the opt-in compiled VU engine, versus the preceding candidate's 5.64 FPS observation. These are separate shared-host runs, not a controlled sustained-speed guarantee. The preceding same-executable comparison measured 5.64 FPS compiled on versus 4.77 FPS off. All remain far below the 30 FPS target, not a playable release. Profiling of that preceding build attributes about 47.6% of measured work to VU execution and 36.8% to graphics; CPU rasterization alone averages about 64 ms/frame. Both major costs need further reductions.
 
@@ -170,13 +170,15 @@ Launch the current control-first build through the reversible interactive wrappe
 
 The wrapper selects a staged `ps2EntryRunner.next.exe` when present, bypasses the unfinished startup movies, and restores the retail startup package when the user closes the game. Choose Begin Story normally, or use `TitleGameplayFirst` to invoke the real New Game handler automatically after title initialization. Compiler, recompiler, CMake, and MSBuild work runs at Below Normal priority with one compiler worker. Interactive and guarded runs keep the visible, user-closable runtime at Normal priority, limit it to four logical processors, and discard or bound diagnostics.
 
-To try the opt-in native-block candidate with ordinary controls and no test timer:
+To try the audited performance candidate with compiled VU, ordinary controls and no test timer:
 
 ```powershell
-& .\xmen-legends\run-interactive.ps1 -RuntimeVariant Candidate -StartupMovieMode TitleGameplayFirst
+& .\xmen-legends\run-interactive.ps1 -RuntimeVariant Candidate -StartupMovieMode TitleGameplayFirst -CompiledVu
 ```
 
-For repeatable developer measurements, run `run-gameplay-benchmark.ps1` with `-PhaseProfile -CaptureFrame` for the timing breakdown, or without `-PhaseProfile` for approximate FPS. This wrapper disables host input, verifies the New Game and New York load markers, uses a 1400-vsync stop, restores the startup package, and reuses fixed logs/reports under the build directory. Closing the window ends the run; it is never automatically reopened. Phase-profile timings are not FPS measurements.
+The interactive wrapper removes inherited probe settings, preserves the explicit compiled-VU selection, and records only a small `interactive-session.json` under the runtime build directory. Its readiness marker verifies campaign loading, presentations and compiled execution, not successful manual movement or combat. Closing the game ends the session without restarting it and restores the retail startup package.
+
+For repeatable developer measurements, run `run-gameplay-benchmark.ps1 -CompiledVu` with `-PhaseProfile` for the timing breakdown, or without `-PhaseProfile` for approximate FPS. Add `-CaptureFrame` only when a native framebuffer is needed. This wrapper disables host input, verifies the New Game and New York load markers, uses a 1400-vsync stop, restores the startup package, and reuses fixed logs/reports under the build directory. Closing the window ends the run; it is never automatically reopened. Phase-profile timings are not FPS measurements.
 
 ## Controls
 

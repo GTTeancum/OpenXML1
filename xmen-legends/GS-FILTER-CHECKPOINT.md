@@ -53,4 +53,16 @@ The earlier candidate measured 5.640851 FPS compiled on / 4.765298 off in one
 shared-host pair. The latest 6.05 vs earlier 5.64 observations are not a matched
 same-binary comparison or sustained-speed guarantee. Neither offline kernel
 timing nor an audit establishes the 30 FPS acceptance target. Input remains
-disabled in automated runs, with no controls-enabled handoff yet.
+disabled in automated runs; interactive handoff is tracked separately in the TODO.
+
+## Post-change Profile
+
+At 11:41:43 UTC the same candidate completed its compiled-on phase/raster
+profile, exit 0, zero logged guest faults, all workload gates, 1,400-vsync limit.
+Fifty windows in ticks 1100..1400 cover 51,233.742 ms: exclusive VU 49.16%, GS
+34.22%, guest 8.68%, transfers 5.31%. The 129 raster reports for presents
+1152..1280 average 56.074 ms and 23,423.63 submissions. The preceding build's
+64.159 ms raster observation is not a same-binary controlled comparison.
+Raster cost still exceeds a 33.3 ms total frame budget; VU is also a major
+remaining cost. The profile is not an FPS benchmark. Its process closed and
+startup was restored before the separate user-controlled session was launched.

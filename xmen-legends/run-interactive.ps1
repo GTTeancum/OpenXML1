@@ -14,6 +14,8 @@ param(
 
     [switch]$CompatibilityBranchHooks,
 
+    [switch]$CompiledVu,
+
     [switch]$Diagnostics,
 
     [switch]$WhiteWireframe,
@@ -22,6 +24,25 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+function Update-InteractiveStatus {
+    param([System.Collections.IDictionary]$Status, [string]$Line)
+    if ($Line -match '^\[xmen-new-?game-handler\]') { $Status.NewGameHandler = $true }
+    if ($Line.Contains('path="maps/nyc/alison/nyc1_1_1.igb"')) { $Status.LevelPackage = $true }
+    if ($Line -match '^\[gs:present\] index=(\d+)\b.*\bhas=1\b') { $Status.LastPresent = [long]$Matches[1] }
+    if ($Line -match '^\[vu:compiled\] accepted=(\d+)') { $Status.CompiledCallsLowerBound = [long]$Matches[1] }
+    if ($Line -match '^\[(?:ee-thread:missing-pc|guest-branch:missing-target|vu:compiled-audit-failed|gs:bilinear-audit-failed)\]|^Error during program execution:') {
+        ++$Status.GuestFaultLines
+        if (!$Status.FirstGuestFault) { $Status.FirstGuestFault = $Line.Substring(0, [Math]::Min(1024, $Line.Length)) }
+    }
+    $Status.ReadyForInput = $Status.Running -and $Status.HostInput -and
+        $Status.NewGameHandler -and $Status.LevelPackage -and $Status.LastPresent -ge 1152 -and
+        (!$Status.CompiledVu -or $Status.CompiledCallsLowerBound -gt 0) -and $Status.GuestFaultLines -eq 0
+}
+
+if ($CompiledVu -and $RuntimeVariant -ne 'Candidate') {
+    throw '-CompiledVu requires the audited Candidate runtime.'
+}
 
 $root = Split-Path -Parent $PSScriptRoot
 $disc = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'disc'))
@@ -56,10 +77,18 @@ if ($existingRuntime) {
     throw "A PS2 runtime is already running (PID $($existingRuntime.Id -join ', '))."
 }
 
-& $startupScript -Mode $StartupMovieMode
-
 $process = $null
+$started = $false
+$statusPath = Join-Path $runtimeDirectory 'interactive-session.json'
+$status = [ordered]@{
+    RecordedAtUtc = [DateTime]::UtcNow.ToString('o'); Running = $false; ProcessId = 0
+    Executable = $exe; Sha256 = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
+    HostInput = $true; CompiledVu = [bool]$CompiledVu; CompiledCallsLowerBound = 0L
+    NewGameHandler = $false; LevelPackage = $false; LastPresent = 0L
+    GuestFaultLines = 0; FirstGuestFault = $null; ReadyForInput = $false; ExitCode = $null
+}
 try {
+    & $startupScript -Mode $StartupMovieMode
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $exe
     $startInfo.WorkingDirectory = $disc
@@ -86,6 +115,10 @@ try {
         $startInfo.Environment['PS2X_VU_NATIVE_PAIRS'] = '1'
         $startInfo.Environment['PS2X_VU_NATIVE_BLOCKS'] = '1'
     }
+    if ($CompiledVu) {
+        $startInfo.Environment['PS2X_VU_COMPILED'] = '1'
+        $startInfo.Environment['PS2X_VU_COMPILED_STATS'] = '1'
+    }
     if ($Diagnostics) {
         $startInfo.Environment['PS2X_XMEN_DIAGNOSTICS'] = '1'
         $startInfo.Environment['PS2X_XMEN_PROGRESS_TRACE'] = '1'
@@ -106,13 +139,17 @@ try {
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
-    if (-not $process.Start()) {
+    $started = $process.Start()
+    if (-not $started) {
         throw 'Failed to start ps2EntryRunner.'
     }
 
-    # Drain diagnostic streams without retaining multi-gigabyte probe logs.
-    $process.BeginOutputReadLine()
-    $process.BeginErrorReadLine()
+    # Retain only a small status record, not the unbounded diagnostic stream.
+    $streams = @{ out = $process.StandardOutput; err = $process.StandardError }
+    $tasks = @{}
+    foreach ($key in $streams.Keys) { $tasks[$key] = $streams[$key].ReadLineAsync() }
+    $status.Running = $true
+    $status.ProcessId = $process.Id
     $process.PriorityClass = [System.Diagnostics.ProcessPriorityClass]::Normal
     $process.ProcessorAffinity = [IntPtr]0xF
 
@@ -120,20 +157,44 @@ try {
     'Close the game window normally to end the session and restore the retail startup package.'
     'Keyboard: WASD move, IJKL camera, arrows D-pad, Z/X/C/V face buttons, Enter Start.'
 
-    while (-not $process.WaitForExit(500)) {
-        # Keep the wrapper alive so its finally block restores the disc package.
+    $nextStatus = [DateTime]::MinValue
+    while ($tasks.Count -gt 0 -or !$process.HasExited) {
+        $readAny = $false
+        foreach ($key in @($tasks.Keys)) {
+            for ($count = 0; $count -lt 256 -and $tasks.ContainsKey($key) -and $tasks[$key].IsCompleted; ++$count) {
+                $line = $tasks[$key].GetAwaiter().GetResult()
+                if ($null -eq $line) { $tasks.Remove($key); break }
+                $readAny = $true
+                Update-InteractiveStatus $status $line
+                $tasks[$key] = $streams[$key].ReadLineAsync()
+            }
+        }
+        if ([DateTime]::UtcNow -ge $nextStatus) {
+            $status.RecordedAtUtc = [DateTime]::UtcNow.ToString('o')
+            $status | ConvertTo-Json | Set-Content -LiteralPath $statusPath
+            $nextStatus = [DateTime]::UtcNow.AddSeconds(2)
+        }
+        if (!$readAny) { Start-Sleep -Milliseconds 5 }
     }
+    $process.WaitForExit()
+    $status.ExitCode = $process.ExitCode
     "Runtime exited with code $($process.ExitCode)."
 }
 finally {
     if ($null -ne $process) {
-        $process.Refresh()
-        if (-not $process.HasExited) {
-            $process.Kill()
-            $process.WaitForExit()
+        if ($started) {
+            $process.Refresh()
+            if (-not $process.HasExited) {
+                $process.Kill()
+                $process.WaitForExit()
+            }
         }
         $process.Dispose()
     }
 
-    & $startupScript -Mode Restore
+    $status.Running = $false
+    $status.ReadyForInput = $false
+    $status.RecordedAtUtc = [DateTime]::UtcNow.ToString('o')
+    try { $status | ConvertTo-Json | Set-Content -LiteralPath $statusPath }
+    finally { & $startupScript -Mode Restore }
 }
