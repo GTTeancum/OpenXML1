@@ -4,7 +4,8 @@ param(
     [string]$LogPath,
     [string]$MapPath = (Join-Path $PSScriptRoot '..\PS2Recomp\out\xmen-final3-build\ps2xTest\Release\ps2x_tests.exe.map'),
     [ValidateRange(1, 100)]
-    [int]$Top = 20
+    [int]$Top = 20,
+    [switch]$All
 )
 
 $ErrorActionPreference = 'Stop'
@@ -57,7 +58,7 @@ $rows = @($log | ForEach-Object {
 $total = ($rows | Measure-Object Hits -Sum).Sum
 if ($total -le 0) { throw 'No in-module samples were recorded.' }
 # New execution-only logs exclude snapshot setup/comparison; legacy logs do not.
-$rows | Group-Object Name | ForEach-Object {
+$report = $rows | Group-Object Name | ForEach-Object {
     $hits = ($_.Group | Measure-Object Hits -Sum).Sum
     [pscustomobject]@{
         Hits = $hits
@@ -66,4 +67,6 @@ $rows | Group-Object Name | ForEach-Object {
         Name = $_.Name
         SourceObject = $_.Group[0].SourceObject
     }
-} | Sort-Object Hits -Descending | Select-Object -First $Top
+} | Sort-Object Hits -Descending
+if ($All) { $report }
+else { $report | Select-Object -First $Top }

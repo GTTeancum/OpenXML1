@@ -28,6 +28,11 @@ try {
         $rows[0].Scope -ne 'whole-replay') {
         throw 'Sample address attribution or percentages are incorrect.'
     }
+    $limited = @(& $reporter -MapPath $mapPath -LogPath $logPath -Top 1)
+    $all = @(& $reporter -MapPath $mapPath -LogPath $logPath -Top 1 -All)
+    if ($limited.Count -ne 1 -or $all.Count -ne 2 -or ($all | Measure-Object Hits -Sum).Sum -ne 5) {
+        throw 'All-symbol reporting must preserve every sample instead of applying Top.'
+    }
     [IO.File]::WriteAllText($logPath, $validLog + "`n[vu-sampler:summary] samples=5 execution-only=1 outside=7`n")
     $executionRows = @(& $reporter -MapPath $mapPath -LogPath $logPath)
     if ($executionRows[0].Scope -ne 'warm-execution' -or $executionRows[0].ModulePercent -ne 60) {

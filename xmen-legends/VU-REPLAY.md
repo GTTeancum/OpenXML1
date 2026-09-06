@@ -4,6 +4,82 @@ The bring-up runtime has an opt-in, process-local VU1 recorder. Use it to check
 and time interpreter changes against actual game work without repeating startup.
 This is not a replacement for first-level gameplay validation.
 
+## Direct Deferred Output Rejected
+
+The next experiment redirected compiled upper VF results into their pending
+write slot, avoiding writes to the live VF bank followed by copy/restore.
+Inactive lanes were initialized from the original register. Same-pair lower
+reads retained the old bank, and suppressed lower writes still executed their
+integer/address side effects before the old VF value was restored.
+
+Experimental test image
+`F07212539420F86C670AD955532B41A6C91ECFC271D389908DF157544CD16137`
+passed 136 VU tests and both captures at normal/1/8/16/64-cycle budgets, with
+unchanged cycles, digests, and block coverage. Comparator
+`A66D5E855A30F810A6AB45CC77FBEAB712D70FE69101EB1001A4E51ED523A6D7`
+was the accepted runtime plus the previous aliasing test. Seven alternating
+comparisons per row gave:
+
+| Capture | Repeats | Baseline ms | Experiment ms | Reduction | Wins |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original, first series | 1024 | 3054.288 | 3080.983 | -0.874% | 4/7 |
+| Spread | 2048 | 2233.983 | 2174.451 | 2.665% | 6/7 |
+| Original, repeat | 1024 | 2324.312 | 2362.387 | -1.638% | 2/7 |
+
+The broader recording improved modestly, but the original recording repeatedly
+did not. The optimization was removed rather than integrating a mixed result
+into gameplay. A binary check of two entry wrappers found unchanged primary
+range sizes/call counts; it did not establish the slowdown's cause. No game
+executable contained this experiment. The fixed comparison JSON retains the
+last original-capture series.
+
+Retained coverage adds one public two-pair block at 0x3700 and 112 cases across
+16 inputs and seven initial budgets, each followed through one-cycle snapshots
+and retirement. It checks an old-value SQ paired with ADD.x, followed by FTOI4.y
+and a suppressed LQI reading deliberately different data through another base
+register. The load must increment its base but cannot leak its VF result;
+inactive lanes and integer bit patterns are checked independently. Initial
+same-address test data could have concealed an overwrite, so it was corrected
+before the final experimental verification. There are now 27 total blocks
+(11 public synthetic, unchanged 16 private) and still 67 pair kernels (64 private).
+
+PS2Recomp `de8b54a` retains only the synthetic block and regression test.
+The restored runtime's test image is
+`09BF14A27C3D58AF9ECB9461092ADB2E469BDF78548B595398951D902F9DEE81`.
+All 136 VU tests and both captures at all five budgets pass after restoration.
+
+### Refreshed Execution Profiles
+
+Three execution-only sampled runs per capture, each with 2048 repetitions,
+reuse `execution-profile-original.*` and `execution-profile-spread.*`.
+All runs retain exact results; every image and the current linker map has
+timestamp `0x6a9cdb48`. No dropped samples or capture failures were reported.
+The unsuffixed `execution-profile.*` remains historical and does not match this
+image. Profile timings are instrumented and must not be used as FPS evidence.
+
+`summarize-vu-sampler.ps1 -All` now returns all attributed symbols; its default
+Top behavior is unchanged and both modes are tested. The former top-100 output
+omitted 180 original and 28 spread samples. All-symbol totals now reconcile:
+237 symbols / 952 in-module samples on original, 128 / 386 on spread.
+
+| Symbol family | Original hits / in-module share | Spread hits / in-module share |
+| --- | ---: | ---: |
+| Pipeline queues and retirement | 208 / 21.85% | 112 / 29.02% |
+| Upper/lower instruction helpers | 237 / 24.89% | 87 / 22.54% |
+| FMAC flag helpers | 137 / 14.39% | 53 / 13.73% |
+| Other compiled block code | 247 / 25.95% | 66 / 17.10% |
+| Other VU execution | 102 / 10.71% | 61 / 15.80% |
+| Other | 21 / 2.21% | 7 / 1.81% |
+
+Families group sampled instruction pointers by symbol name and, for opaque
+compiled-block symbols, source object. They are not call-stack/inclusive costs
+or whole-game time shares. Original recorded 1114 execution samples, including
+162 external (14.54%); spread recorded 505, including 119 external (23.56%).
+The sampler counts but does not identify those external addresses. Next close
+that attribution gap with bounded process-local module/RVA reporting before
+choosing another larger execution change. Preserve exact pending state; the
+flag-liveness reference below is not permission to omit sticky flags.
+
 ## Interpreted Operand Reuse Rejected
 
 The September 5 follow-up tested passing `execUpper`'s normalized VF/ACC/Q/I
