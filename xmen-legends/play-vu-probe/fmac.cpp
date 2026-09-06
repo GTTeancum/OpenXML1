@@ -19,14 +19,17 @@ __m128 operands(__m128i bits)
     const auto sign = _mm_and_si128(bits, _mm_set1_epi32(static_cast<int>(0x80000000u)));
     const auto magnitude = _mm_and_si128(bits, _mm_set1_epi32(0x7fffffff));
     const auto small = _mm_cmpgt_epi32(_mm_set1_epi32(0x00800000), magnitude);
-    const auto large = _mm_cmpgt_epi32(magnitude, _mm_set1_epi32(0x7f7fffff));
-    return _mm_castsi128_ps(_mm_blendv_epi8(_mm_blendv_epi8(bits, sign, small),
-        _mm_or_si128(sign, _mm_set1_epi32(0x7f7fffff)), large));
+    const auto clamped = _mm_min_epi32(magnitude, _mm_set1_epi32(0x7f7fffff));
+    return _mm_castsi128_ps(_mm_or_si128(sign, _mm_andnot_si128(small, clamped)));
 }
 
-uint32 reverseLanes(uint32 lanes)
+uint32 packFlags(uint32 z, uint32 s, uint32 u, uint32 o, unsigned dest)
 {
-    return ((lanes & 1) << 3) | ((lanes & 2) << 1) | ((lanes & 4) >> 1) | ((lanes & 8) >> 3);
+    // Reverse lane order in all four flag nibbles together.
+    auto flags = z | (s << 4) | (u << 8) | (o << 12);
+    flags = ((flags & 0x5555u) << 1) | ((flags >> 1) & 0x5555u);
+    flags = ((flags & 0x3333u) << 2) | ((flags >> 2) & 0x3333u);
+    return flags & (dest * 0x1111u);
 }
 
 struct Range
@@ -35,17 +38,18 @@ struct Range
     uint32 flags;
 };
 
-Range classifyVector(__m256d exact, unsigned dest)
+// Keep the vector result in registers instead of returning a large struct through the ABI.
+__forceinline Range classifyVector(__m256d exact, unsigned dest)
 {
     const auto magnitude = _mm256_andnot_pd(_mm256_set1_pd(-0.0), exact);
     const auto small = _mm256_cmp_pd(magnitude, _mm256_set1_pd(std::numeric_limits<float>::min()), _CMP_LT_OQ);
     const auto large = _mm256_cmp_pd(magnitude, _mm256_set1_pd(std::numeric_limits<float>::max()), _CMP_GT_OQ);
     const auto zero = _mm256_cmp_pd(magnitude, _mm256_setzero_pd(), _CMP_EQ_OQ);
-    const uint32 z = reverseLanes(_mm256_movemask_pd(small)) & dest;
-    const uint32 s = reverseLanes(_mm256_movemask_pd(exact)) & dest;
-    const uint32 u = reverseLanes(_mm256_movemask_pd(_mm256_andnot_pd(zero, small))) & dest;
-    const uint32 o = reverseLanes(_mm256_movemask_pd(large)) & dest;
-    return {small, large, z | (s << 4) | (u << 8) | (o << 12)};
+    const uint32 z = _mm256_movemask_pd(small);
+    const uint32 s = _mm256_movemask_pd(exact);
+    const uint32 u = _mm256_movemask_pd(_mm256_andnot_pd(zero, small));
+    const uint32 o = _mm256_movemask_pd(large);
+    return {small, large, packFlags(z, s, u, o, dest)};
 }
 
 __m128i narrowMask(__m256d mask)
@@ -103,7 +107,8 @@ uint32 execute(CMIPS *cpu, uint32 opcode)
     const auto large = narrowMask(range.large);
     const auto saturated = _mm_or_si128(sign, _mm_and_si128(large,_mm_set1_epi32(0x7f7fffff)));
     value = _mm_blendv_ps(value,_mm_castsi128_ps(saturated),_mm_castsi128_ps(_mm_or_si128(narrowMask(range.small),large)));
-    const auto active = _mm_castsi128_ps(_mm_setr_epi32(-int((dest >> 3) & 1),-int((dest >> 2) & 1),-int((dest >> 1) & 1),-int(dest & 1)));
+    const auto laneBits = _mm_setr_epi32(8,4,2,1);
+    const auto active = _mm_castsi128_ps(_mm_cmpeq_epi32(_mm_and_si128(_mm_set1_epi32(dest),laneBits),laneBits));
     const auto old = _mm_loadu_ps(reinterpret_cast<const float *>(&output));
     _mm_storeu_ps(reinterpret_cast<float *>(&output),_mm_blendv_ps(old,value,active));
     return range.flags | (extra << 16);

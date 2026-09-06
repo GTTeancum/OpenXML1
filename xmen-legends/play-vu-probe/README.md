@@ -7,6 +7,57 @@ PS2Recomp state header, but does not link its runtime, read the ISO, create a ga
 window, or enable a replacement engine.
 There is no gameplay FPS claim or interactive handoff yet.
 
+## Arithmetic Throughput Checkpoint
+
+Current image: `2FBC117747FA8D516DD5BAA954B26299B05E8C9C45E624553FF06D31ACE07CD2`.
+The AVX2 FMAC helper now inlines classification, normalizes magnitudes with
+integer min/masks, reverses all four flag nibbles together and constructs the
+write mask with a vector comparison. Disassembly confirms no internal calls
+in the AVX2 arithmetic object. Arithmetic expressions, strict FP settings,
+scalar fallback and timed flag queues are unchanged. The JIT-to-helper call
+still exists; this is not fully inline compiled arithmetic.
+
+Parity coverage now includes 19,584 deterministic edge/random input cases,
+all operation masks, source/destination aliases and VF0 reads/writes. All pass
+against the unchanged scalar implementation, alongside the six independent
+range cases and all prior tests. This proves implementation parity, not full
+hardware fidelity.
+
+The opt-in RSQRT path also emits `numerator / sqrt(abs(radicand))` directly,
+instead of multiplying by a rounded reciprocal. A new regression failed before
+the change: `3 / sqrt(abs(-2))` returned `0xff7fffff`, not `0x4007c3b6`.
+All 256 finite-input/component/sign tests now pass, including the old-Q read at
+cycle 12, new-Q read at 13, and invalid-input flag timing. No new callback is
+needed. Without the FMAC compiler selector, upstream emission remains unchanged.
+The nonzero calculation order is also used in
+[PCSX2's VU interpreter](https://github.com/PCSX2/pcsx2/blob/master/pcsx2/VUops.cpp).
+Zero/denormal/exception semantics are not declared resolved by these tests.
+
+Three-round complete-call measurements, 256 warm repetitions, Normal/F affinity:
+
+| Recording | Prior Helper ms | Current Helper ms | Runtime Eligible ms |
+| --- | ---: | ---: | ---: |
+| Original, round 1 | 125.526986 | 85.372686 | 311.021 |
+| Original, round 2 | 125.765786 | 84.514186 | 303.337 |
+| Original, round 3 | 121.906186 | 83.202486 | 302.587 |
+| Spread, round 1 | 37.790192 | 27.466492 | 79.770 |
+| Spread, round 2 | 37.125892 | 27.362292 | 80.348 |
+| Spread, round 3 | 38.009492 | 27.468792 | 78.203 |
+
+Prior helper image is `B7C7B9BD...`; runtime baseline remains `77E6FDB3...`.
+Before/after series were sequential, not interleaved. Median complete-call time
+drops about 33%/27%; current eligible runtime/compiled ratios are about 3.59x/2.90x.
+The existing timer scope still excludes runtime capture/commit, GS, cold compile
+and returned-output disposal. These are not gameplay FPS measurements.
+
+All 22 eligible recordings retain full MAC/STATUS matches and exact completion
+timing. The three existing Q differences and the spread recording's vertex,
+memory and packet differences remain; the RSQRT fix did not remove those.
+Acceptance masks remain partial and runtime-accepted remains zero. Next trace
+the first differing arithmetic inputs/results, and finish exceptional FMAC and
+VI/store semantics before integrating. No game binary, screenshots, extra
+checkout, push or PR was created. The range prototype below is prior history.
+
 ## FMAC Range Prototype
 
 The detached path now selects host-compiled arithmetic functions for ADD/SUB,

@@ -3,6 +3,61 @@
 #include "TestVm.h"
 #include <cstdio>
 #include <cstring>
+#include <xmmintrin.h>
+
+static bool rsqrtQuotientTests(CompiledVuSession &session)
+{
+    struct Scope {
+        unsigned saved = _mm_getcsr();
+        Scope() { _mm_setcsr((saved & ~0x603fu) | 0x6000u | 0x8040u | 0x1f80u); }
+        ~Scope() { _mm_setcsr(saved); }
+    } scope;
+    unsigned cases = 0;
+    const float inputs[][2] = {{3.0f,2.0f}, {7.0f,3.0f}, {11.0f,5.0f}, {2.0f,0.125f}};
+    for (const auto &input : inputs)
+    for (unsigned signs = 0; signs < 4; ++signs)
+    for (unsigned fsf = 0; fsf < 4; ++fsf)
+    for (unsigned ftf = 0; ftf < 4; ++ftf)
+    {
+        const float numerator = (signs & 1) ? -input[0] : input[0];
+        const float denominator = (signs & 2) ? -input[1] : input[1];
+        const auto quotient = _mm_div_ss(_mm_set_ss(numerator), _mm_sqrt_ss(_mm_set_ss(input[1])));
+        float expected = _mm_cvtss_f32(quotient);
+        uint32_t expectedBits;
+        std::memcpy(&expectedBits, &expected, sizeof(expectedBits));
+        alignas(16) std::array<uint8_t, 16384> code{}, data{};
+        CVuAssembler a(reinterpret_cast<uint32 *>(code.data()));
+        for (unsigned cycle = 0; cycle < 17; ++cycle)
+        {
+            auto upper = CVuAssembler::Upper::NOP(), lower = CVuAssembler::Lower::NOP();
+            if (cycle == 0) lower = 0x800003be | (1u << 11) | (2u << 16) | (fsf << 21) | (ftf << 23);
+            if (cycle == 12 || cycle == 13)
+                upper = CVuAssembler::Upper::MULq(CVuAssembler::DEST_W,
+                    cycle == 12 ? CVuAssembler::VF3 : CVuAssembler::VF4, CVuAssembler::VF0);
+            if (cycle == 13) lower = CVuAssembler::Lower::FSAND(CVuAssembler::VI1, 0xc30);
+            if (cycle == 15) upper |= CVuAssembler::Upper::E_BIT;
+            a.Write(upper, lower);
+        }
+        MIPSSTATE initial{};
+        initial.nDelayedJumpAddr = MIPS_INVALID_PC;
+        initial.nCOP2[0].nV3 = initial.nCOP2Q = initial.pipeQ.heldValue = 0x3f800000;
+        std::memcpy(&initial.nCOP2[1].nV[fsf], &numerator, sizeof(numerator));
+        std::memcpy(&initial.nCOP2[2].nV[ftf], &denominator, sizeof(denominator));
+        const auto result = session.run(code, data, initial, 1048576);
+        if (!result.executed || result.state.nCOP2[3].nV3 != 0x3f800000 ||
+            result.state.nCOP2[4].nV3 != expectedBits || result.state.nCOP2Q != expectedBits ||
+            result.state.nCOP2VI[1] != ((signs & 2) ? 0x410u : 0u))
+        {
+            std::printf("[play-vu:rsqrt-quotient-error] signs=%u fsf=%u ftf=%u before=%08x after=%08x expected=%08x status=%03x reason=%s\n",
+                signs, fsf, ftf, result.state.nCOP2[3].nV3, result.state.nCOP2[4].nV3,
+                expectedBits, result.state.nCOP2VI[1], result.reason.c_str());
+            return false;
+        }
+        ++cases;
+    }
+    std::printf("[play-vu:rsqrt-quotient] passed=1 cases=%u latency=13 components=1 signs=1\n", cases);
+    return true;
+}
 
 static bool stickyResetTests(CompiledVuSession &session)
 {
@@ -99,6 +154,7 @@ bool scalarFlagTests()
         {0x800003be, 0x3f800000, 0x40800000, 0}
     };
     CompiledVuSession session;
+    if (!rsqrtQuotientTests(session)) return false;
     if (!stickyResetTests(session)) return false;
     if (!pairedStatusTests(session)) return false;
     unsigned index = 0;

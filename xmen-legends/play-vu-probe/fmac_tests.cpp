@@ -19,27 +19,30 @@ static bool fmacVectorParity()
     const auto next = [&] { seed = seed * 1664525u + 1013904223u; return seed; };
     CMIPS scalar{MEMORYMAP_ENDIAN_LSBF}, vector{MEMORYMAP_ENDIAN_LSBF};
     unsigned cases = 0;
+    for (unsigned sample = 0; sample < 17; ++sample)
     for (unsigned accumulator = 0; accumulator < 2; ++accumulator)
     for (unsigned function = 0; function < 0x30; ++function)
     for (unsigned mask = 0; mask < 16; ++mask)
     {
         const uint32 base = accumulator ? (0x3c | (function & 3) | ((function & 0x7c) << 4)) : function;
-        const uint32 opcode = base | (mask << 21) | (1u << 11) | (2u << 16) | (accumulator ? 0 : ((mask & 3) << 6));
+        const unsigned fs = sample ? (next() >> 24) % 4 : 1, ft = sample ? (next() >> 24) % 4 : 2;
+        const uint32 opcode = base | (mask << 21) | (fs << 11) | (ft << 16) | (accumulator ? 0 : ((mask & 3) << 6));
         const auto a = selectFmacScalar(opcode), b = selectFmac(opcode);
         if (bool(a) != bool(b)) return false;
         if (!a) continue;
+        const auto word = [&] { return sample ? next() : edges[next() % std::size(edges)]; };
         MIPSSTATE initial{};
-        for (auto &reg : initial.nCOP2) for (auto &word : reg.nV) word = edges[next() % std::size(edges)];
-        for (auto &word : initial.nCOP2A.nV) word = edges[next() % std::size(edges)];
+        for (auto &reg : initial.nCOP2) for (auto &value : reg.nV) value = word();
+        for (auto &value : initial.nCOP2A.nV) value = word();
         initial.nCOP2[0] = {};
         initial.nCOP2[0].nV3 = 0x3f800000;
-        initial.nCOP2Q = edges[next() % std::size(edges)];
-        initial.nCOP2I = edges[next() % std::size(edges)];
+        initial.nCOP2Q = word();
+        initial.nCOP2I = word();
         scalar.m_State = vector.m_State = initial;
         const auto left = a(&scalar,opcode), right = b(&vector,opcode);
         if (left != right || std::memcmp(&scalar.m_State,&vector.m_State,sizeof(initial)))
         {
-            std::printf("[play-vu:fmac-parity-error] opcode=%08x scalar=%08x vector=%08x\n",opcode,left,right);
+            std::printf("[play-vu:fmac-parity-error] sample=%u opcode=%08x scalar=%08x vector=%08x\n",sample,opcode,left,right);
             return false;
         }
         ++cases;

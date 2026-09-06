@@ -53,6 +53,7 @@ try {
         throw 'Typed runtime bridge regressions did not pass.'
     }
     if (([regex]::Matches($output, '\[play-vu:scalar-flags\] case=\d+ passed=1')).Count -ne 13 -or
+        !$output.Contains('[play-vu:rsqrt-quotient] passed=1 cases=256 latency=13 components=1 signs=1') -or
         !$output.Contains('[play-vu:scalar-flag-contracts] passed=1 same-cycle-order=1 pending-tail=1 late-budget-rejection=1')) {
         throw 'Timed scalar flag regressions did not pass.'
     }
@@ -64,7 +65,7 @@ try {
         throw 'Independent MAC/STATUS regressions did not pass.'
     }
     if (([regex]::Matches($output, '\[play-vu:fmac-range\] case=\d+ passed=1')).Count -ne 6 -or
-        !$output.Contains('[play-vu:fmac-parity] passed=1 cases=1152')) {
+        !$output.Contains('[play-vu:fmac-parity] passed=1 cases=19584')) {
         throw 'FMAC range/result regressions did not pass.'
     }
     if (([regex]::Matches($output, '\[play-vu:wait-test\] mode=\d+ passed=1')).Count -ne 7) {

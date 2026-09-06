@@ -19,7 +19,7 @@ index fc28a8f..6080dcc 100644
  	CMIPSArchitecture* m_pArch = nullptr;
  	CMIPSCoprocessor* m_pCOP[4];
 diff --git a/Source/ee/MA_VU_Lower.cpp b/Source/ee/MA_VU_Lower.cpp
-index 62b3f2c..1218425 100644
+index 62b3f2c..d23169a 100644
 --- a/Source/ee/MA_VU_Lower.cpp
 +++ b/Source/ee/MA_VU_Lower.cpp
 @@ -18,6 +18,28 @@
@@ -116,10 +116,12 @@ index 62b3f2c..1218425 100644
  }
  
  //0F
-@@ -854,6 +902,7 @@ void CMA_VU::CLower::LQD()
+@@ -853,7 +901,8 @@ void CMA_VU::CLower::LQD()
+ //0E
  void CMA_VU::CLower::RSQRT()
  {
- 	VUShared::RSQRT(m_codeGen, m_nIS, m_nFSF, m_nIT, m_nFTF, m_relativePipeTime);
+-	VUShared::RSQRT(m_codeGen, m_nIS, m_nFSF, m_nIT, m_nFTF, m_relativePipeTime);
++	VUShared::RSQRT(m_codeGen, m_nIS, m_nFSF, m_nIT, m_nFTF, m_relativePipeTime, bool(m_pCtx->m_vuFmacCompiler));
 +	if(m_pCtx->m_vuStatusObserver) EmitVuStatus(m_codeGen, m_nOpcode, m_relativePipeTime);
  }
  
@@ -148,7 +150,7 @@ index 7200729..cc53e3c 100644
  	auto setTDBitException = [&](uint32 exceptionValue) {
  		//Only set TD bit exception if there's no other outstanding
 diff --git a/Source/ee/VUShared.cpp b/Source/ee/VUShared.cpp
-index 52360eb..d353202 100644
+index 52360eb..273b2d7 100644
 --- a/Source/ee/VUShared.cpp
 +++ b/Source/ee/VUShared.cpp
 @@ -264,9 +264,29 @@ void VUShared::TestSZFlags(CMipsJitter* codeGen, uint8 dest, size_t regOffset, u
@@ -260,8 +262,37 @@ index 52360eb..d353202 100644
  }
  
  void VUShared::SetStatus(CMipsJitter* codeGen, size_t srcOffset)
+@@ -1584,7 +1632,7 @@ void VUShared::RNEXT(CMipsJitter* codeGen, uint8 dest, uint8 ft)
+ 	RGET(codeGen, dest, ft);
+ }
+ 
+-void VUShared::RSQRT(CMipsJitter* codeGen, uint8 nFs, uint8 nFsf, uint8 nFt, uint8 nFtf, uint32 relativePipeTime)
++void VUShared::RSQRT(CMipsJitter* codeGen, uint8 nFs, uint8 nFsf, uint8 nFt, uint8 nFtf, uint32 relativePipeTime, bool directQuotient)
+ {
+ 	size_t destination = g_pipeInfoQ.heldValue;
+ 	QueueInPipeline(g_pipeInfoQ, codeGen, LATENCY_RSQRT, relativePipeTime);
+@@ -1605,8 +1653,17 @@ void VUShared::RSQRT(CMipsJitter* codeGen, uint8 nFs, uint8 nFsf, uint8 nFt, uin
+ 	{
+ 		codeGen->FP_PushRel32(GetVectorElement(nFs, nFsf));
+ 		codeGen->FP_PushRel32(GetVectorElement(nFt, nFtf));
+-		codeGen->FP_RsqrtS();
+-		codeGen->FP_MulS();
++		if(directQuotient)
++		{
++			codeGen->FP_AbsS();
++			codeGen->FP_SqrtS();
++			codeGen->FP_DivS();
++		}
++		else
++		{
++			codeGen->FP_RsqrtS();
++			codeGen->FP_MulS();
++		}
+ 		codeGen->FP_PullRel32(destination);
+ 
+ 		codeGen->PushCst(0);
 diff --git a/Source/ee/VUShared.h b/Source/ee/VUShared.h
-index a2991f1..bdb931a 100644
+index a2991f1..d6265ef 100644
 --- a/Source/ee/VUShared.h
 +++ b/Source/ee/VUShared.h
 @@ -98,6 +98,8 @@ namespace VUShared
@@ -284,6 +315,15 @@ index a2991f1..bdb931a 100644
  	void SetStatus(CMipsJitter*, size_t);
  
  	void ADD_base(CMipsJitter*, uint8, size_t, size_t, size_t, bool, uint32, uint32);
+@@ -215,7 +218,7 @@ namespace VUShared
+ 	void RINIT(CMipsJitter*, uint8, uint8);
+ 	void RGET(CMipsJitter*, uint8, uint8);
+ 	void RNEXT(CMipsJitter*, uint8, uint8);
+-	void RSQRT(CMipsJitter*, uint8, uint8, uint8, uint8, uint32);
++	void RSQRT(CMipsJitter*, uint8, uint8, uint8, uint8, uint32, bool directQuotient = false);
+ 	void RXOR(CMipsJitter*, uint8, uint8);
+ 	void SQbase(CMipsJitter*, uint8, uint8);
+ 	void SQD(CMipsJitter*, uint8, uint8, uint8, uint32);
 diff --git a/Source/ee/VuBasicBlock.cpp b/Source/ee/VuBasicBlock.cpp
 index a1ca3ca..c0da016 100644
 --- a/Source/ee/VuBasicBlock.cpp
