@@ -4,6 +4,32 @@ The bring-up runtime has an opt-in, process-local VU1 recorder. Use it to check
 and time interpreter changes against actual game work without repeating startup.
 This is not a replacement for first-level gameplay validation.
 
+## Pending Native Store Optimization
+
+The latest test build is a checkpoint, not an accepted gameplay integration.
+SHA-256 `E9F3850029A44174E1075B8F31B61748230FF98E21073FC41D950909BCA8E711`
+passes 144/144 VU tests, both private recordings at normal/1/8/16/64-cycle
+budgets, and `tests/test-vu-native-store-trace.ps1` in both filter modes.
+Recordings retain their exact cycles, digests and coverage. Regression `983d723`
+exercises five store forms, all masks, wrapping bases, upper/source overlap,
+short execution slices and simultaneous PATH1 reads.
+
+Only guarded compiled blocks with empty incoming store queues write directly
+to VU memory. No memory reader intervenes before the original pair boundary;
+PATH1 still progresses after retirement. Individual native pairs, interpreted
+instructions and targeted store tracing keep the queued path. Full-mask stores
+use a 16-byte copy, while masked stores preserve untouched lanes.
+
+The earlier scalar-write candidate `9AF11E51...` measured original medians
+1656.766 / 1588.925 ms (4.095% lower, 7/7 paired wins), and spread medians
+1361.817 / 1333.030 ms (2.114% lower, 6/7). These are not measurements of the
+final full-width-copy refinement. Repeat both seven-round comparisons against
+`ps2x_tests.flag-pack-base.exe`, SHA-256
+`4D876140E14717E5E2A8D20E99B752BEFBB5C4DB8338F93C253FAA7DF5FF5022`,
+before accepting this change. The game candidate is still `BF9DED00...` below.
+The fixed execution profiles remain tied to the older `784D74F1...` image;
+their addresses must not be interpreted with the current link map.
+
 ## Packed Result Normalization
 
 `1395fb9` widens and classifies all four lanes together for native ADD/SUB/MUL
