@@ -1,7 +1,11 @@
+param([switch]$Offscreen)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $build = Join-Path $root '.tools/Play-VU/out/vu-probe/play-gs-probe'
-$exe = (Resolve-Path -LiteralPath (Join-Path $build 'Release/play_gs_capabilities.exe')).Path
+$target = if ($Offscreen) { 'play_gs_offscreen' } else { 'play_gs_capabilities' }
+$logName = if ($Offscreen) { 'offscreen.log' } else { 'capabilities.log' }
+$marker = if ($Offscreen) { '\[gs-gpu:offscreen\] matched=20480 cases=5 rendering-tested=1 windows=0' } else { '\[gs-gpu:capabilities\].*rendering-tested=0 windows=0' }
+$exe = (Resolve-Path -LiteralPath (Join-Path $build "Release/$target.exe")).Path
 $si = [Diagnostics.ProcessStartInfo]::new($exe)
 $si.WorkingDirectory = $build
 $si.UseShellExecute = $false
@@ -23,10 +27,10 @@ try {
     $errors = $stderr.GetAwaiter().GetResult()
     $identity = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
     $log = "SHA=$identity`n$output`n$errors"
-    $log | Set-Content -LiteralPath (Join-Path $build 'capabilities.log')
+    $log | Set-Content -LiteralPath (Join-Path $build $logName)
     $log
-    if ($process.ExitCode -ne 0 -or $output -notmatch '\[gs-gpu:capabilities\].*rendering-tested=0 windows=0') {
-        throw 'GPU capability query failed; rendering support remains unverified.'
+    if ($process.ExitCode -ne 0 -or $output -notmatch $marker) {
+        throw "GPU check $target failed; exit=$($process.ExitCode)."
     }
 } finally {
     if ($started -and !$process.HasExited) { $process.Kill(); $process.WaitForExit() }

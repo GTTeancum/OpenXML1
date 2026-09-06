@@ -99,7 +99,7 @@ target_link_libraries(play_vu_probe PRIVATE play_vu_runtime_bridge)
 enable_testing()
 add_test(NAME play_vu_upstream COMMAND play_vu_probe)
 
-option(OPENXML1_BUILD_GS_PROBE "Build isolated headless GPU capability checks" OFF)
+option(OPENXML1_BUILD_GS_PROBE "Build isolated headless GPU capability and rendering checks" OFF)
 if(OPENXML1_BUILD_GS_PROBE)
     add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../play-gs-probe" play-gs-probe)
 endif()
