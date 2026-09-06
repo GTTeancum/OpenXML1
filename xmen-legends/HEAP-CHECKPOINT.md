@@ -4,6 +4,70 @@ September 6, 2026. Work is local only; no pushes or PRs. Movement was confirmed
 by the user on an earlier build; attacking was not tested there. The performance
 target remains 30 FPS. No result below is an interactive handoff.
 
+## Command Recording And Tail Join (18:51 UTC)
+
+Local runtime commit `8520160` adds a bounded active call chain (maximum 12
+entries, entry a0/a1 captured before nested calls) and repairs contiguous-space
+handling. If the ordinary free-list and bump routes cannot satisfy a request,
+the allocator can now join a free block ending exactly at the frontier with
+the untouched tail. It preserves alignment prefixes, tracks the full requested
+size, clears the returned storage and never crosses `0x01800000`. This is not
+a heap expansion or a new placement-policy switch. Existing successful routes
+are unchanged; the new route is reached only before an otherwise failed request.
+
+Test image `E5A6FAAABDA1B315D7F23243A1A4F7AD1260422FA716A5B213D321D1D9089FCD`
+passes 35 fresh-process checks both with and without diagnostics (70 total).
+The new case requires a 256-byte-aligned allocation larger than either adjacent
+free range, checks neighboring live data and the native boundary, reuses the
+alignment prefix, and still rejects an oversized remaining request. Nested
+failure attribution is asserted in normal/fast dispatch modes. Benchmark gate
+tests also pass. The fixed heap test log currently holds diagnostics OFF;
+the preceding ON run passed in terminal output.
+
+Before the join fix, diagnostic candidate
+`FE9F7F7BE004BC2D2BD162525676E95F01472AF1268A0E7D465211C06AC41EED`
+confirmed this active chain at the original failure:
+
+```text
+0x2b9484 -> 0x2b7b60
+0x2b7c60 -> 0x2744b0
+0x274510 -> 0x273a80
+0x273aec -> 0x2dd120
+0x2dd20c -> 0x248040  a0=0x8000 a1=12
+0x248068 -> 0x231ed0  a0=0x898ef0 a1=0x8000
+```
+
+This proves command-list initialization, not the `0x2dd510` growth site.
+Retail `0x2dd2a0` finalizes the list: at `0x2dd440..0x2dd450` it computes
+used bytes (end minus buffer base) and reallocates through `0x248090`; it
+repairs the previous link when the buffer moves. `0x2ddc00` recursively
+releases list buffers through `0x248080` (tail jump to public free `0x200f40`).
+Category-12 singleton `0x7472a0` is assigned by `0x20caf0`, called from
+`0x273ab4/0x273b78` when renderer field `+0x3ac` is nonzero. A matching release
+routine exists; this is NOT proof that all live buffers are leaks.
+
+Current candidate
+`5EA2B9EE6EDEECE2B4D463968C61C4776346960F6E1C439B38DF8CC790828A85`
+still fails a 32 KiB initialization after joining available tail space:
+frontier 25,164,752; tail 1,072; free 1,582,080; largest hole 32,560;
+live allocations 53,360 (previously 53,331). This fixes a real capacity defect,
+but only advances allocation slightly; it does not resolve fragmentation.
+The bounded runner stopped on failure, drained 12 failure lines, and restored
+startup. New Game/NYC were reached; zero guest faults/compiled mismatches were
+reported before the stop. Neither the complete arithmetic audit nor gameplay
+workload passed, and no FPS is reported. Two automated runs this turn total,
+no input or images, all owned processes ended. Current fixed in-place audit
+logs contain this last candidate, not the earlier candidates described below.
+
+NEXT: inspect the command-list allocate/shrink/release lifetimes and actual
+ownership of native versus compatibility pools. A bounded allocation-event
+trace suitable for offline replay could distinguish placement waste from live
+memory pressure without repeated full-game policy probes. Do not enlarge the
+arena, compact live guest objects, or skip failures without ownership evidence.
+The default moving-realloc failure is not retested by this in-place run.
+30 FPS and healthy first-level gameplay remain unmet; main VU execution cost
+still needs substantial work once a valid workload can be measured.
+
 ## Failure Attribution (18:30 UTC)
 
 Runtime and test changes are checkpointed locally in PS2Recomp commit `b4c0043`.

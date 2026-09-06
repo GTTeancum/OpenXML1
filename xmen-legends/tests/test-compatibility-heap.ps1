@@ -13,7 +13,8 @@ $cases = @(
         foreach ($bestFit in @($false, $true)) {
             foreach ($inPlace in @($false, $true)) {
                 foreach ($filter in @('public allocator dispatch',
-                    'reallocation preserves ownership', 'best fit preserves a large')) {
+                    'reallocation preserves ownership', 'best fit preserves a large',
+                    'free frontier joins untouched tail')) {
                     [pscustomobject]@{ Fast = $fast; BestFit = $bestFit; InPlace = $inPlace; Filter = $filter }
                 }
             }
@@ -63,11 +64,16 @@ foreach ($case in $cases) {
             $stderr.Result -notmatch '\[heap:failed-call\] source=0x800000 target=0x200e10\b') {
             throw "Heap failure attribution missing: $label"
         }
-        if (!$Diagnostics -and $stderr.Result -match '\[heap:(failed-call|live-size)\]') {
+        if ($Diagnostics -and $case.Filter -eq 'public allocator dispatch' -and
+            $stderr.Result -notmatch '\[heap:call-chain\] depth=1 source=0x800200 target=0x800100\b') {
+            throw 'Missing nested allocation caller attribution'
+        }
+        if (!$Diagnostics -and $stderr.Result -match '\[heap:(failed-call|live-size|call-chain)\]') {
             throw 'Disabled failure attribution emitted diagnostic records.'
         }
         if ([regex]::Matches($stderr.Result, '\[heap:live-size\]').Count -gt 16 -or
-            [regex]::Matches($stderr.Result, '\[heap:failed-call\]').Count -gt 1) {
+            [regex]::Matches($stderr.Result, '\[heap:failed-call\]').Count -gt 1 -or
+            [regex]::Matches($stderr.Result, '\[heap:call-chain\]').Count -gt 12) {
             throw 'Heap failure attribution exceeded its output bound.'
         }
         "PASS $label"
