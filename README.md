@@ -19,7 +19,7 @@ The active goal is basic first-level playability on PC: reliable campaign startu
 
 ## Current Status
 
-The performance candidate includes a resident title-bar counter (`X-Men Legends | ... FPS`). It counts fresh game-frame presentations rather than repeated host-window redraws. Automated benchmarks disable input. On September 6 the same audited candidate reached New York with host controls and compiled VU enabled in the untimed interactive launcher; current-build manual movement/combat confirmation is awaiting user testing.
+The performance candidate includes a resident title-bar counter (`X-Men Legends | ... FPS`). It counts fresh game-frame presentations rather than repeated host-window redraws. Automated benchmarks disable input. On September 6 the user confirmed movement with host controls and compiled VU enabled on the current candidate; combat was not tested on this build. The user's observed roughly 5 FPS remains unusable, despite movement working.
 
 The latest candidate measured **6.05 FPS** with the opt-in compiled VU engine, versus the preceding candidate's 5.64 FPS observation. These are separate shared-host runs, not a controlled sustained-speed guarantee. The preceding same-executable comparison measured 5.64 FPS compiled on versus 4.77 FPS off. All remain far below the 30 FPS target, not a playable release. Profiling of that preceding build attributes about 47.6% of measured work to VU execution and 36.8% to graphics; CPU rasterization alone averages about 64 ms/frame. Both major costs need further reductions.
 
