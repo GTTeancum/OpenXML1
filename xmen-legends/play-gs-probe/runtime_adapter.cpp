@@ -1,10 +1,12 @@
 #include "runtime_adapter.h"
 #include "renderer_bridge.h"
+#include "runtime/runtime_profile.h"
 #include <bit>
 #include <mutex>
 #include <stdexcept>
 #include <cstring>
 #include <cmath>
+#include <cstdio>
 
 namespace
 {
@@ -61,6 +63,7 @@ namespace
         void Reset() override
         {
             std::lock_guard lock(mutex);
+            if(!renderer) { cpu->Reset(); valid.fill(false); return; }
             SnapshotUnlocked();
             renderer->Reset();
             renderer->Import(vram);
@@ -69,6 +72,7 @@ namespace
         }
         void Submit(const GSPrimitiveBatch& batch) override
         {
+            RuntimeProfile::Scope profile(RuntimeProfile::Phase::Gs);
             std::lock_guard lock(mutex);
             const auto& s = batch.state;
             const auto& c = s.context;
@@ -129,9 +133,11 @@ namespace
             renderer->Write(regs.data(), regs.size());
             ++counters.submits;
             ++counters.primitiveSubmits[p.type];
+            if(counters.submits == 1) std::fprintf(stderr, "[gs:play-vulkan] active=1\n");
         }
         void LoadClut(const GSTex0Reg& tex0, const GSTexClutReg& texclut) override
         {
+            RuntimeProfile::Scope profile(RuntimeProfile::Phase::Gs);
             std::lock_guard lock(mutex);
             const PlayGs::Register regs[] = {{GS_REG_TEXCLUT, TexClut(texclut)}, {GS_REG_TEX0_1, Tex0(tex0, true)}};
             renderer->Write(regs, 2);
@@ -139,6 +145,7 @@ namespace
         }
         void BeginTransfer(const GSTransferCommand& t) override
         {
+            RuntimeProfile::Scope profile(RuntimeProfile::Phase::Gs);
             std::lock_guard lock(mutex);
             if(t.direction == 1) SnapshotUnlocked();
             cpu->BeginTransfer(t);
@@ -157,13 +164,20 @@ namespace
         }
         void UploadImage(const uint8_t* data, uint32_t bytes) override
         {
+            RuntimeProfile::Scope profile(RuntimeProfile::Phase::Gs);
             std::lock_guard lock(mutex);
             cpu->UploadImage(data, bytes);
             renderer->Upload(data, bytes);
         }
-        void Flush() override { std::lock_guard lock(mutex); renderer->Flush(); }
+        void Flush() override
+        {
+            RuntimeProfile::Scope profile(RuntimeProfile::Phase::Gs);
+            std::lock_guard lock(mutex);
+            if(renderer) renderer->Flush();
+        }
         void TextureFlush() override
         {
+            RuntimeProfile::Scope profile(RuntimeProfile::Phase::Gs);
             std::lock_guard lock(mutex);
             const PlayGs::Register reg{GS_REG_TEXFLUSH, 0};
             renderer->Write(&reg, 1);
@@ -171,14 +185,25 @@ namespace
         void Sync(GSSyncReason) override { Flush(); }
         PresentationFrame Present(const GSPresentationRequest& request) override
         {
+            RuntimeProfile::Scope profile(RuntimeProfile::Phase::Gs);
             std::lock_guard lock(mutex);
             SnapshotUnlocked();
             auto frame = cpu->Present(request);
             ++counters.presents;
+            const auto display = cpu->GetDebugCounters();
+            counters.lastPresentNonblackPixels = display.lastPresentNonblackPixels;
+            counters.lastDisplayFbp = display.lastDisplayFbp;
+            counters.lastSourceFbp = display.lastSourceFbp;
+            if(counters.presents == 1 || (counters.presents % 128) == 0)
+                std::fprintf(stderr, "[gs:play-vulkan-present] presents=%llu submits=%llu nonblack=%llu\n",
+                    static_cast<unsigned long long>(counters.presents),
+                    static_cast<unsigned long long>(counters.submits),
+                    static_cast<unsigned long long>(counters.lastPresentNonblackPixels));
             return frame;
         }
         bool ClearFramebuffer(const GSContext& context, uint32_t rgba) override
         {
+            RuntimeProfile::Scope profile(RuntimeProfile::Phase::Gs);
             std::lock_guard lock(mutex);
             SnapshotUnlocked();
             const bool result = cpu->ClearFramebuffer(context, rgba);
@@ -192,12 +217,14 @@ namespace
         }
         uint32_t ReadVram(uint32_t psm, uint32_t base, uint32_t bw, uint32_t x, uint32_t y) const override
         {
+            RuntimeProfile::Scope profile(RuntimeProfile::Phase::Gs);
             std::lock_guard lock(mutex);
             SnapshotUnlocked();
             return cpu->ReadVram(psm, base, bw, x, y);
         }
         void WriteVram(uint32_t psm, uint32_t base, uint32_t bw, uint32_t x, uint32_t y, uint32_t value) override
         {
+            RuntimeProfile::Scope profile(RuntimeProfile::Phase::Gs);
             std::lock_guard lock(mutex);
             SnapshotUnlocked();
             cpu->WriteVram(psm, base, bw, x, y, value);
@@ -205,6 +232,7 @@ namespace
         }
         void SnapshotVram(std::vector<uint8_t>& out) const override
         {
+            RuntimeProfile::Scope profile(RuntimeProfile::Phase::Gs);
             std::lock_guard lock(mutex);
             out.resize(RamSize);
             renderer->Snapshot(out.data());

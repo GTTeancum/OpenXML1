@@ -11,6 +11,8 @@ int main(int argc, char** argv)
     {
         std::vector<uint8_t> gpuRam(4 * 1024 * 1024), cpuRam(gpuRam.size());
         auto gpu = MakePlayGsBackend(std::make_unique<GSCpuBackend>());
+        gpu->Reset();
+        gpu->Flush();
         GSCpuBackend cpu;
         gpu->Initialize(gpuRam.data(), uint32_t(gpuRam.size()));
         cpu.Initialize(cpuRam.data(), uint32_t(cpuRam.size()));

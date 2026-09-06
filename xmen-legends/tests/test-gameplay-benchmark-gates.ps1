@@ -33,7 +33,24 @@ $preparedTextureActive = $false
 $preparedTextureSamples = 0L
 $bilinearSamples = 0L
 $compiledCalls = 0L
+$VulkanGs = $false
+$vulkanActive = $false
+$vulkanPresents = 0L
+$vulkanSubmits = 0L
+$vulkanNonblack = 0L
 if (!(& $check)) { throw 'Healthy workload rejected.' }
+$VulkanGs = $true
+if (& $check) { throw 'GPU mode accepted without execution evidence.' }
+$vulkanActive = $true
+if (& $check) { throw 'GPU mode accepted without gameplay presentations.' }
+$vulkanPresents = 1280L
+$vulkanSubmits = 1L
+$vulkanNonblack = 1L
+if (!(& $check)) { throw 'Executed GPU workload rejected.' }
+$vulkanNonblack = 0L
+if (& $check) { throw 'Black GPU workload accepted.' }
+$vulkanNonblack = 1L
+$VulkanGs = $false
 $CompiledVu = $true
 if (& $check) { throw 'Requested compiled engine was accepted without execution evidence.' }
 $compiledCalls = 1L

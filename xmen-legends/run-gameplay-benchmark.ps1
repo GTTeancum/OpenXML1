@@ -10,6 +10,7 @@ param(
     [switch]$AuditBilinear,
     [switch]$PreparedTexture,
     [switch]$AuditPreparedTexture,
+    [switch]$VulkanGs,
     [ValidateRange(30, 1800)]
     [int]$TimeoutSeconds = 600
 )
@@ -50,6 +51,12 @@ try {
 } finally { $archive.Dispose() }
 
 $stem = if ($AuditPreparedTexture) { 'gameplay-texture-audit' } elseif ($AuditCompiledVu) { 'gameplay-compiled-audit' } elseif ($AuditBilinear) { 'gameplay-filter-audit' } elseif ($PhaseProfile -or $CoverageProfile -or $CpuRasterProfile) { 'gameplay-phase' } elseif ($PreparedTexture) { 'gameplay-texture-rate' } elseif ($CompiledVu) { 'gameplay-compiled-rate' } else { 'gameplay-rate' }
+if ($VulkanGs) {
+    if ($PreparedTexture -or $AuditPreparedTexture -or $AuditBilinear -or $CpuRasterProfile) {
+        throw 'VulkanGs cannot be combined with CPU raster/sampler diagnostics.'
+    }
+    $stem = if ($AuditCompiledVu) { 'gameplay-vulkan-audit' } elseif ($PhaseProfile -or $CoverageProfile) { 'gameplay-vulkan-phase' } else { 'gameplay-vulkan-rate' }
+}
 $outLog = Join-Path $build "$stem.out.log"
 $errLog = Join-Path $build "$stem.err.log"
 $start = [Diagnostics.ProcessStartInfo]::new($exe)
@@ -70,6 +77,7 @@ foreach ($key in @('PS2X_DISABLE_HOST_INPUT', 'PS2X_XMEN_HOST_CLOCK',
     $start.Environment[$key] = '1'
 }
 $start.Environment['PS2X_RUN_VSYNC_LIMIT'] = '1400'
+if ($VulkanGs) { $start.Environment['PS2X_GS_PLAY_VULKAN'] = '1' }
 if ($AuditCompiledVu -and !$CompiledVu) { throw 'AuditCompiledVu requires CompiledVu' }
 if ($AuditPreparedTexture -and !$PreparedTexture) { throw 'AuditPreparedTexture requires PreparedTexture' }
 if ($PreparedTexture) { $start.Environment['PS2X_GS_PREPARED_TEXTURE'] = '1' }
@@ -99,6 +107,10 @@ $compiledCalls = 0L
 $bilinearSamples = 0L
 $preparedTextureActive = $false
 $preparedTextureSamples = 0L
+$vulkanActive = $false
+$vulkanPresents = 0L
+$vulkanSubmits = 0L
+$vulkanNonblack = 0L
 $reachedLimit = $false
 $newGameHandler = $false
 $levelPackage = $false
@@ -143,6 +155,12 @@ try {
                 if ($line -match '^\[vu:compiled\] accepted=(\d+)') { $compiledCalls = [long]$Matches[1] }
                 if ($line -match '^\[gs:bilinear-audit\] samples=(\d+) mismatches=0') { $bilinearSamples = [long]$Matches[1] }
                 if ($line -eq '[gs:prepared-texture] active=1') { $preparedTextureActive = $true }
+                if ($line -eq '[gs:play-vulkan] active=1') { $vulkanActive = $true }
+                if ($line -match '^\[gs:play-vulkan-present\] presents=(\d+) submits=(\d+) nonblack=(\d+)') {
+                    $vulkanPresents = [long]$Matches[1]
+                    $vulkanSubmits = [long]$Matches[2]
+                    $vulkanNonblack = [long]$Matches[3]
+                }
                 if ($line -match '^\[gs:prepared-texture-audit\] samples=(\d+) mismatches=0') { $preparedTextureSamples = [long]$Matches[1] }
                 if ($line -match '^\[xmen-new-?game-handler\]') { $newGameHandler = $true }
                 if ($line.Contains('path="maps/nyc/alison/nyc1_1_1.igb"')) { $levelPackage = $true }
@@ -176,6 +194,7 @@ try {
         & (Join-Path $PSScriptRoot 'summarize-vu-coverage.ps1') -LogPath $errLog -RequireGameplaySpan
     } else { $null }
     $completed = $process.ExitCode -eq 0 -and $guestFaultLines -eq 0 -and
+        (!$VulkanGs -or ($vulkanActive -and $vulkanPresents -ge 1152 -and $vulkanSubmits -gt 0 -and $vulkanNonblack -gt 0)) -and
         (!$CompiledVu -or $compiledCalls -gt 0) -and
         (!$AuditBilinear -or $bilinearSamples -gt 0) -and
         (!$PreparedTexture -or $preparedTextureActive) -and
@@ -190,6 +209,8 @@ try {
         CoverageProfile = [bool]$CoverageProfile
         CpuRasterProfile = [bool]$CpuRasterProfile
         CompiledVu = [bool]$CompiledVu; CompiledCallsLowerBound = $compiledCalls
+        VulkanGs = [bool]$VulkanGs; VulkanActive = $vulkanActive
+        VulkanPresents = $vulkanPresents; VulkanSubmits = $vulkanSubmits; VulkanNonblack = $vulkanNonblack
         AuditCompiledVu = [bool]$AuditCompiledVu
         AuditBilinear = [bool]$AuditBilinear; BilinearSamplesLowerBound = $bilinearSamples
         PreparedTexture = [bool]$PreparedTexture; PreparedTextureActive = $preparedTextureActive

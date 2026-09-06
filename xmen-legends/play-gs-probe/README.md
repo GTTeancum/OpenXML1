@@ -3,20 +3,118 @@
 These isolated tools query GPU capabilities and test actual GPU drawing through
 the pinned Play Vulkan offscreen renderer. They do not render the game, open a
 window, or send interactive input. The rendering test creates a logical device
-and shaders but no presentation surface. No GPU backend has been integrated into
-PS2Recomp yet. Reuse the existing Play VU build tree.
+and shaders but no presentation surface. An opt-in runtime adapter now connects
+this renderer to PS2Recomp. Reuse the existing Play VU build tree.
 
-The runtime adapter is now implemented and tested in isolation through the
-actual `GSRasterBackend` interface. It is not selected by a game executable yet.
+The runtime adapter uses the actual `GSRasterBackend` interface. CPU rendering
+remains the default; enabling the CMake option alone does not select Vulkan.
+
+## Runtime Integration
+
+Enable `OPENXML1_PLAY_GS_BACKEND=ON` in the existing runtime build, build
+`ps2_runtime`, then link the candidate through the resource-limited wrapper.
+The existing external VU runtime hook includes `runtime-engine.cmake`. Its
+adapter refresh depends on the VU refresh to serialize the shared build tree.
+Only the GS frontend source receives `PS2X_ENABLE_PLAY_GS_BACKEND`; at runtime,
+`PS2X_GS_PLAY_VULKAN=1` selects the adapter. Without that environment variable,
+the same executable uses the unchanged CPU backend.
+
+The factory wraps the CPU delegate after the frontend's constructor reset.
+The PS2Recomp factory hook is local commit `fc8105d` on
+`codex/xmen-legends-bringup`; it has not been pushed.
+Pre-initialization reset/flush are safe and covered by the isolated adapter
+test. Configuration lives under `.ps2recomp-vulkan` in the runtime working
+directory, not global Play settings. GPU execution and nonblack presentation
+markers are required by the benchmark's Vulkan workload gate.
+
+The game integration reuses its existing `ffmpeg_zlib` import target. Linking
+Play's separate vanilla `zlibstatic` originally caused duplicate inflate
+symbols; that library was removed from the game's link dependencies before
+execution. The standalone tests retain their own zlib dependency. Do not enable
+`Z_PREFIX` blindly: Play's zstd wrapper already supplies the `z_` entry points.
+
+```powershell
+& ./xmen-legends/build-below-normal.ps1 -ConfigureCache OPENXML1_PLAY_GS_BACKEND=ON
+& ./xmen-legends/build-below-normal.ps1 -Target ps2_runtime
+& ./xmen-legends/build-below-normal.ps1 -LinkOnly -OutputName ps2EntryRunner.candidate
+& ./xmen-legends/run-gameplay-benchmark.ps1 -CompiledVu -VulkanGs -CaptureFrame
+```
+
+This bounded benchmark disables host input and restores the startup scripts
+when it exits. It is not an interactive handoff. Vulkan cannot be combined with
+CPU sampler/raster diagnostics; compiled-VU audits remain available and are
+excluded from FPS results. The normal interactive launcher is not switched to
+Vulkan by this integration.
+
+### Game Evidence
+
+September 6 rate-comparison executable:
+`AED1D5E3D2CD0397249FCB7001EC4D389D7965B36F5EEA844E94CB872AB1DC90`.
+One serial, same-binary pair measured **5.216032 FPS Vulkan / 4.939020 CPU**
+(prepared sampler), using external observations of presents 1152..1280.
+This is a shared-host observation, not a robust speedup or sustained rate;
+30 FPS remains unmet. Both runs exited zero at vsync 1400, logged zero guest
+faults, verified New Game/NYC/native blocks, and restored startup. Vulkan
+reported 18,499,465 submissions and 253,367 nonblack pixels at present 1280.
+
+Native present 1280 was inspected after lossless PPM-to-PNG conversion. It shows
+NYC, Wolverine, ground/building/fence textures and the question marker, but
+black props, missing foliage and broken HUD remain. No visual-fidelity pass,
+new manual input result, or combat verification is claimed. PPM SHA-256:
+`1C4A0716522273056A90EC5B8BE2C7DF009BEEC0437341B2C9FCE165DB86A993`.
+Only that native frame was captured; no desktop/window capture was used.
+
+The final diagnostic candidate is
+`5CDB5EB63A9A03A238F3B09A3D5222BCBFB9D2DA0E680939851AADB494F68990`.
+Its added adapter scopes use the existing opt-in runtime phase profiler,
+including submission, transfers, lock waits inside the adapter and readback.
+Presentation is a separate thread with tick zero: do not combine its wall-time
+percentages with the guest thread or mistake these scopes for GPU timestamps.
+The first Vulkan profile failed at guest PC `0x4c004000`, RA `0x396e70`,
+`s0=s1=v0=0`, before the gameplay markers. The benchmark rejected the run despite
+host exit zero. Fixed `gameplay-vulkan-failure.*` slots preserve both fault lines
+and the report; no FPS is accepted from that run. Retail code at `0x396e68`
+calls an object method; `0x398630` returns its second argument unchanged. The
+record is consistent with a null-object call, but its originating cause is
+unproven. A related earlier CPU-side failure had RA `0x396e84`; this similarity
+is not proof that the new failure has the same cause or is harmless.
+
+An unchanged-candidate Vulkan profile repeat passed every workload gate, exit
+zero / vsync 1400, zero guest faults, 18,816,871 GPU submissions, startup restored.
+The first failure remains unresolved and preserved; a passing repeat is not a
+fix. The CPU control also reached both gameplay markers and exited zero with no
+guest faults, but its gate rejected an interleaved diagnostic:
+`[gs:black-present] index=19[gs:prepared-texture] active=1`.
+Do not silently mark that report verified. Next serialize multi-part diagnostic
+messages before relying on line-start marker recognition in further comparisons.
+
+Complete guest-thread profile windows with their preceding tick >=1100 and end
+tick <=1399 give the following descriptive timings. CPU data is diagnostic-only
+because of the marker failure above; neither profile is an FPS measurement.
+
+| Mode | Windows / tick endpoints | Wall ms | VU exclusive ms | GS exclusive ms |
+| --- | --- | --- | --- | --- |
+| CPU prepared | 54 / 1111..1397 | 56,771.506 | 30,064.306 (52.96%) | 17,113.173 (30.14%) |
+| Vulkan | 45 / 1110..1395 | 46,319.808 | 31,063.555 (67.06%) | 5,386.387 (11.63%) |
+
+The scenes cover similar, not identical tick spans on a shared host. GPU
+presentation runs on another thread and is excluded here; the table is not a
+total GPU-cost comparison. Next target substantial VU execution/bridge overhead
+with matched real-workload profiling, not another sampler-only optimization.
+Retain the guarded, exact replay tests; do not remove fidelity checks merely to
+report a faster number. All commits remain local, no interactive promotion.
 
 ## Adapter Checkpoint
 
 September 6 adapter test SHA-256:
-`221DADAD0AA9023B9E935DE350CE34A29470B70666F1E1D1FFECDCE1BFA762C8`.
+`109008AC47E59CFD493F77809E62C4E1FADDF9512BFFF7F6A780058DF33360D4`.
 Twelve checks pass: sprite, independent strip triangle, split indexed upload,
 palette load/skip/reload, local copy, local-to-host bytes, CPU presentation,
 CPU clear/write imported to GPU, and reset preserving VRAM. Ten cases compare
 all 4 MiB of VRAM; the other two compare transfer bytes and presentation pixels.
+Reset and flush before initialization are also exercised. The synthetic timing
+table below belongs to preceding test image `221DADAD...`, not a new benchmark
+of the profiled adapter.
 
 The adapter translates decoded batches into ordered register writes, caches
 unchanged state/vertex attributes, and keeps GPU VRAM authoritative. CPU reads,
@@ -36,8 +134,8 @@ CPU reference is AVX2 with prepared indexed sampling enabled:
 | 512 large 160x112 triangles | 5.653, 6.280, 4.436 | 156.694, 160.334, 156.607 |
 
 These are nearest-filtered synthetic scenes on a shared machine, not gameplay
-FPS or a sustained rate guarantee. The game remains at its previous measured
-rate until runtime integration and a real first-level benchmark are completed.
+FPS or a sustained rate guarantee. The runtime measurements above supersede
+the earlier isolated-only status; they do not meet the performance target.
 
 Initial bridge `E0F024AB...` was slower on tiny triangles. After attribute-write
 caching, `FC7765DC...` still spent 25-36 ms in readback, including 33 ms for a
@@ -52,7 +150,7 @@ Other hardware/fallback memory types have not been tested.
 The original five offscreen cases still pass after the patch, executable
 `F4E920011A98687C377AC0CAB81577D7E82EA59507EAEA7884AD168D9D29CAF0`.
 The patch reverse-checks cleanly and is required by CMake. Nothing was submitted
-upstream or linked into a new game build.
+upstream. This was the isolated checkpoint before runtime integration.
 
 ## Dependencies
 
@@ -130,12 +228,10 @@ not correct game rendering, gameplay FPS, depth/blending, or every GS format.
 
 ## Next Gate
 
-The isolated adapter now implements the initial plan below. Next wire it into
-the real runtime as an opt-in backend, preserve CPU default selection, add
-positive execution evidence to benchmark gates, and build a measured candidate.
-Use the existing external `runtime-engine.cmake` integration pattern; the GS
-frontend constructor can wrap its CPU backend before initialization. Provide a
-runtime-local config path, not the probe's current-working-directory config.
+The opt-in integration and initial runtime comparison are implemented. Resolve
+the diagnostic failure, measure remaining execution/submission/readback costs,
+and retain CPU fallback. No interactive promotion is justified by the current
+performance. Remaining fidelity/integration requirements are listed below.
 
 Remaining game integration checks:
 
@@ -155,9 +251,13 @@ Remaining game integration checks:
 
 The adapter tests do not prove all depth/blending/fog/filtering combinations or
 real level fidelity. CPU VU execution remains a major cost, so GPU rendering alone is
-not a promised route to 30 FPS. No gameplay candidate was linked this turn.
+not a promised route to 30 FPS. Game integration remains experimental.
 
-Regular cleanup removed 225 stale Debug directories and 29 obsolete files,
+Earlier isolated cleanup removed 225 stale Debug directories and 29 obsolete files,
 approximately 18 MiB. New zlib/zstd source working trees total 12.31 MiB; the
-isolated GS build subtree is 39.67 MiB. No new images, emulator checkout, or
-duplicate game executable. All work remains local; no pushes or pull requests.
+isolated GS build subtree was 39.67 MiB at that checkpoint. Integration cleanup
+removed another 208 stale Debug directories and two obsolete files, about 7 MiB.
+Only one native gameplay frame and its lossless PNG conversion were added during
+integration. The existing candidate executable slot was reused; no new emulator
+checkout or backup executable. All owned builds/tests/games ended, startup was
+restored, and work remains local with no pushes or pull requests.
