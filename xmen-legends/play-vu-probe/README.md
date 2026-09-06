@@ -108,11 +108,12 @@ produced invalid floating-point timing output; discard that timing completely.
 
 The recordings are ignored, private artifacts and must not be distributed.
 The bounded VUR1 reader accepts only the known inactive-PATH1 state layout with
-no pending stores, register writes, scalar operations, branches, or future
-readiness deadlines. It checks both queue masks and entry validity. Only case 19
-of the original 32-record capture currently qualifies; this is not full coverage.
+no pending stores, VI/ACC writes, scalar operations, or branches. Pending VF
+results and supported flag components up to three cycles away can now be imported.
+Queue masks, entry validity, per-lane latest-write ownership and readiness must
+agree. Fourteen of the original 32 records now qualify; this is not full coverage.
 
-That case reaches the same E-bit termination PC. ACC, Q/P/I/R, all integer
+Case 19 reaches the same E-bit termination PC. ACC, Q/P/I/R, all integer
 registers and all but one vector word match. There are 28 differing memory bytes
 in 27 words and one differing byte in the 16 same-sized, ordered GIF packets.
 The vector mismatch is one ULP. The arithmetic cause is not yet proven; both
@@ -203,8 +204,35 @@ The eight transfer tests, 21 upstream VU tests, ABI regression, budget/XGKICK
 contracts and private diagnostic also pass after adding rejection of unsupported
 special delay-slot paths. No game binary was built or launched, and no images
 were created during this work.
-Final verification image:
+Transfer-observer checkpoint image:
 `29709F90A6668746389D6CF033E97854B9791C978A6A433B3F9AF6C535B15489`.
+
+## Pending-State Import Checkpoint
+
+Pending VF values are placed in Play!'s early-result representation, with per-lane
+FMAC masks delaying their use. Older overlapping writes cannot overwrite a lane's
+newest result. Supported MAC, sticky Z/S, sticky reset and CLIP events enter the
+flag pipelines at their recorded relative deadlines. Unsupported STATUS bits
+remain unresolved. This representation is not an architectural snapshot suitable
+for returning control to EE/VIF between short slices.
+
+A public synthetic regression checks overlapping partial VF writes, a three-cycle
+dependent-read delay, flag retirement at each deadline, sticky reset, and rejection
+of inconsistent masks, out-of-range deadlines and VF0 writes. It passes alongside
+the eight transfer tests, 21 upstream tests, ABI and budget/XGKICK contracts.
+
+Final test image: `63D79D7DB0D7431E8489E29CA4CFA00B114888AF02454EE4493540F348A74745`.
+The original capture now runs records 1/2/3/4/6/8/10/11/12/14/15/16/18/19,
+matching all recorded packet completion times and reproducing each cold result
+over 256 warm executions. Arithmetic, memory and packet-byte differences remain;
+the summary explicitly reports `eligible=14 accepted=0`.
+
+The spread capture runs records 5/9/12/17 with matching packet completion times,
+then fails at record 19: overlapping XGKICK at PC 6496, cycle 64 requires a VU
+stall that the observer does not implement. This is an expected diagnostic
+limitation, not a passing spread test. Record 9 also has 176 differing memory
+bytes and eight differing VF words. Later records were not executed. Do not
+promote this engine into gameplay on the basis of the successful timing checks.
 
 Next: bridge exact short-cycle budgets and validate architectural results,
 memory writes, and packet ordering against the existing private recordings before

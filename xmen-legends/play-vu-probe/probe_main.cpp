@@ -92,6 +92,7 @@ int main(int argc, const char **argv)
     FpUtils::SetDenormalHandlingMode();
     if (!checkWindowsAbi()) return 6;
     if (!runTransferTests()) return 7;
+    if (!pendingImportTests()) return 8;
     if (argc == 2)
     {
         try { return replayDiagnostic(argv[1]); }

@@ -2,6 +2,8 @@
 #include "replay_diagnostic.h"
 #include "transfer_timeline.h"
 #include "TestVm.h"
+#include "VuAssembler.h"
+#include "VUShared.h"
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -50,7 +52,7 @@ uint64_t at(const Bytes &bytes, size_t offset, size_t count = 4)
 }
 
 // VUR1 has no versioned state schema. Accept only the known inactive-PATH1 layout.
-bool quiescent(const Bytes &state)
+bool importable(const Bytes &state)
 {
     if (state.size() != 4682 || state[0] != 1 || state[2271] != 0 || state[647] != 0 ||
         state[633] != 0 || state[634] != 0 || state[635] != 0 || state[636] != 0 ||
@@ -60,18 +62,31 @@ bool quiescent(const Bytes &state)
         return false;
     for (size_t offset : {size_t(968), size_t(985), size_t(1002)})
         if (state[offset] != 0) return false;
-    for (size_t offset = 2251; offset < 2271; offset += 4)
+    for (size_t offset : {size_t(2255), size_t(2263), size_t(2267)})
         if (at(state, offset) != 0) return false;
     // Reject inconsistent queue masks instead of silently dropping live entries.
     for (size_t slot = 0; slot < 8; ++slot)
-        if (state[656 + slot * 37 + 32] || state[1003 + slot * 30 + 29] ||
+        if (state[1003 + slot * 30 + 29] ||
             state[1803 + slot * 22 + 21] || state[1979 + slot * 34 + 33]) return false;
-    for (size_t slot = 0; slot < 16; ++slot)
-        if (state[1243 + slot * 35 + 34]) return false;
     if (state[4677] && state[4676] >= 16) return false;
     const uint64_t cycle = at(state, 4640, 8);
-    for (size_t offset = 2272; offset < 3456; offset += 8)
+    for (size_t offset = 2272; offset < 3296; offset += 8)
+        if (at(state, offset, 8) > cycle + 3) return false;
+    for (size_t offset = 3296; offset < 3456; offset += 8)
         if (at(state, offset, 8) > cycle) return false;
+    for (const auto &queue : {std::array<size_t, 5>{656, 37, 8, 32, 2251}, {1243, 35, 16, 34, 2259}})
+    {
+        uint32_t mask = 0;
+        for (size_t slot = 0; slot < queue[2]; ++slot)
+        {
+            const size_t offset = queue[0] + slot * queue[1];
+            if (!state[offset + queue[3]]) continue;
+            mask |= 1u << slot;
+            const uint64_t ready = at(state, offset, 8);
+            if (ready <= cycle || ready > cycle + 3) return false;
+        }
+        if (mask != at(state, queue[4])) return false;
+    }
     return at(state, 4656, 8) <= cycle;
 }
 
@@ -79,6 +94,79 @@ void initializeFlags(FLAG_PIPELINE &pipeline, uint32_t value)
 {
     pipeline = {};
     std::fill(std::begin(pipeline.values), std::end(pipeline.values), value);
+}
+
+void importPending(MIPSSTATE &s, const Bytes &state)
+{
+    const uint64_t cycle = at(state, 4640, 8);
+    unsigned pendingVf = 0, pendingFlags = 0;
+    uint32_t supportedLanes[32]{};
+    for (size_t slot = 0; slot < 16; ++slot)
+    {
+        const size_t offset = 1243 + slot * 35;
+        if (!state[offset + 34]) continue;
+        ++pendingVf;
+        const unsigned reg = state[offset + 32], lanes = state[offset + 33];
+        if (reg == 0 || reg >= 32 || lanes == 0 || lanes > 15)
+            throw std::runtime_error("Invalid pending VF write");
+        for (unsigned lane = 0; lane < 4; ++lane)
+        {
+            if (!(lanes & (8u >> lane))) continue;
+            const uint64_t latest = at(state, 3456 + (reg * 4 + lane) * 8, 8);
+            if (latest != at(state, offset + 8, 8)) continue;
+            const uint64_t ready = at(state, 2272 + (reg * 4 + lane) * 8, 8);
+            if (ready != at(state, offset, 8)) throw std::runtime_error("Pending VF readiness mismatch");
+            // Play! stores completed arithmetic values early and delays reads
+            // using per-lane FMAC hazard masks. This is not a CPU-visible snapshot.
+            s.nCOP2[reg].nV[lane] = static_cast<uint32_t>(at(state, offset + 16 + lane * 4));
+            supportedLanes[reg] |= 8u >> lane;
+        }
+    }
+    for (unsigned reg = 1; reg < 32; ++reg)
+        for (unsigned lane = 0; lane < 4; ++lane)
+        {
+            const uint64_t ready = at(state, 2272 + (reg * 4 + lane) * 8, 8);
+            if (ready <= cycle) continue;
+            if (!(supportedLanes[reg] & (8u >> lane)))
+                throw std::runtime_error("Future VF readiness has no importable value");
+            for (unsigned remaining = 0; remaining < ready - cycle; ++remaining)
+            {
+                const unsigned bit = reg * 4 + 3 - lane;
+                s.pipeFmacWrite[remaining].nV[bit / 32] |= 1u << (bit % 32);
+            }
+        }
+    std::vector<size_t> flags;
+    for (size_t slot = 0; slot < 8; ++slot)
+        if (state[656 + slot * 37 + 32]) flags.push_back(656 + slot * 37);
+    std::stable_sort(flags.begin(), flags.end(), [&](size_t a, size_t b) {
+        return at(state, a, 8) < at(state, b, 8);
+    });
+    const auto queueFlag = [](FLAG_PIPELINE &pipe, uint32_t value, uint32_t ready) {
+        pipe.values[pipe.index] = value;
+        pipe.pipeTimes[pipe.index] = ready;
+        pipe.index = (pipe.index + 1) & (FLAG_PIPELINE_SLOTS - 1);
+    };
+    uint32_t sticky = s.nCOP2SF;
+    for (const size_t offset : flags)
+    {
+        ++pendingFlags;
+        const auto ready = static_cast<uint32_t>(at(state, offset, 8) - cycle);
+        if (state[offset + 33]) queueFlag(s.pipeMac, static_cast<uint32_t>(at(state, offset + 16)) & 0xffu, ready);
+        if (state[offset + 34])
+        {
+            const uint32_t bits = static_cast<uint32_t>(at(state, offset + 20) | at(state, offset + 24));
+            sticky |= ((bits & 1u) ? 0x0fu : 0u) | ((bits & 2u) ? 0xf0u : 0u);
+            queueFlag(s.pipeSticky, sticky, ready);
+        }
+        if (state[offset + 35])
+        {
+            const auto status = static_cast<uint32_t>(at(state, offset + 20));
+            sticky = ((status & 0x40u) ? 0x0fu : 0u) | ((status & 0x80u) ? 0xf0u : 0u);
+            queueFlag(s.pipeSticky, sticky, ready);
+        }
+        if (state[offset + 36]) queueFlag(s.pipeClip, static_cast<uint32_t>(at(state, offset + 28)), ready);
+    }
+    std::printf("[play-vu:import] pending-vf=%u pending-flags=%u short-slices-supported=0\n", pendingVf, pendingFlags);
 }
 
 Bytes readPacket(const uint8_t *memory, uint32_t qword)
@@ -116,6 +204,93 @@ unsigned differences(const uint8_t *actual, const Bytes &expected)
 }
 }
 
+bool pendingImportTests()
+{
+    Bytes state(4682);
+    const auto put = [&](size_t offset, uint64_t value, size_t bytes = 4) {
+        for (size_t byte = 0; byte < bytes; ++byte) state.at(offset + byte) = static_cast<uint8_t>(value >> (8 * byte));
+    };
+    state[0] = 1;
+    state[4679] = 1;
+    put(4640, 100, 8);
+    put(2259, 3);
+    for (unsigned slot = 0; slot < 2; ++slot)
+    {
+        const size_t offset = 1243 + slot * 35;
+        put(offset, slot == 0 ? 101 : 103, 8);
+        put(offset + 8, slot + 1, 8);
+        put(offset + 16, slot == 0 ? 0x40000000 : 0x3f800000);
+        put(offset + 24, 0x40000000);
+        state[offset + 32] = 2;
+        state[offset + 33] = slot == 0 ? 0xa : 0x8;
+        state[offset + 34] = 1;
+    }
+    put(2272 + 8 * 8, 103, 8); // VF2.x: latest write is the younger slot.
+    put(2272 + 10 * 8, 101, 8); // VF2.z: the older slot still owns this lane.
+    put(3456 + 8 * 8, 2, 8);
+    put(3456 + 10 * 8, 1, 8);
+    put(2251, 7);
+    for (unsigned slot = 0; slot < 3; ++slot)
+    {
+        const size_t offset = 656 + slot * 37;
+        put(offset, 101 + slot, 8);
+        state[offset + 32] = 1;
+        if (slot < 2)
+        {
+            put(offset + 16, slot == 0 ? 0x8 : 0x80);
+            put(offset + 20, slot == 0 ? 1 : 2);
+            state[offset + 33] = state[offset + 34] = 1;
+        }
+        else
+        {
+            put(offset + 28, 0x123456);
+            state[offset + 35] = state[offset + 36] = 1;
+        }
+    }
+    if (!importable(state)) return false;
+    auto vm = std::make_unique<CTestVm>();
+    vm->Reset();
+    auto &s = vm->m_cpu.m_State;
+    initializeFlags(s.pipeMac, 0);
+    initializeFlags(s.pipeSticky, 0);
+    initializeFlags(s.pipeClip, 0);
+    importPending(s, state);
+    if (s.nCOP2[2].nV0 != 0x3f800000 || s.nCOP2[2].nV2 != 0x40000000 ||
+        s.pipeFmacWrite[0].nV0 != 0xa00 || s.pipeFmacWrite[1].nV0 != 0x800 ||
+        s.pipeFmacWrite[2].nV0 != 0x800) return false;
+    for (unsigned cycle = 0; cycle < 4; ++cycle)
+    {
+        VUShared::CheckFlagPipelineImmediate(VUShared::g_pipeInfoMac, &vm->m_cpu, cycle);
+        VUShared::CheckFlagPipelineImmediate(VUShared::g_pipeInfoSticky, &vm->m_cpu, cycle);
+        VUShared::CheckFlagPipelineImmediate(VUShared::g_pipeInfoClip, &vm->m_cpu, cycle);
+        const uint32_t expectedMac[] = {0, 0x8, 0x80, 0x80};
+        const uint32_t expectedSticky[] = {0, 0xf, 0xff, 0};
+        if (s.nCOP2MF != expectedMac[cycle] || s.nCOP2SF != expectedSticky[cycle] ||
+            s.nCOP2CF != (cycle == 3 ? 0x123456 : 0)) return false;
+    }
+    {
+        CVuAssembler assembler(reinterpret_cast<uint32 *>(vm->m_microMem));
+        assembler.Write(CVuAssembler::Upper::MULAbc(CVuAssembler::DEST_X, CVuAssembler::VF2,
+            CVuAssembler::VF0, CVuAssembler::BC_W), CVuAssembler::Lower::NOP());
+        assembler.Write(CVuAssembler::Upper::NOP() | CVuAssembler::Upper::E_BIT, CVuAssembler::Lower::NOP());
+        assembler.Write(CVuAssembler::Upper::NOP(), CVuAssembler::Lower::NOP());
+    }
+    vm->ExecuteTest(0);
+    if (s.pipeTime != 6 || s.nCOP2A.nV0 != 0x3f800000) return false;
+    put(2259, 1);
+    if (importable(state)) return false;
+    put(2259, 3);
+    put(2272 + 8 * 8, 104, 8);
+    if (importable(state)) return false;
+    put(2272 + 8 * 8, 103, 8);
+    state[1243 + 32] = 0;
+    bool rejected = false;
+    try { importPending(s, state); }
+    catch (const std::runtime_error &) { rejected = true; }
+    std::printf("[play-vu:pending-import-test] passed=%u delayed-read-cycles=%u\n", unsigned(rejected), s.pipeTime);
+    return rejected;
+}
+
 int replayDiagnostic(const char *path)
 {
     std::ifstream input(path, std::ios::binary | std::ios::ate);
@@ -143,7 +318,7 @@ int replayDiagnostic(const char *path)
         if (code.size() != 16384 || data.size() != 16384 || afterData.size() != 16384 || after.size() < 4682)
             throw std::runtime_error("Invalid replay dimensions");
         const unsigned current = index++;
-        if (budget <= 64 || !quiescent(before)) continue;
+        if (budget <= 64 || !importable(before) || after[after.size() - 3] != 0) continue;
         ++eligible;
         auto vm = std::make_unique<CTestVm>();
         vm->Reset();
@@ -166,6 +341,7 @@ int replayDiagnostic(const char *path)
         initializeFlags(s.pipeMac, s.nCOP2MF);
         initializeFlags(s.pipeSticky, s.nCOP2SF);
         initializeFlags(s.pipeClip, s.nCOP2CF);
+        importPending(s, before);
         if (before[4677])
         {
             s.savedNextBlockIntRegIdx = before[4676];
