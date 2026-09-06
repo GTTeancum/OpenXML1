@@ -1020,3 +1020,50 @@ based directly on upstream main `14b1e5c`. Its complete Release suite passes
 426/426. The existing contribution checkout and build directory were reused;
 no game assets, private native kernels, new checkout, or extra binary slot is
 included. The existing occupancy-mask branch is preserved separately.
+
+## Native Operand Reuse
+
+PS2Recomp `119706f` reuses the native operation's normalized VF/ACC/Q/I inputs
+for FMAC flag calculation. The interpreted oracle is unchanged. An initial
+fast-math version narrowed a widened product back to float and lost an underflow
+sticky flag. The native-only `float_control(precise)` scope is required: the final
+image/map timestamp `0x6a9cbcfe` and MULbc specialization at RVA `0x2ed530` show
+conversion to double before `vmulsd`, preserving the flag input's range.
+
+The disconnected test build initially failed recipe validation because new
+synthetic PCs had eight hex digits instead of the required four. After that
+format correction, the BelowNormal build succeeded and all 129 VU tests passed.
+Arithmetic coverage now includes 3,216 seed/start cases with MADD/MSUB, ACC
+inputs, and source/destination aliasing, alongside 768 mixed-write cases.
+Test SHA-256:
+`626C8504544A80009ED8923DDB8B9B9277019A6E26AF51F13F1B7C4806817B2C`.
+
+Both private recordings remain exact at normal and 1/8/16/64-cycle slicing.
+Normal cold-plus-one-repeat native pair counts are unchanged at 77,664 / 23,048;
+block pair counts remain 64,508 / 19,096. Adding two public synthetic blocks did
+not change coverage of either game recording. The private recipe stays at 64
+pairs and 16 blocks; public blocks now number ten, giving 26 total blocks.
+
+The existing `ps2x_tests.flag-pack-base.exe` slot now holds accepted `110ed3a`,
+SHA-256 `AE4D88555CD487A736551DC92B9A51D4F037084B59A97EF52F864FF15F029931`.
+No additional comparison executable was created.
+
+| Capture / repeats | Baseline | Operand reuse | Result |
+| --- | --- | --- | --- |
+| Original / 1024 | 3308.108 ms | 3232.464 ms | 2.287% lower, 6/7 wins |
+| Spread / 2048 | 2558.118 ms | 2519.449 ms | 1.512% lower, 5/7 wins |
+
+These final-image, seven-round alternating comparisons show a modest shared-host
+gain, smaller than the earlier 5.651% original-only result from the pre-expanded
+test image `FC095762F3C6D82F6AB2749FEF2A8AC8FBF15910FF1671EC5D10BEA4C6C27282`.
+Do not extrapolate either result to gameplay FPS or combine percentages from
+different runs as a measured cumulative gain.
+
+A new execution-only profile on the final image used 2048 original repetitions:
+355 samples, 44 external, 311 in-module, zero dropped/failed samples, matching
+timestamp `0x6a9cbcfe`. Top individual symbols were `commitReadyPipelines`
+(24 samples, 7.72%), `normalizeFmacExactResult` (16, 5.14%), and `packFmac`
+(13, 4.18%). Fixed `execution-profile.*` logs now describe this image, replacing
+the earlier deadline experiment. These are sampled VU costs, not whole-game
+percentages. The remaining major task is reducing compiled execution bookkeeping
+without losing delayed-write, sticky-flag, or graphics-transfer semantics.
