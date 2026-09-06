@@ -350,7 +350,46 @@ engine handling unsupported cases, while retaining exact short-cycle handling
 as a separate requirement. Both paths must preserve guest-visible state and
 graphics ordering. It does not justify installing the diagnostic unchanged.
 
-Next: build that runtime bridge and validate architectural results,
+## Detached Session Library
+
+`play_vu_session` is now a reusable static library containing `CompiledVuSession`
+and the transfer timeline. It uses the pinned Play! core directly, not `CTestVm`
+or upstream test sources. A session owns its code/data memory and compiler cache;
+changed code invalidates the cache before execution. Each call copies input state
+and data into private storage. No GS, EE, IOP or host input callbacks are exposed.
+
+Successful execution returns staged memory, raw Play! state and ordered packets;
+the caller must still validate/convert them before committing anything to the
+game. Unsupported entry, failed compilation, non-E termination or exceeded cycle
+budget returns a rejected result with no staged packets/data. The budget includes
+known scalar, flag, VF and transfer tails. Short slices remain unsupported.
+General VI/store retirement and unknown STATUS bits remain bridge limitations,
+not silently accepted behavior. A session is single-owner, not thread-safe.
+
+Every call saves the caller's floating-point environment, masks exceptions during
+VU work, selects toward-zero/FTZ/DAZ, then restores the original rounding, exception
+flags and exact MXCSR on success or rejection. Graphics staging is bounded to
+1 MiB of completed packets plus at most one 64 KiB in-progress packet. Excess
+output rejects the execution; partial packets never escape a rejected result.
+
+Public tests exercise caller inputs remaining unchanged, multiplication rounding
+under an upward-rounding caller, warm cache reuse, changed-code invalidation,
+short-slice rejection, elapsed-budget rejection after graphics have been staged,
+scalar-tail budget rejection, recovery after rejection, and the packet limit/reset.
+The final test image `E7C86144FCAD459DD2E7F626266EBF452DA515FAC1420B19EF08EC1BB1A43C72`
+passes these and all prior public tests. Across 22 eligible private records,
+the session matches the direct probe's full raw MIPS state, final memory, staged
+packet bytes, completion times and transfer end. This is parity with the probe,
+not PS2Recomp compatibility: its existing arithmetic/flag differences persist.
+
+The session is not linked into the game and has no measured runtime speedup yet.
+Next add the game-side state adapter, acceptance policy and atomic result commit,
+then measure complete calls including copies and environment restoration before
+promoting a gameplay build. Current engine fallback must happen before external
+side effects. Two obsolete probe-target object files were removed after moving
+their sources into the library; the existing checkout/build is reused.
+
+Next: complete that runtime bridge and validate architectural results,
 memory writes, and packet ordering against the existing private recordings before
 measuring throughput. Those recordings contain mid-program state, not fresh VU
 entry snapshots, so importing their visible registers alone is invalid.

@@ -24,5 +24,6 @@ private:
     uint32_t source = 0;
     uint32_t tagEnd = 0;
     uint64_t nextRead = 0;
+    size_t completedBytes = 0;
     std::vector<uint8_t> packet;
 };

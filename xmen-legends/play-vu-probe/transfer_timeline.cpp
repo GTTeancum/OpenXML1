@@ -9,6 +9,7 @@ void TransferTimeline::reset()
     source = tagEnd = 0;
     nextRead = time = 0;
     events = 0;
+    completedBytes = 0;
     packet.clear();
     packets.clear();
     completionCycles.clear();
@@ -42,6 +43,9 @@ void TransferTimeline::advance(uint64_t cycle)
             if (eop)
             {
                 if (packets.size() >= 1024) throw std::runtime_error("Too many timeline packets");
+                if (completedBytes + packet.size() > 1048576)
+                    throw std::runtime_error("Staged VU graphics exceed 1 MiB");
+                completedBytes += packet.size();
                 packets.push_back(packet);
                 completionCycles.push_back(nextRead);
                 active = false;

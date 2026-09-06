@@ -1,6 +1,7 @@
 #define NOMINMAX
 #include "replay_diagnostic.h"
 #include "transfer_timeline.h"
+#include "compiled_session.h"
 #include "TestVm.h"
 #include "VuAssembler.h"
 #include "VUShared.h"
@@ -116,14 +117,7 @@ struct DrainedControl
 
 DrainedControl drainControl(const MIPSSTATE &s, uint64_t transferEnd)
 {
-    uint64_t end = std::max<uint64_t>(s.pipeTime, transferEnd);
-    end = std::max<uint64_t>(end, std::max(s.pipeQ.counter, s.pipeP.counter));
-    for (const auto *pipe : {&s.pipeMac, &s.pipeSticky, &s.pipeClip})
-        for (const auto ready : pipe->pipeTimes) end = std::max<uint64_t>(end, ready);
-    for (unsigned remaining = 0; remaining < 3; ++remaining)
-        for (const auto mask : s.pipeFmacWrite[remaining].nV)
-            if (mask) end = std::max<uint64_t>(end, uint64_t(s.pipeTime) + remaining + 1);
-    if (end - s.pipeTime > 1048576) throw std::runtime_error("VU drain exceeds diagnostic cycle limit");
+    const auto end = compiledVuDrainCycle(s, transferEnd);
     const auto latest = [&](const FLAG_PIPELINE &pipe, uint32_t mirror) {
         for (unsigned i = 0; i < FLAG_PIPELINE_SLOTS; ++i)
         {
@@ -391,6 +385,7 @@ bool pendingImportTests()
 
 int replayDiagnostic(const char *path)
 {
+    CompiledVuSession detachedSession;
     unsigned memoryTraceCase = 64;
     if (const char *value = std::getenv("PS2X_VU_REPLAY_MEMORY_TRACE_CASE"))
     {
@@ -538,6 +533,19 @@ int replayDiagnostic(const char *path)
         const auto coldPackets = actualPackets;
         const auto coldStreamingPackets = timeline.packets;
         const auto coldCompletionCycles = timeline.completionCycles;
+        std::array<uint8_t, 16384> bridgeCode{}, bridgeData{};
+        std::memcpy(bridgeCode.data(), code.data(), code.size());
+        std::memcpy(bridgeData.data(), data.data(), data.size());
+        const auto detached = detachedSession.run(bridgeCode, bridgeData, initial, budget,
+            static_cast<uint32_t>(at(before, 639)), static_cast<uint32_t>(at(before, 643)));
+        const bool detachedMatches = detached.executed &&
+            !std::memcmp(&detached.state, &coldFinal, sizeof(coldFinal)) &&
+            !std::memcmp(detached.data.data(), coldData.data(), coldData.size()) &&
+            detached.packets == coldStreamingPackets && detached.completionCycles == coldCompletionCycles &&
+            detached.transferEnd == timeline.time;
+        std::printf("[play-vu:detached-session] case=%u match=%u reason=%s runtime-accepted=0\n",
+            current, unsigned(detachedMatches), detached.reason.c_str());
+        if (!detachedMatches) throw std::runtime_error("Detached session diverged from direct compiled diagnostic");
         const auto drained = drainControl(s, timeline.time);
         const uint64_t expectedEnd = at(after, 625, 8) - at(before, 625, 8);
         const auto expectedMac = static_cast<uint32_t>(at(after, 613));

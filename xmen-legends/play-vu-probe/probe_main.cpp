@@ -2,6 +2,7 @@
 #include <windows.h>
 #include "VuAssembler.h"
 #include "replay_diagnostic.h"
+#include "compiled_session.h"
 #include "FpUtils.h"
 #include "AddTest.h"
 #include "BranchTest.h"
@@ -93,6 +94,7 @@ int main(int argc, const char **argv)
     if (!checkWindowsAbi()) return 6;
     if (!runTransferTests()) return 7;
     if (!pendingImportTests()) return 8;
+    if (!compiledSessionTests()) return 9;
     if (argc == 2)
     {
         try { return replayDiagnostic(argv[1]); }
