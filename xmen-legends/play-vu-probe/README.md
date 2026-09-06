@@ -11,16 +11,26 @@ was not tested in that session. See the current TODO before launching anything.
 
 ## Bounded Compiled Retry
 
-Current blocker (September 6, 19:20 UTC): the
-[heap investigation](../HEAP-CHECKPOINT.md) repaired split ordering, stranded
-frontier space and lost alignment gaps. Candidate `51C7B4CB...` now reaches a
-compiled VU mismatch at tick 542, PC `0x580`, with no allocation failure reported
-before the stop. The private `disc/vu-compiled-failure.bin` has SHA256
+September 6, 19:44 UTC: the saved tick-542 failure is fixed. An ILW issued at
+relative cycle 102 must retire at 106, one cycle after the E-bit delay slot.
+Compiled execution now carries the actual ILW/ILWR retirement deadline into
+the drain/budget check, excluding VI0 sinks and I-bit immediates. All 163 VU
+tests pass, including 84 new load/end/branch combinations; seven recordings
+pass at full/1/64-cycle slices. Reference/native/compiled replay all agree on
+106 cycles and digest `0cfab35f3f93ce6f`. The retained private regression is
+`disc/vu-lsu-tail-failure.bin`, SHA256
 `22FA0FF341D073B68F2C33CD756AE2403075C195A3EE91E81E7C5DA9DA8F8C20`.
-Reference/native replay both pass at 106 cycles, digest `0cfab35f3f93ce6f`;
-compiled replay reports first differing cycle word `117875147/117875148`, with
-matching data and packet bytes. Standalone detached/direct comparison also fails.
-Fix this saved case before another game run. No full audit or new FPS pass.
+Standalone validation passes too, after correcting unequal direct/detached
+test budgets and explicitly assigning ASM_MASM to the ABI test source.
+Candidate `EC87DC7F...` times out after 600 seconds of combined audit and
+300 seconds without audit/heap diagnostics, with no logged heap/guest faults.
+The normal run reaches present 640/tick 677, beyond the old failure, but not
+the timing window. No full audit or new FPS pass. Next profile this current
+candidate's busy CPU thread, not older heap-broken workloads. Timeout reports
+now overwrite stale summaries with an explicit incomplete result and FPS null.
+See the [checkpoint](../HEAP-CHECKPOINT.md) for full identities and evidence.
+General cross-block VI hazard tracking
+is not introduced by this load-retirement fix.
 Historical successful-audit claims below predate the allocation-failure gates
 and must not be used as evidence that current level loading is healthy.
 

@@ -142,7 +142,13 @@ $guestFaultLines = 0
 $firstGuestFault = $null
 $started = $false
 $bytes = 0L
+$reportPath = Join-Path $build "$stem.json"
+$reportWritten = $false
+$watch = [Diagnostics.Stopwatch]::new()
 try {
+    [ordered]@{RecordedAtUtc=[DateTime]::UtcNow.ToString('o'); Sha256=$identity;
+        Status='Running'; WorkloadVerified=$false; AuditVerified=$false; Fps=$null} |
+        ConvertTo-Json | Set-Content -LiteralPath $reportPath
     & $startup -Mode TitleGameplayFirst
     $writers.out = [IO.StreamWriter]::new($outLog, $false)
     $writers.err = [IO.StreamWriter]::new($errLog, $false)
@@ -279,11 +285,24 @@ try {
     if ((Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash -ne $identity) {
         throw 'Runtime executable changed during the run.'
     }
-    $report | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $build "$stem.json")
+    $report | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $reportPath
+    $reportWritten = $true
     [pscustomobject]$report | Format-List
     if (!$completed) {
         throw 'Run did not complete the native-block workload; do not use it as a gameplay benchmark.'
     }
+} catch {
+    if (!$reportWritten) {
+        [ordered]@{
+            RecordedAtUtc=[DateTime]::UtcNow.ToString('o'); Executable=$exe; Sha256=$identity
+            Status='Incomplete'; Error=$_.Exception.Message; ElapsedSeconds=$watch.Elapsed.TotalSeconds
+            CompiledCallsLowerBound=$compiledCalls; CompiledRetryCallsLowerBound=$compiledRetryCalls
+            HeapFailureLines=$heapFailures; GuestFaultLines=$guestFaultLines; FirstGuestFault=$firstGuestFault
+            NewGameHandler=$newGameHandler; LevelPackage=$levelPackage; Presents=$markers
+            WorkloadVerified=$false; AuditVerified=$false; Fps=$null; HostInput=$false
+        } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $reportPath
+    }
+    throw
 } finally {
     if ($started -and !$process.HasExited) { $process.Kill(); $process.WaitForExit() }
     $process.Dispose()

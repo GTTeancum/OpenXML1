@@ -135,6 +135,7 @@ uint64_t CompiledVuSession::directInstructionsCompiled() const { return impl->di
 uint64_t compiledVuDrainCycle(const MIPSSTATE &s, uint64_t transferEnd)
 {
     uint64_t end = std::max<uint64_t>(s.pipeTime, transferEnd);
+    end = std::max<uint64_t>(end, s.pipeLsuEnd);
     end = std::max<uint64_t>(end, std::max(s.pipeQ.counter, s.pipeP.counter));
     for (const auto *pipe : {&s.pipeMac, &s.pipeSticky, &s.pipeClip})
         for (const auto ready : pipe->pipeTimes) end = std::max<uint64_t>(end, ready);

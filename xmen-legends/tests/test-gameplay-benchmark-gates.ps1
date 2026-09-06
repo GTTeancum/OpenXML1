@@ -161,4 +161,29 @@ foreach ($line in @(
 )) {
     if (& $recognize) { throw "Ordinary output misclassified: $line" }
 }
-'PASS gameplay benchmark: workload gates and guest-fault recognition'
+$failureCatch = $ast.Find({ param($node)
+    $node -is [System.Management.Automation.Language.CatchClauseAst] -and
+    $node.Body.Extent.Text.Contains("Status='Incomplete'")
+}, $true)
+if (!$failureCatch) { throw 'Incomplete-run reporting is missing.' }
+$failureHandler = [scriptblock]::Create($failureCatch.Body.Statements[0].Extent.Text)
+$reportPath = [IO.Path]::GetTempFileName()
+$reportWritten = $false
+$identity = 'synthetic-current-image'
+$exe = 'synthetic.exe'
+$watch = [Diagnostics.Stopwatch]::StartNew()
+try {
+    '{"WorkloadVerified":true,"Fps":999}' | Set-Content -LiteralPath $reportPath
+    try { throw 'Synthetic runtime timeout' } catch { & $failureHandler }
+    $failed = Get-Content -Raw -LiteralPath $reportPath | ConvertFrom-Json
+    if ($failed.Status -ne 'Incomplete' -or $failed.Sha256 -ne $identity -or
+        $failed.WorkloadVerified -or $failed.AuditVerified -or $null -ne $failed.Fps -or
+        $failed.Error -ne 'Synthetic runtime timeout') { throw 'A timeout retained a stale or verified result.' }
+    $reportWritten = $true
+    'preserve-completed-report' | Set-Content -LiteralPath $reportPath
+    try { throw 'Synthetic gate failure' } catch { & $failureHandler }
+    if ((Get-Content -Raw -LiteralPath $reportPath).Trim() -ne 'preserve-completed-report') {
+        throw 'Detailed completed-run failure was overwritten.'
+    }
+} finally { Remove-Item -LiteralPath $reportPath -Force }
+'PASS gameplay benchmark: workload gates, guest-fault recognition and incomplete-run reporting'

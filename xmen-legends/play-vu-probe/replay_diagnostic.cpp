@@ -549,6 +549,8 @@ int replayDiagnostic(const char *path)
             if (!timelineError.empty()) return;
             try {
                 ++timeline.events;
+                if (traceMemory && timeline.events <= 256)
+                    std::printf("[vu-event] pc=%04x cycle=%u phase=%u\n", pc, cycle, phase);
                 if (phase == 2) timeline.kick(cpu->m_State.xgkickAddress, cycle);
                 else timeline.advance(cycle);
                 if (traceMemory && (phase == 1 || phase == 3))
@@ -619,9 +621,11 @@ int replayDiagnostic(const char *path)
             throw std::runtime_error("Typed runtime import diverged from recorded-state importer");
         alignas(16) const uint32_t sentinel[] = {0x3f123456, 0x40123456, 0x41123456, 0x42123456};
         uint32_t actualRegisters[40]{};
+        struct Execution { CTestVm *vm; uint32_t budget; } execution{vm.get(), budget};
         playVuCheckRegisters([](void *context) {
-            static_cast<CTestVm *>(context)->m_executor.Execute(2 * 1048576);
-        }, vm.get(), sentinel, actualRegisters);
+            const auto &run = *static_cast<const Execution *>(context);
+            run.vm->m_executor.Execute(static_cast<int>(2 * run.budget));
+        }, &execution, sentinel, actualRegisters);
         unsigned corruptMask = 0;
         for (unsigned reg = 0; reg < 10; ++reg)
             if (std::memcmp(actualRegisters + reg * 4, sentinel, sizeof(sentinel)))
@@ -648,7 +652,27 @@ int replayDiagnostic(const char *path)
             detached.transferEnd == timeline.time;
         std::printf("[play-vu:detached-session] case=%u match=%u reason=%s runtime-accepted=0\n",
             current, unsigned(detachedMatches), detached.reason.c_str());
-        if (!detachedMatches) throw std::runtime_error("Detached session diverged from direct compiled diagnostic");
+        if (!detachedMatches)
+        {
+            std::printf("[play-vu:detached-difference] pipe=%u/%u transfer=%llu/%llu scalar-end=%llu/%llu data=%u packets=%u completion=%u\n",
+                detached.state.pipeTime, coldFinal.pipeTime,
+                static_cast<unsigned long long>(detached.transferEnd), static_cast<unsigned long long>(timeline.time),
+                static_cast<unsigned long long>(detached.scalarEnd), static_cast<unsigned long long>(directScalar.deadline()),
+                unsigned(!std::memcmp(detached.data.data(), coldData.data(), coldData.size())),
+                unsigned(detached.packets == coldStreamingPackets), unsigned(detached.completionCycles == coldCompletionCycles));
+            unsigned differences = 0;
+            for (size_t offset = 0; offset + 4 <= sizeof(coldFinal); offset += 4)
+            {
+                uint32_t actual = 0, expected = 0;
+                std::memcpy(&actual, reinterpret_cast<const uint8_t *>(&detached.state) + offset, 4);
+                std::memcpy(&expected, reinterpret_cast<const uint8_t *>(&coldFinal) + offset, 4);
+                if (actual == expected) continue;
+                if (differences++ < 16)
+                    std::printf("[play-vu:detached-word] offset=%zu value=%08x/%08x\n", offset, actual, expected);
+            }
+            std::printf("[play-vu:detached-difference] differing-words=%u\n", differences);
+            throw std::runtime_error("Detached session diverged from direct compiled diagnostic");
+        }
         const auto drained = drainControl(s, timeline.time);
         const auto runtimeOutput = PlayVuRuntimeBridge::exportState(runtimeInput, detached);
         const bool exportMatches = !std::memcmp(runtimeOutput.state.vf, s.nCOP2, sizeof(runtimeOutput.state.vf)) &&
@@ -732,7 +756,7 @@ int replayDiagnostic(const char *path)
             directScalar.reset(initialScalar);
             timelineError.clear();
             const auto start = std::chrono::steady_clock::now();
-            vm->m_executor.Execute(2 * 1048576);
+            vm->m_executor.Execute(static_cast<int>(2 * budget));
             if (!timelineError.empty()) throw std::runtime_error(timelineError);
             timeline.finish(s.pipeTime);
             elapsedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(

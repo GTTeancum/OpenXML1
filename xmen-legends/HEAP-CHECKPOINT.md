@@ -4,6 +4,65 @@ September 6, 2026. Work is local only; no pushes or PRs. Movement was confirmed
 by the user on an earlier build; attacking was not tested there. The performance
 target remains 30 FPS. No result below is an interactive handoff.
 
+## Integer Load Retirement (19:44 UTC)
+
+The tick-542 timing failure is fixed offline. ILW at PC `0x598` issues at
+relative cycle 102; its four-cycle writeback must retire at 106 even though
+the E-bit delay slot ends at 105. The compiled engine now records actual
+ILW/ILWR retirement deadlines and includes them in its existing drain/budget
+check. It excludes VI0 sinks and I-bit immediates. This is not a blanket extra
+cycle and does not implement general cross-block VI hazard tracking.
+
+Runtime test image `5119F04858CD0E9E4040503BC0817D54D28E5D648A808D1F2A627D99CBFD3EE2`
+passes all 163 VU tests, including 84 load/end/branch/sink/immediate combinations.
+Seven recordings pass full, 1-cycle and 64-cycle hybrid/retry replay (21 checks).
+Reference, native and compiled versions of the saved failure all agree on
+106 cycles and digest `0cfab35f3f93ce6f`. Fixed logs: `vu-load-*.log` in the
+active build. An initial suite run from the wrong working directory failed
+the source-enum inspection; rerunning from PS2Recomp passes the entire suite.
+
+Standalone image `0645D379850172C04B33C8306052EF16262195F705AA04DD0B15709EE36B1CEA`
+passes public checks and exact recorded architecture/memory/packet validation.
+Its direct-versus-detached test also needed equal execution budgets; the prior
+raw offset-12 mismatch was quota bookkeeping, not different arithmetic. CMake
+now explicitly labels the register-test assembly as ASM_MASM so regeneration
+does not silently omit it from the target. Optional traces remain bounded.
+
+The private failure is retained as `disc/vu-lsu-tail-failure.bin` (58,560 bytes,
+SHA `22FA0FF341D073B68F2C33CD756AE2403075C195A3EE91E81E7C5DA9DA8F8C20`).
+Combined candidate `EC87DC7FD3AA9EC4CF5FAD3C49454CA189EB4C92B448C1B8966167628AE0D9EC`
+hit the 600-second limit in the heap-gated compiled audit. At least 147,457
+compiled calls and 24,577 retries passed before shutdown, with zero logged
+allocation failures or guest/compiled faults. This is an INCOMPLETE audit,
+not a full workload pass. The latest presentation marker was index 512 at
+tick 531; higher call counts alone cannot establish matching gameplay progress
+against earlier candidates. Startup was restored and the owned process closed.
+The stale JSON from the previous candidate was removed after verifying its
+old hash; current text logs belong to `EC87DC7F...`.
+
+The benchmark now writes a fresh unverified running summary and records
+timeouts/errors as incomplete with FPS null, preserving detailed reports
+already written by ordinary workload-gate failures. Synthetic stale-summary
+and preserved-report tests pass with all existing benchmark gates. The same
+candidate also times out at 300.0145 seconds without audit/heap diagnostics:
+86,017 compiled calls, 12,289 retries, zero logged heap or guest faults, New
+Game and NYC package confirmed. Latest present is 640 at tick 677 (3,584,722
+Vulkan submits). Thus it advances beyond the old failure, but does not reach
+the 1152..1280 timing window. The new JSON correctly says Incomplete/FPS null.
+Both owned game processes closed and restored startup; no controls handoff.
+
+A process-only observation at 214.7 seconds showed 236.9 total CPU seconds;
+the dominant thread later had 223.3 CPU seconds. This points to an occupied
+CPU thread, not sufficient evidence to blame machine-wide contention. NEXT:
+profile the CURRENT healthy-heap candidate using `-PhaseProfile -CompiledVu
+-CompiledRetry -VulkanGs -InPlaceRealloc`, bounded, without another rebuild.
+Use per-thread exclusive phase costs from the slow interval; do not reuse old
+percentages from different heap/guest workloads or call this an FPS sample.
+Phase reports emit every second; detailed VU sampling only starts at tick 1000
+and will need an explicitly scoped earlier window if detailed data is needed.
+The 30 FPS goal remains unmet. All changes remain local; no image or interactive
+input was used. Runtime trace-only checkpoint: `285af18`.
+
 ## Allocation Replay And VU Blocker (19:20 UTC)
 
 Local runtime commit `ccb3f60` repairs three sources of fragmentation: split

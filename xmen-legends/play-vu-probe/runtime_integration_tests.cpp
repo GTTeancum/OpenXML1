@@ -84,6 +84,43 @@ void register_compiled_vu_producer_tests()
     MiniTest::Case("PS2VU1CompiledProducer", [](TestCase &tc)
     {
 #if defined(PS2X_TEST_COMPILED_VU_HOOK)
+        tc.Run("Compiled drain retires integer loads across E bit and branch boundaries", [](TestCase &t)
+        {
+            unsigned cases = 0;
+            for (unsigned form = 0; form < 3; ++form)
+            for (unsigned target : {0u, 1u})
+            for (int gap = -1; gap <= 6; ++gap)
+            for (bool branch : {false, true})
+            {
+                if (branch && gap < 1) continue;
+                Fixture fast, reference;
+                if (!fast.init() || !reference.init()) { t.Fail("Fixtures initialize"); return; }
+                for (auto *fx : {&fast, &reference})
+                {
+                    const uint32_t word = 0x1234;
+                    std::memcpy(fx->data, &word, 4);
+                    const uint32_t load = form == 1 ? 0x810003feu | (target << 16) :
+                        (4u << 25) | (8u << 21) | (target << 16);
+                    const uint32_t loadUpper = upperNop | (form == 2 ? 0x80000000u : 0u);
+                    fx->pair(16, load, loadUpper | (gap == 0 ? end : 0));
+                    if (gap != 0) fx->pair(uint32_t(16 + gap * 8), lowerNop, upperNop | end);
+                    if (branch) fx->pair(8, 0x40000001); // Taken B; the integer load is its delay slot.
+                }
+                { ScopedCompiledVuMode disabled(false); fast.start(1); reference.start(budget); }
+                std::string reason;
+                if (!fast.compiled(reason) || !sameArchitecture(fast.vu.state(), reference.vu.state()) ||
+                    std::memcmp(fast.data, reference.data, 16384) || fast.packets != reference.packets)
+                {
+                    t.Fail("Load retirement mismatch: form=" + std::to_string(form) + " target=" +
+                        std::to_string(target) + " gap=" + std::to_string(gap) + " branch=" +
+                        std::to_string(branch) + " cycles=" + std::to_string(fast.vu.state().cycles) +
+                        "/" + std::to_string(reference.vu.state().cycles) + " reason=" + reason);
+                    return;
+                }
+                ++cases;
+            }
+            t.Equals(cases, 84u, "Load, sink, immediate, end-delay and branch-delay cases execute");
+        });
         tc.Run("Bounded compiled retry preserves prefix effects budgets and rounding", [](TestCase &t)
         {
             const bool retry = std::getenv("PS2X_VU_COMPILED_RETRY") != nullptr;
