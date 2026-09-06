@@ -16,7 +16,7 @@ diff --git a/xmen-legends/output_mapped_final3/xmen_fn_00274970_0x274970.cpp b/x
          case 0x274c20u: goto label_274c20;
          case 0x274c30u: goto label_274c30;
          case 0x274c38u: goto label_274c38;
-@@ -868,6 +871,46 @@ label_274bfc:
+@@ -868,6 +871,49 @@ label_274bfc:
      }
      ctx->pc = 0x274C04u;
  label_274c04:
@@ -26,10 +26,13 @@ diff --git a/xmen-legends/output_mapped_final3/xmen_fn_00274970_0x274970.cpp b/x
 +        static bool firstLevelStarted = false;
 +        static uint32_t titleFrameCount = 0;
 +
-+        constexpr uint32_t levelManager = 0x00B1A220u;
-+        const uint32_t activeLevel = READ32(levelManager + 0x0C08u);
++        // Retail getter 0x3246e0 reads this singleton, independent of heap placement.
++        const uint32_t levelManager = READ32(0x00764288u);
++        const uint32_t activeLevel = levelManager >= 0x1000u && levelManager <= PS2_RAM_SIZE - 0x0C0Cu
++            ? READ32(levelManager + 0x0C08u) : 0u;
 +        const uint32_t activeLevelVtable =
-+            activeLevel != 0u ? READ32(activeLevel + 0x0EC8u) : 0u;
++            activeLevel >= 0x1000u && activeLevel <= PS2_RAM_SIZE - 0x0ECCu
++                ? READ32(activeLevel + 0x0EC8u) : 0u;
 +        if (activeLevelVtable == 0x00716070u)
 +            ++titleFrameCount;
 +        else

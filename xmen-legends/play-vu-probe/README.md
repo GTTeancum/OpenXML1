@@ -11,6 +11,10 @@ was not tested in that session. See the current TODO before launching anything.
 
 ## Bounded Compiled Retry
 
+Current follow-up: [heap investigation](../HEAP-CHECKPOINT.md) confirms allocation
+failures and fixes the test trigger's heap-address assumption. Neither allocator
+policy yet completes a healthy first-level audit; no new FPS gain is claimed.
+
 September 6: `PS2X_VU_COMPILED_RETRY=1` enables one additional compiled-drain
 attempt after at least eight cycles of normal VU1 execution. It is OFF by
 default and requires compiled mode. The remaining budget must still exceed

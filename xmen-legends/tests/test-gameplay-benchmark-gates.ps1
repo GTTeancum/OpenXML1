@@ -27,6 +27,10 @@ $guestFaultLines = 0
 $CompiledVu = $false
 $CompiledRetry = $false
 $compiledRetryCalls = 0L
+$BestFitHeap = $false
+$HeapDiagnostics = $false
+$bestFitActive = $false
+$heapFailures = 0L
 $AuditCompiledVu = $false
 $AuditBilinear = $false
 $PreparedTexture = $false
@@ -41,6 +45,18 @@ $vulkanPresents = 0L
 $vulkanSubmits = 0L
 $vulkanNonblack = 0L
 if (!(& $check)) { throw 'Healthy workload rejected.' }
+$BestFitHeap = $true
+if (& $check) { throw 'Best-fit mode accepted without execution evidence.' }
+$bestFitActive = $true
+if (!(& $check)) { throw 'Executed best-fit mode rejected.' }
+$HeapDiagnostics = $true
+if (& $check) { throw 'Heap diagnostics accepted as FPS.' }
+if (!(& $completeCheck)) { throw 'Healthy heap diagnostic workload rejected.' }
+$heapFailures = 1L
+if (& $completeCheck) { throw 'Allocation failure accepted as healthy workload.' }
+$heapFailures = 0L
+$HeapDiagnostics = $false
+$BestFitHeap = $false
 $VulkanGs = $true
 if (& $check) { throw 'GPU mode accepted without execution evidence.' }
 $vulkanActive = $true

@@ -7,6 +7,8 @@ param(
     [switch]$CaptureFrame,
     [switch]$CompiledVu,
     [switch]$CompiledRetry,
+    [switch]$BestFitHeap,
+    [switch]$HeapDiagnostics,
     [switch]$AuditCompiledVu,
     [switch]$AuditBilinear,
     [switch]$PreparedTexture,
@@ -62,6 +64,8 @@ if ($CompiledRetry) {
     if (!$CompiledVu) { throw 'CompiledRetry requires CompiledVu.' }
     $stem += '-retry'
 }
+if ($BestFitHeap) { $stem += '-best-fit' }
+if ($HeapDiagnostics) { $stem += '-heap-audit' }
 $outLog = Join-Path $build "$stem.out.log"
 $errLog = Join-Path $build "$stem.err.log"
 $start = [Diagnostics.ProcessStartInfo]::new($exe)
@@ -84,6 +88,8 @@ foreach ($key in @('PS2X_DISABLE_HOST_INPUT', 'PS2X_XMEN_HOST_CLOCK',
 $start.Environment['PS2X_RUN_VSYNC_LIMIT'] = '1400'
 if ($VulkanGs) { $start.Environment['PS2X_GS_PLAY_VULKAN'] = '1' }
 if ($CompiledRetry) { $start.Environment['PS2X_VU_COMPILED_RETRY'] = '1' }
+if ($BestFitHeap) { $start.Environment['PS2X_GUEST_BUMP_BEST_FIT'] = '1' }
+if ($HeapDiagnostics) { $start.Environment['PS2X_GUEST_BUMP_DIAGNOSTICS'] = '1' }
 if ($AuditCompiledVu -and !$CompiledVu) { throw 'AuditCompiledVu requires CompiledVu' }
 if ($AuditPreparedTexture -and !$PreparedTexture) { throw 'AuditPreparedTexture requires PreparedTexture' }
 if ($PreparedTexture) { $start.Environment['PS2X_GS_PREPARED_TEXTURE'] = '1' }
@@ -111,6 +117,8 @@ $markers = @{}
 $blockPairs = 0L
 $compiledCalls = 0L
 $compiledRetryCalls = 0L
+$bestFitActive = $false
+$heapFailures = 0L
 $bilinearSamples = 0L
 $preparedTextureActive = $false
 $preparedTextureSamples = 0L
@@ -161,6 +169,14 @@ try {
                 if ($line -match '^\[vu:blocks\] stopped .* pairs=(\d+)') { $blockPairs = [long]$Matches[1] }
                 if ($line -match '^\[vu:compiled\] accepted=(\d+)') { $compiledCalls = [long]$Matches[1] }
                 if ($line -match '^\[vu:compiled-retry\] accepted=(\d+)') { $compiledRetryCalls = [long]$Matches[1] }
+                if ($line -eq '[heap:best-fit] active=1') { $bestFitActive = $true }
+                if ($line.StartsWith('[heap:allocation-failed]')) {
+                    ++$heapFailures
+                    if ($HeapDiagnostics -and !$process.HasExited) {
+                        try { $process.Kill() }
+                        catch [InvalidOperationException] { if (!$process.HasExited) { throw } }
+                    }
+                }
                 if ($line -match '^\[gs:bilinear-audit\] samples=(\d+) mismatches=0') { $bilinearSamples = [long]$Matches[1] }
                 if ($line -eq '[gs:prepared-texture] active=1') { $preparedTextureActive = $true }
                 if ($line -eq '[gs:play-vulkan] active=1') { $vulkanActive = $true }
@@ -202,6 +218,7 @@ try {
         & (Join-Path $PSScriptRoot 'summarize-vu-coverage.ps1') -LogPath $errLog -RequireGameplaySpan
     } else { $null }
     $completed = $process.ExitCode -eq 0 -and $guestFaultLines -eq 0 -and
+        $heapFailures -eq 0 -and (!$BestFitHeap -or $bestFitActive) -and
         (!$VulkanGs -or ($vulkanActive -and $vulkanPresents -ge 1152 -and $vulkanSubmits -gt 0 -and $vulkanNonblack -gt 0)) -and
         (!$CompiledVu -or $compiledCalls -gt 0) -and
         (!$CompiledRetry -or ($CompiledVu -and $compiledRetryCalls -gt 0)) -and
@@ -211,7 +228,7 @@ try {
         $reachedLimit -and $blockPairs -gt 0 -and
         $newGameHandler -and $levelPackage -and
         $markers.ContainsKey('1152') -and $markers.ContainsKey('1280')
-    $verified = $completed -and !$AuditCompiledVu -and !$AuditBilinear -and !$AuditPreparedTexture
+    $verified = $completed -and !$AuditCompiledVu -and !$AuditBilinear -and !$AuditPreparedTexture -and !$HeapDiagnostics
     $report = [ordered]@{
         RecordedAtUtc = [DateTime]::UtcNow.ToString('o')
         Executable = $exe; Sha256 = $identity; PhaseProfile = [bool]$PhaseProfile
@@ -219,6 +236,8 @@ try {
         CpuRasterProfile = [bool]$CpuRasterProfile
         CompiledVu = [bool]$CompiledVu; CompiledCallsLowerBound = $compiledCalls
         CompiledRetry = [bool]$CompiledRetry; CompiledRetryCallsLowerBound = $compiledRetryCalls
+        BestFitHeap = [bool]$BestFitHeap; BestFitActive = $bestFitActive
+        HeapDiagnostics = [bool]$HeapDiagnostics; HeapFailureLines = $heapFailures
         VulkanGs = [bool]$VulkanGs; VulkanActive = $vulkanActive
         VulkanPresents = $vulkanPresents; VulkanSubmits = $vulkanSubmits; VulkanNonblack = $vulkanNonblack
         AuditCompiledVu = [bool]$AuditCompiledVu
