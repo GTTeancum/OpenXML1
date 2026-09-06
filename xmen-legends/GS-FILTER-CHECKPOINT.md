@@ -1,4 +1,63 @@
-# Packed Texture Filter Checkpoint
+# CPU Texture Checkpoints
+
+## Prepared Indexed Sampler
+
+September 6 local PS2Recomp checkpoint `8308463`. This is an opt-in performance
+change, not a new game build or a fix for existing graphics defects.
+`PS2X_GS_PREPARED_TEXTURE` selects a specialized indexed sampler. It selects the
+VRAM reader once per draw and reuses decoded palette colors. Ordinary CT32
+palettes are read directly from the canonical GS palette; other interpretations
+are cached until an actual CLUT load, reset, or changed CSA/CPSM/TEXA interpretation.
+Texture indices are still read from live VRAM, including self-overwriting draws.
+Pixel tracing keeps the original path.
+
+`PS2X_GS_VERIFY_TEXTURE` compares every prepared sample against the original
+sampler before publication, throwing on mismatch. It must be combined with
+the prepared-texture switch. Do not measure FPS with this audit enabled.
+The game benchmark runner does not yet expose or validate these new switches;
+add its audit-evidence/FPS-exclusion gates before using a new combined game build.
+
+Final test-only image, after locking the reference checksums:
+`0E4A7F99CAB0C2881F34723DD8BF405B819B4ADC58D3CACF3B940E9152F2BE05`.
+
+- GS suite: 90/91 both OFF and prepared+audit; sole failure is the historical
+  CSR/IMR test. No full-suite pass is claimed.
+- 1,280 cases cover five indexed formats, four palette formats, four CSA banks,
+  both filters, CLD load/skip transitions, TEXA changes, reset and live feedback.
+  Two consecutive draws exercise reuse. Fixed framebuffer hash:
+  `da0ce5b7a3b6a9e5`.
+- At least 7,340,033 texture samples matched the original sampler in the full
+  audited suite. Existing 128-case depth hash remains `e5a1e2f16d5d1336`.
+- All 161 VU tests pass with prepared texture/audit enabled.
+- Four triangle workloads retain `e0b47b3066d49e9e` (large) and
+  `0c1456a835c30feb` (small). Their checksums are now test assertions.
+
+Timing used the same renderer code in pre-checksum-assertion test image
+`8CB0E0CD3E67D86D68439270D70B40CDC1FEE839C42F2A6330230954C1538499`.
+Seven alternating OFF/ON pairs across all four workloads gave process CPU-time
+medians 734.375 / 609.375 ms, 17.02% lower; ON won six of seven pairs. This
+includes process initialization and has coarse CPU-time resolution. Individual
+wall timings were noisy: large-triangle median 367.451 / 281.647 ms, while
+small/reloading workloads did not establish consistent per-scenario gains.
+Do not turn these numbers into a gameplay FPS estimate or sustained guarantee.
+
+The initial eager-cache version regressed 6.69% when reloading before every tiny
+triangle. Direct access to ordinary CT32 palettes removes that needless decode.
+The workloads include 512 large draws and 23,424 tiny draws, with no reloads,
+reloads every eight draws, and reloads every draw. They are synthetic workloads,
+not a captured gameplay frame. Fixed logs: `gs-prepared-checks.log`,
+`gs-prepared-comparison.log`, `gs-prepared-cpu-comparison.log`, and
+`gs-prepared-vu-checks.log` in the existing build tree.
+
+Retain the change OFF by default for a subsequent performance bundle. Next
+measure actual gameplay with verified audit gates, alongside further VU work;
+do not launch another single-digit-FPS interactive handoff. Candidate `23A73821...`
+is unchanged, movement is user-confirmed, and attacking on it remains untested.
+All owned builds/tests ended. No game, input simulation, screenshots, extra
+checkout/build tree, push or PR. Removed two untracked diagnostic PGM images
+older than 12 hours (270,365 bytes); protected artifacts remain untouched.
+
+## Packed Texture Filter
 
 Local-only checkpoint, September 6, 2026. PS2Recomp commit `49442c6`.
 No pushes or pull requests.
