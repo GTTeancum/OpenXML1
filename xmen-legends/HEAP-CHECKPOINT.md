@@ -4,7 +4,66 @@ September 6, 2026. Work is local only; no pushes or PRs. Movement was confirmed
 by the user on an earlier build; attacking was not tested there. The performance
 target remains 30 FPS. No result below is an interactive handoff.
 
-## Short-Slice Native Selection (Current Work)
+## EFU Fallback Preparation (Current Work)
+
+After the rejected whole-game native-selection result, inspect another sizable
+measured gap: long reference fallbacks totaled 36.660 s in the prior budget
+profile. This is an upper bound on the relevant opportunity, not measured EFU
+time or a promised FPS gain. Short slices remain the larger cost (94.128 s).
+Do not resume small native-recipe selection sweeps without new evidence.
+
+Added isolated `play-vu-probe/efu_math.{h,cpp}` with the 13 arithmetic EFU
+functions (0x70..0x7d, excluding WAITP), normalized operands/results and result
+latencies. `evaluateRuntimeFused` explicitly targets the current runtime's
+MSVC AVX2 arithmetic, NOT a hardware oracle. It is not called by the compiled
+engine yet; `UnsupportedEfu` remains unchanged. No runtime/gameplay behavior
+or compiler instruction support has been enabled by this checkpoint.
+
+The first strict, unfused prototype failed ESADD function 112/component 0/
+sample 35: result bits 925022378 versus reference 925022379. Matched-image
+disassembly proves multiply/FMA/FMA for squared length, fused Horner polynomials,
+and EEXP's reassociated first square. The helper now expresses those operations
+explicitly with `std::fma`, compiled `/fp:strict`. Do not relax bitwise checks,
+silently change the reference arithmetic, or replace this with `std::atan`.
+
+Validation on test image SHA256
+`E38171F5B40C6A82BD4484EBC4043C1A7CB605CDCC28E2E00A9231C654D6211A`:
+
+- 4,056 helper/reference comparisons: all 13 operations, all four components,
+  signed zero, denormals, finite limits, infinity/NaN normalization and seeded
+  random words. Result bits and final drain cycles match exactly.
+- All 13 repeated-producer tests prove issue availability at latency minus one,
+  first-result visibility while the second is pending, MFP observing that first
+  result, and final P/elapsed cycles matching the second result's deadline.
+- All 165 VU tests pass. Fresh saved EFU replay passes 128 repetitions, 519,552
+  total cycles, digest `6c07d94c17532259`; compiled commits remain ZERO as expected.
+  This preserves fallback, not evidence of accelerated EFU execution.
+
+Fixed logs: `vu-efu-math.log`, `vu-efu-suite.log`, `vu-efu-saved.log` in the
+active build tree. Rebuild with `build-below-normal.ps1 -Target ps2x_tests`;
+fresh test filter `EFU` selects the new and existing EFU checks. No new build
+tree, image, game launch, push or PR. Game candidate remains `8065B73C...`,
+the rejected 4.664292-FPS short-recipe experiment; 30 FPS is still unmet.
+
+NEXT implementation requirements before lifting `UnsupportedEfu`:
+
+1. Add an optional compiled EFU hook using the validated helper, preserving the
+   original Play path when absent. Keep all staged outputs private until audit.
+2. Correct the hook's operand metadata: pinned Play's vector EFU reflection
+   uses encoded destination bits instead of the operation's actual source lanes;
+   scalar EFU reflection lacks resource synchronization. EATAN (function 0x7c)
+   lacks the normal implementation/reflection entry. Never ignore dependencies.
+3. Model resource availability and result visibility separately. The existing
+   single P counter cannot discard the first result when the next operation
+   issues one cycle before it retires. MFP reads committed P without an implicit
+   wait; WAITP waits for results. Carry both pending values through that overlap.
+4. Preserve dynamic wait aging and transfer timing, including block boundaries
+   and branch delay slots. The existing guarded Q-wait partition/aging path is
+   a useful pattern, not a proof that substituting P is sufficient.
+5. Validate public producer/wait/read/dependency/branch cases and the private
+   saved failure plus full recordings before a game audit or FPS candidate.
+
+## Short-Slice Native Selection (Previous Experiment)
 
 The existing native block executor already preserves pending pipeline state
 within a 64-cycle slice. The old weighted recipe executes zero blocks in the

@@ -9,6 +9,23 @@ Bounded first-level timing is recorded below. The user subsequently confirmed
 movement on the performance candidate, but rejected its roughly 5 FPS; combat
 was not tested in that session. See the current TODO before launching anything.
 
+## EFU Compatibility Preparation
+
+`efu_math.cpp` implements all 13 EFU arithmetic functions against the current
+runtime's fused MSVC AVX2 behavior, with explicit normalization and result
+latencies. `/fp:strict` plus explicit `std::fma` preserves the verified operation
+order. This is a compatibility helper, not a hardware-accuracy claim.
+All 4,056 differential numerical/latency cases and 13 overlapping-producer/MFP
+timing cases pass; the full runtime suite now has 165 passing VU tests.
+
+The helper is NOT wired into `CompiledVuSession`. Its EFU rejection remains
+unchanged, and the saved real-game EFU case still makes zero compiled commits
+while matching replay digest `6c07d94c17532259`. Do not remove the guard yet:
+operand metadata, missing EATAN support, overlapping pending P values, dynamic
+wait aging and graphics timing still need integration and exact validation.
+See `../HEAP-CHECKPOINT.md` for the ordered prerequisites and current build hash.
+No new gameplay executable, launch, or FPS result accompanies this preparation.
+
 ## Short-Slice Native Selection
 
 The current experiment feeds the existing canonical-state native block engine

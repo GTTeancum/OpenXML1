@@ -1,4 +1,5 @@
 #include "runtime_adapter.h"
+#include "efu_math.h"
 #include "MiniTest.h"
 #include "runtime/ps2_vu_compiled_state.h"
 #include "runtime/ps2_vu1_replay.h"
@@ -84,6 +85,111 @@ void register_compiled_vu_producer_tests()
     MiniTest::Case("PS2VU1CompiledProducer", [](TestCase &tc)
     {
 #if defined(PS2X_TEST_COMPILED_VU_HOOK)
+        tc.Run("EFU helper matches reference arithmetic and result latency", [](TestCase &t)
+        {
+            Fixture reference;
+            if (!reference.init()) { t.Fail("Fixture initializes"); return; }
+            ScopedCompiledVuMode disabled(false);
+            struct RoundingScope
+            {
+                int saved = std::fegetround();
+                ~RoundingScope() { std::fesetround(saved); }
+            } rounding;
+            t.IsTrue(std::fesetround(FE_TOWARDZERO) == 0, "VU rounding is available");
+            constexpr uint32_t edges[] = {0, 0x80000000, 1, 0x807fffff,
+                0x00800000, 0x3f000000, 0x3f800000, 0xbf800000, 0x40000000,
+                0x7f7fffff, 0xff7fffff, 0x7f800000, 0xff800000, 0x7fc12345};
+            uint32_t random = 0x5e713892;
+            unsigned cases = 0;
+            for (uint32_t function = 0x70; function <= 0x7d; ++function)
+            {
+                if (function == 0x7b) continue;
+                for (unsigned component = 0; component < 4; ++component)
+                for (unsigned sample = 0; sample < 78; ++sample)
+                {
+                    std::array<uint32_t, 4> words{};
+                    for (unsigned lane = 0; lane < 4; ++lane)
+                    {
+                        random = random * 1664525u + 1013904223u;
+                        words[lane] = sample < std::size(edges) ?
+                            edges[(sample + lane) % std::size(edges)] : random;
+                    }
+                    reference.vu.reset();
+                    std::memcpy(reference.vu.state().vf[1], words.data(), sizeof(words));
+                    reference.vu.state().p = -123.0f;
+                    // Lower T3 encoding, paired with E so final drain exposes P's deadline.
+                    const uint32_t lower = 0x8000003cu | (function & 3u) |
+                        ((function & 0x7cu) << 4) | (1u << 11) | (component << 21);
+                    reference.pair(0, lower, upperNop | end);
+                    const auto result = CompiledEfu::evaluateRuntimeFused(function, component, words);
+                    reference.start(budget);
+                    uint32_t actual;
+                    std::memcpy(&actual, &reference.vu.state().p, sizeof(actual));
+                    if (actual != result.bits || reference.vu.state().cycles != result.latency)
+                    {
+                        t.Fail("EFU function=" + std::to_string(function) + " component=" +
+                            std::to_string(component) + " sample=" + std::to_string(sample) +
+                            " actual=" + std::to_string(actual) + " expected=" +
+                            std::to_string(result.bits) + " cycles=" +
+                            std::to_string(reference.vu.state().cycles));
+                        return;
+                    }
+                    ++cases;
+                }
+            }
+            t.IsTrue(cases == 4056, "All 13 EFU operations, components and edge/random inputs match");
+            bool rejected = false;
+            try { (void)CompiledEfu::evaluateRuntimeFused(0x7b, 0, {}); }
+            catch (const std::invalid_argument &) { rejected = true; }
+            t.IsTrue(rejected, "WAITP is not arithmetic");
+        });
+
+        tc.Run("EFU issue availability precedes result visibility by one cycle", [](TestCase &t)
+        {
+            Fixture reference;
+            if (!reference.init()) { t.Fail("Fixture initializes"); return; }
+            ScopedCompiledVuMode disabled(false);
+            const int savedRounding = std::fegetround();
+            struct RestoreRounding { int mode; ~RestoreRounding() { std::fesetround(mode); } } restore{savedRounding};
+            if (std::fesetround(FE_TOWARDZERO)) { t.Fail("VU rounding unavailable"); return; }
+            const std::array<uint32_t, 4> first = {0x40000000, 0x40400000, 0x40800000, 0x40a00000};
+            const std::array<uint32_t, 4> second = {0x3f800000, 0x40000000, 0x40400000, 0x40800000};
+            constexpr uint32_t mfp3 = 0x81e3067c; // MFP.xyzw vf3,P
+            for (uint32_t function = 0x70; function <= 0x7d; ++function)
+            {
+                if (function == 0x7b) continue;
+                const auto a = CompiledEfu::evaluateRuntimeFused(function, 0, first);
+                const auto b = CompiledEfu::evaluateRuntimeFused(function, 0, second);
+                reference.vu.reset();
+                std::memcpy(reference.vu.state().vf[1], first.data(), sizeof(first));
+                std::memcpy(reference.vu.state().vf[2], second.data(), sizeof(second));
+                reference.vu.state().p = -123.0f;
+                const uint32_t opcode = 0x8000003cu | (function & 3u) | ((function & 0x7cu) << 4);
+                reference.pair(0, opcode | (1u << 11));
+                reference.pair(8, opcode | (2u << 11), upperNop | end);
+                reference.pair(16, mfp3);
+                reference.start(1);
+                reference.resume(a.latency - 1);
+                uint32_t actual;
+                std::memcpy(&actual, &reference.vu.state().p, sizeof(actual));
+                if (reference.vu.state().pc != 16 || reference.vu.state().cycles != a.latency || actual != a.bits)
+                {
+                    t.Fail("Second EFU must issue at first latency minus one, retaining the first result");
+                    return;
+                }
+                reference.resume(budget);
+                std::memcpy(&actual, &reference.vu.state().p, sizeof(actual));
+                t.IsTrue(actual == b.bits, "Final P is the second result");
+                t.IsTrue(reference.vu.state().cycles == a.latency - 1 + b.latency,
+                    "Final drain uses result visibility, not resource availability");
+                for (unsigned lane = 0; lane < 4; ++lane)
+                {
+                    std::memcpy(&actual, &reference.vu.state().vf[3][lane], sizeof(actual));
+                    t.IsTrue(actual == a.bits, "MFP observes first result while the second is pending");
+                }
+            }
+        });
+
         tc.Run("Compiled drain retires integer loads across E bit and branch boundaries", [](TestCase &t)
         {
             unsigned cases = 0;
