@@ -2,6 +2,8 @@
 
 ## Immediate Performance Target
 
+- Isolated Play! VU probe now builds and passes 21 upstream tests plus four budget checks and one graphics-callback contract check. Reproducible harness and source pins are in `play-vu-probe/README.md`; executable SHA `308ED2C1...`. Reference/build total is approximately 70 MiB, no extra PS2Recomp clone or game binary. It is not integrated or timed against the current VU engine yet.
+- Direct engine substitution is ruled out by measured API differences: `Execute(1)` can execute 66 pipeline cycles, quotas count instruction words, and XGKICK callbacks see block-start pipe time after the following lower store. Next build a cycle/graphics-aware bridge and compare memory/packets before throughput claims. Existing private captures contain mid-program state (including active PATH1 in several spread records); visible-register-only import would be invalid. No new game run or screenshot occurred in this investigation.
 - The user's target is sustained 30 FPS in controllable first-level gameplay. 20 FPS is only an interim checkpoint requested within the next few hours, not acceptance or goal completion. Current verified measurements are still roughly 4 FPS; no delivery-time guarantee is established.
 - Stop treating percent-level instruction tweaks as sufficient progress toward responsiveness. Investigate block-level VU execution and drawing cost reductions, preserving comparison paths and checking complete game workloads before claiming a gain. The prior phase split was about 57% VU / 30% GS, so both paths matter.
 - No ready-made GPU backend or replacement VU engine was identified in the current upstream PR inventory. Evaluate a larger execution replacement in isolation; the earlier guest fault remains open independently.
