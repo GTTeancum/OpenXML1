@@ -79,6 +79,8 @@ $blockPairs = 0L
 $reachedLimit = $false
 $newGameHandler = $false
 $levelPackage = $false
+$guestFaultLines = 0
+$firstGuestFault = $null
 $started = $false
 $bytes = 0L
 try {
@@ -117,6 +119,12 @@ try {
                 if ($line -match '^\[vu:blocks\] stopped .* pairs=(\d+)') { $blockPairs = [long]$Matches[1] }
                 if ($line -match '^\[xmen-new-?game-handler\]') { $newGameHandler = $true }
                 if ($line.Contains('path="maps/nyc/alison/nyc1_1_1.igb"')) { $levelPackage = $true }
+                if ($line -match '^\[(?:ee-thread:missing-pc|guest-branch:missing-target)\]|^Error during program execution:') {
+                    ++$guestFaultLines
+                    if ($null -eq $firstGuestFault) {
+                        $firstGuestFault = $line.Substring(0, [Math]::Min(1024, $line.Length))
+                    }
+                }
                 $tasks[$key] = $streams[$key].ReadLineAsync()
                 if ($watch.Elapsed.TotalSeconds -gt $TimeoutSeconds) { throw 'Runtime timed out.' }
             }
@@ -134,7 +142,8 @@ try {
     $coverage = if ($CoverageProfile) {
         & (Join-Path $PSScriptRoot 'summarize-vu-coverage.ps1') -LogPath $errLog -RequireGameplaySpan
     } else { $null }
-    $verified = $process.ExitCode -eq 0 -and $reachedLimit -and $blockPairs -gt 0 -and
+    $verified = $process.ExitCode -eq 0 -and $guestFaultLines -eq 0 -and
+        $reachedLimit -and $blockPairs -gt 0 -and
         $newGameHandler -and $levelPackage -and
         $markers.ContainsKey('1152') -and $markers.ContainsKey('1280')
     $report = [ordered]@{
@@ -144,6 +153,7 @@ try {
         Coverage = $coverage
         StartupMode = 'TitleGameplayFirst'; HostInput = $false
         ExitCode = $process.ExitCode; ReachedLimit = $reachedLimit; BlockPairs = $blockPairs
+        GuestFaultLines = $guestFaultLines; FirstGuestFault = $firstGuestFault
         NewGameHandler = $newGameHandler; LevelPackage = $levelPackage; WorkloadVerified = $verified
         ElapsedSeconds = $watch.Elapsed.TotalSeconds; Presents = $markers
         Frames = 128; FrameSeconds = $null; Fps = $null

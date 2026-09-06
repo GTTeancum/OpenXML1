@@ -4,6 +4,48 @@ The bring-up runtime has an opt-in, process-local VU1 recorder. Use it to check
 and time interpreter changes against actual game work without repeating startup.
 This is not a replacement for first-level gameplay validation.
 
+## One-Cycle Register Forwarding
+
+Regression `a36c659` checks all 16 ACC masks, four signed VI boundary values,
+and both presence/absence of an older integer load. Every case observes zero-
+and one-cycle slices, old-value branch backup, VI0, ACC lane bits, and delayed
+MADD output. Its serialized-state/memory fingerprint `00d374d94b9195ad` was
+recorded before the runtime change and remains identical afterward.
+
+Runtime `fd41350` preserves the sequence counters and latest-writer fields but
+avoids queuing ACC and one-cycle VI results when their incoming queue is empty.
+The slot that the queued path would consume is still cleared, preserving
+canonical serialized state. Four-cycle loads and nonempty queues retain the
+original behavior. Readiness and branch backup remain unchanged.
+
+Test image `362DA450EA93D41BF5550AF8FBE0E586C80DC068C7A40944A5BD52D0BFDEE65F`
+passes 145/145 VU tests and both recordings at normal/1/8/16/64-cycle slicing.
+Exact digests, cycles and coverage match baseline. Seven alternating comparisons
+against the same-test queued image
+`7A353F68CDA6E8198501D2AD1BE8AD6A8A7BEE2EAEBE657B23D0777CDF1ECB8B`:
+
+| Capture | Repeats | Baseline ms | Candidate ms | Reduction | Wins |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original | 1024 | 1638.743 | 1596.701 | 2.566% | 6/7 |
+| Spread | 2048 | 1391.683 | 1360.304 | 2.255% | 7/7 |
+
+These are approximate shared-host VU timings, not gameplay FPS gains. The
+test map timestamp is `0x6a9cfde7`; earlier fixed execution profiles have not
+yet been refreshed for it. Upstream does not have the local queue masks, so
+an upstream adaptation requires separate correctness and timing validation.
+
+Whole-game acceptance is still pending. Candidate
+`61E24D60BF559B6BA7382E498905D6287171E8F3A5DF738D99CAB029E6D91D09`
+first logged guest PC `0xa3a4f0` / return address `0x396e84` after present 1152;
+the fixed gameplay-failure logs preserve it. The user manually closed a
+subsequent test. Their requested unchanged-binary restart completed at
+2026-09-06 06:05 UTC with all workload gates, zero logged guest faults, and
+startup restored: 128 presents in 32.6763735 seconds (3.91720 FPS).
+One clean repeat does not resolve the earlier fault or prove a gameplay speedup.
+The benchmark now rejects logged guest faults even with a zero host exit code;
+`tests/test-gameplay-benchmark-gates.ps1` covers this guard. Upstream runtime
+submission is held pending investigation; only draft public tests exist there.
+
 ## Native Store Optimization
 
 The final store implementation is PS2Recomp `ade0d08`.
