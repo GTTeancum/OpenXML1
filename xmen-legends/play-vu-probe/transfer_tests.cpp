@@ -2,9 +2,71 @@
 #include "transfer_timeline.h"
 #include "TestVm.h"
 #include "VuAssembler.h"
+#include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <string>
+
+static bool runBulkTransferTests()
+{
+    unsigned cases = 0;
+    for (unsigned format : {0u, 1u, 2u, 3u})
+    for (unsigned registers : {1u, 3u, 16u})
+    for (unsigned loops : {0u, 1u, 127u, 513u})
+    for (unsigned source : {0u, 1023u})
+    for (unsigned step : {1u, 7u, 97u, 65536u})
+    {
+        const unsigned payload = format == 0 ? loops * registers * 16 :
+            format == 1 ? ((loops * registers + 1) / 2) * 16 : loops * 16;
+        if (payload + 16 > 65536) continue;
+        std::array<uint8_t, 16384> memory;
+        for (size_t i = 0; i < memory.size(); ++i) memory[i] = uint8_t(i * 37 + i / 256);
+        const uint64_t tag = loops | 0x8000ull | (uint64_t(format) << 58) |
+            (uint64_t(registers & 15) << 60);
+        std::memcpy(memory.data() + source * 16, &tag, 8);
+        TransferTimeline bulk(memory.data()), single(memory.data());
+        bulk.kick(source, 0);
+        single.kick(source, 0);
+        const uint64_t completion = 1 + (payload / 16) * 2;
+        uint64_t cycle = 0;
+        while (cycle < completion)
+        {
+            const uint64_t target = std::min<uint64_t>(cycle + step, completion);
+            bulk.advance(target);
+            while (cycle < target) single.advance(++cycle);
+            // A VU store happens after this observation, never before ready reads.
+            if (payload && step != 65536)
+                memory[(source * 16 + 16 + (cycle * 13) % payload) & 16383] ^= 0x5a;
+            if (bulk.packets != single.packets ||
+                bulk.completionCycles != single.completionCycles || bulk.time != single.time)
+                return false;
+        }
+        if (bulk.packets.size() != 1 || bulk.packets[0].size() != payload + 16 ||
+            bulk.completionCycles != std::vector<uint64_t>{completion}) return false;
+        ++cases;
+    }
+    for (unsigned format : {0u, 1u, 2u, 3u})
+    {
+        std::array<uint8_t, 16384> memory{};
+        const uint64_t emptyTag = 0x1000000000000000ull;
+        const uint64_t endTag = 3ull | 0x8000ull | (uint64_t(format) << 58) | (3ull << 60);
+        std::memcpy(memory.data() + 16368, &emptyTag, 8);
+        std::memcpy(memory.data(), &endTag, 8);
+        const unsigned payloadQwords = format == 0 ? 9 : format == 1 ? 5 : 3;
+        const uint64_t completion = 3 + payloadQwords * 2;
+        TransferTimeline bulk(memory.data()), single(memory.data());
+        bulk.kick(1023, 0);
+        single.kick(1023, 0);
+        bulk.finish(0);
+        for (uint64_t cycle = 0; cycle <= completion; ++cycle) single.advance(cycle);
+        if (bulk.packets != single.packets || bulk.completionCycles != single.completionCycles ||
+            bulk.time != completion || bulk.completionCycles != std::vector<uint64_t>{completion}) return false;
+        ++cases;
+    }
+    std::printf("[play-vu:bulk-transfer] cases=%u passed=1\n", cases);
+    return true;
+}
 
 static bool runXgkickWaitTests()
 {
@@ -90,6 +152,7 @@ static bool runXgkickWaitTests()
 
 bool runTransferTests()
 {
+    if (!runBulkTransferTests()) return false;
     for (unsigned mode = 0; mode < 8; ++mode)
     {
         auto vm = std::make_unique<CTestVm>();

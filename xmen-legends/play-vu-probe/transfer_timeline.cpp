@@ -1,4 +1,5 @@
 #include "transfer_timeline.h"
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
 
@@ -22,8 +23,22 @@ void TransferTimeline::advance(uint64_t cycle)
     {
         if (packet.size() >= 65536) throw std::runtime_error("Timeline packet exceeds 64 KiB");
         const size_t offset = packet.size();
-        for (unsigned byte = 0; byte < 16; ++byte)
-            packet.push_back(memory[(source + offset + byte) & 16383u]);
+        // Memory is stable within this observation. Never read beyond the
+        // ready cycle or a known GIFtag boundary; unknown tags are read alone.
+        const uint64_t available = (cycle - nextRead) / 2 + 1;
+        const size_t qwords = tagEnd ? static_cast<size_t>(std::min<uint64_t>(
+            available, (tagEnd - offset) / 16)) : 1;
+        const size_t bytes = qwords * 16;
+        packet.resize(offset + bytes);
+        for (size_t copied = 0; copied < bytes;)
+        {
+            const size_t address = (source + offset + copied) & 16383u;
+            const size_t count = std::min(bytes - copied, 16384 - address);
+            std::memcpy(packet.data() + offset + copied, memory + address, count);
+            copied += count;
+        }
+        const uint64_t lastRead = nextRead + (qwords - 1) * 2;
+        nextRead += qwords * 2;
         if (!tagEnd)
         {
             uint64_t tag = 0;
@@ -47,12 +62,11 @@ void TransferTimeline::advance(uint64_t cycle)
                     throw std::runtime_error("Staged VU graphics exceed 1 MiB");
                 completedBytes += packet.size();
                 packets.push_back(packet);
-                completionCycles.push_back(nextRead);
+                completionCycles.push_back(lastRead);
                 active = false;
             }
             tagEnd = 0;
         }
-        nextRead += 2;
     }
     time = cycle;
 }
@@ -72,5 +86,9 @@ void TransferTimeline::kick(uint32_t qword, uint64_t cycle)
 void TransferTimeline::finish(uint64_t cycle)
 {
     advance(cycle);
-    while (active) advance(nextRead);
+    while (active)
+    {
+        const size_t qwords = tagEnd ? (tagEnd - packet.size()) / 16 : 1;
+        advance(nextRead + (qwords - 1) * 2);
+    }
 }

@@ -7,6 +7,53 @@ PS2Recomp state header. The standalone probe does not read the ISO or create a
 game window; the optional runtime extension below now connects it to the game.
 Bounded first-level timing is recorded below; there is no interactive handoff yet.
 
+## Bulk Transfer Checkpoint
+
+The existing `A8B0EF85...` game candidate completed a compiled-on phase/CPU-raster
+profile at 2026-09-06 11:13 UTC, with verified gameplay markers, exit 0 and zero
+logged guest faults. Exclusive measured work over ticks 1100..1400 was 47.59%
+VU, 36.82% GS, 8.08% guest and 5.04% other transfers. The 129 raster reports for
+presents 1152..1280 averaged 64.159 ms and 23,423 submissions per frame. This
+profile is not an FPS benchmark. Both VU and rendering need substantial savings
+to reach 30 FPS; VU-only work cannot remove the current raster cost.
+
+A bounded replay sampler also identified byte-vector appends and transfer
+observation among the hot functions. Its successful 2,048-repeat run covered
+all 32 original records (101 execution samples, 34 outside the test module,
+15 unresolved external addresses). This is directional evidence, not a complete
+game profile. A preceding 4,096-repeat attempt hit the replay cycle budget and
+was discarded; the fixed sampler log contains only the successful run.
+
+The local transfer path now copies ready payload blocks instead of appending
+each byte. Copies stop at the observation cycle, GIFtag boundary and memory
+wrap; `finish` advances whole known payloads. Session and bridge outputs move
+packet ownership instead of copying payloads twice, and an expected session
+rejection returns normally rather than throwing another exception.
+
+Verification:
+
+- 372 new standalone cases compare bulk observations with single-cycle reads,
+  including intervening memory stores, all GIF formats, zero-loop tags, odd
+  REGLIST counts, 16-register encoding, wrapping and chained tags.
+- All existing standalone contracts and 21 unchanged upstream VU tests pass.
+  Probe SHA: `C68B5924E548D18695331E739D85BD8412FF05C5A8626F9EF419374E8598B79A`.
+- Runtime SHA: `323E5CEB707D62E88ED6BE9B712E6058E36FAAD568F01C838214ED5BB4E3A4C7`.
+  All 161 VU tests, ten original replay/budget checks, hybrid captures and four
+  saved failure replays pass with unchanged bytes, state, cycles and digests.
+- Serial three-round 256-repeat hybrid medians changed from 173.960 to
+  162.568 ms (original capture) and 115.178 to 108.471 ms (spread), about 6.5%
+  and 5.8% lower execution time. Original-engine controls remained near
+  382.709/382.984 ms and 161.987/160.966 ms. An earlier after-change timing run
+  overlapped the VU suite and was discarded before the serial measurements.
+
+No new game executable was linked for this isolated improvement. Current game
+FPS remains the prior 5.64-on/4.77-off pair below, not an extrapolated rate.
+Keep this transfer improvement for the next performance bundle. Next target
+the CPU raster path's repeated per-pixel texture sampling and write-state work,
+with differential framebuffer/depth validation before a combined game audit.
+No images, additional checkout/build tree, push or PR were created. All owned
+profile/build/test processes are closed and startup scripts are restored.
+
 ## Q, Native-Call And Conversion Corrections
 
 The two subsequent game recordings exposed separate compiler defects, now

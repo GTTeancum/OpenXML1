@@ -181,8 +181,8 @@ CompiledVuSession::Result CompiledVuSession::run(const std::array<uint8_t, 16384
         if (drainedCycle > budget) throw std::runtime_error("Compiled drain exceeded elapsed-cycle budget");
         result.state = vm.cpu.m_State;
         result.data = vm.data;
-        result.packets = vm.timeline.packets;
-        result.completionCycles = vm.timeline.completionCycles;
+        result.packets = std::move(vm.timeline.packets);
+        result.completionCycles = std::move(vm.timeline.completionCycles);
         result.transferEnd = vm.timeline.time;
         result.drainedCycle = drainedCycle;
         result.scalarStatus = vm.scalarFlags.finish(drainedCycle);

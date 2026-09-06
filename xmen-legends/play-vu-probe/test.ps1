@@ -42,6 +42,9 @@ try {
     if (([regex]::Matches($output, '\[play-vu:transfer-test\] mode=\d+ passed=1')).Count -ne 8) {
         throw 'Compiled transfer-timing regressions did not pass.'
     }
+    if (!$output.Contains('[play-vu:bulk-transfer] cases=372 passed=1')) {
+        throw 'Bulk transfer timing, mutation, wrapping and tag-chain regressions did not pass.'
+    }
     if (!$output.Contains('[play-vu:pending-import-test] passed=1 delayed-read-cycles=6')) {
         throw 'Pending VU-state import regression did not pass.'
     }

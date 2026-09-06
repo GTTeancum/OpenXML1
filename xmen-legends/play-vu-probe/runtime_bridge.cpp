@@ -150,7 +150,7 @@ MIPSSTATE PlayVuRuntimeBridge::importState(const VUCompiledState::Input &input)
 }
 
 VUCompiledState::Output PlayVuRuntimeBridge::exportState(const VUCompiledState::Input &input,
-    const CompiledVuSession::Result &result)
+    CompiledVuSession::Result result)
 {
     const auto &s = result.state;
     if (!result.executed || !result.scalarFlagsValid || s.nHasException != MIPS_EXCEPTION_VU_EBIT ||
@@ -191,7 +191,7 @@ VUCompiledState::Output PlayVuRuntimeBridge::exportState(const VUCompiledState::
         if (!result.completionCycles[i] || result.completionCycles[i] > result.drainedCycle ||
             (i && result.completionCycles[i] < result.completionCycles[i - 1]))
             throw std::runtime_error("Invalid compiled packet completion time");
-        output.packets.push_back({result.completionCycles[i], result.packets[i]});
+        output.packets.push_back({result.completionCycles[i], std::move(result.packets[i])});
     }
     return output;
 }
@@ -204,9 +204,13 @@ PlayVuRuntimeBridge::Result PlayVuRuntimeBridge::evaluate(const VUCompiledState:
     {
         const auto imported = importState(input);
         const auto scalar = importScalarFlags(input);
-        const auto compiled = session.run(code, data, imported, input.budget, input.state.top, input.state.itop, &scalar);
-        if (!compiled.executed) throw std::runtime_error(compiled.reason);
-        result.output = exportState(input, compiled);
+        auto compiled = session.run(code, data, imported, input.budget, input.state.top, input.state.itop, &scalar);
+        if (!compiled.executed)
+        {
+            result.reason = std::move(compiled.reason);
+            return result;
+        }
+        result.output = exportState(input, std::move(compiled));
         result.evaluated = true;
     }
     catch (const std::exception &e)
