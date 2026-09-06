@@ -269,6 +269,39 @@ No game binary was built or launched. The wait-enabled path has no controlled
 speed comparison yet; neither earlier speedup figure establishes its performance.
 Do not promote it into gameplay on the basis of transfer timing alone.
 
+## Idle Scalar Import Fix
+
+A cold memory-write comparison identified a state-import bug, not a Play!
+arithmetic bug: Q/P architectural values were copied but their idle pipeline's
+held values remained zero. Play! republishes the held value on a read or WAIT,
+even with no outstanding scalar operation. Import now initializes both mirrors
+and held values, with zero remaining latency. Pending scalar operations are still
+rejected by the importer.
+
+A public synthetic test reads imported Q through MULq and executes WAITQ/WAITP.
+Before the fix, all three results became zero (image `60CEF076...`, exit 8).
+After the fix, VF2.x/Q remain 0.5, P remains 0.25, and the program takes four
+cycles. All prior public tests and both private diagnostics still run successfully
+on image `6E00516C8DD628CA03954A621328F11F0B9931B8883F2B820B094585A75CA681`.
+
+Spread case 9's first divergent vertex write at PC `0x2b88`, cycle 7, offset
+`0x27d0` now matches the baseline instead of writing zero for its third component.
+Its packet-byte differences fall from 78 to 59, and final memory-byte differences
+from 176 to 153. Case 29 falls from 35 to 16 packet-byte differences and now has
+32 differing memory bytes. All 22 eligible records still match transfer completion
+times. Numeric/state differences remain; `accepted=0` is unchanged.
+
+For a bounded cold-only memory trace:
+
+```powershell
+& ./xmen-legends/play-vu-probe/test.ps1 -ReplayPath xmen-legends/disc/vu-replay-spread.bin -MemoryTraceCase 9
+```
+
+Only changed 16-byte memory rows are printed, capped at 4096 rows per selected
+case. This uses the optional store observer; trace work is disabled before warm
+repetitions. Matching baseline tracing is documented in `../VU-REPLAY.md`.
+Private trace logs stay ignored and reuse two small fixed files, not new captures.
+
 Next: bridge exact short-cycle budgets and validate architectural results,
 memory writes, and packet ordering against the existing private recordings before
 measuring throughput. Those recordings contain mid-program state, not fresh VU

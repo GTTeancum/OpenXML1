@@ -8,6 +8,7 @@
 #include <array>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <stdexcept>
@@ -94,6 +95,15 @@ void initializeFlags(FLAG_PIPELINE &pipeline, uint32_t value)
 {
     pipeline = {};
     std::fill(std::begin(pipeline.values), std::end(pipeline.values), value);
+}
+
+void importScalars(MIPSSTATE &s, const Bytes &state)
+{
+    s.nCOP2Q = static_cast<uint32_t>(at(state, 593));
+    s.nCOP2P = static_cast<uint32_t>(at(state, 597));
+    // An idle Play! pipeline still republishes its held value on reads/waits.
+    s.pipeQ = {0, s.nCOP2Q};
+    s.pipeP = {0, s.nCOP2P};
 }
 
 void importPending(MIPSSTATE &s, const Bytes &state)
@@ -206,6 +216,30 @@ unsigned differences(const uint8_t *actual, const Bytes &expected)
 
 bool pendingImportTests()
 {
+    {
+        Bytes scalarState(4682);
+        const uint32_t q = 0x3f000000, p = 0x3e800000;
+        std::memcpy(scalarState.data() + 593, &q, 4);
+        std::memcpy(scalarState.data() + 597, &p, 4);
+        auto vm = std::make_unique<CTestVm>();
+        vm->Reset();
+        auto &s = vm->m_cpu.m_State;
+        importScalars(s, scalarState);
+        s.nCOP2[1].nV0 = 0x3f800000;
+        {
+            CVuAssembler a(reinterpret_cast<uint32 *>(vm->m_microMem));
+            a.Write(CVuAssembler::Upper::MULq(CVuAssembler::DEST_X, CVuAssembler::VF2,
+                CVuAssembler::VF1), CVuAssembler::Lower::NOP());
+            a.Write(CVuAssembler::Upper::NOP(), CVuAssembler::Lower::WAITQ());
+            a.Write(CVuAssembler::Upper::NOP() | CVuAssembler::Upper::E_BIT, CVuAssembler::Lower::WAITP());
+            a.Write(CVuAssembler::Upper::NOP(), CVuAssembler::Lower::NOP());
+        }
+        vm->ExecuteTest(0);
+        const bool passed = s.nCOP2[2].nV0 == q && s.nCOP2Q == q && s.nCOP2P == p && s.pipeTime == 4;
+        std::printf("[play-vu:scalar-import-test] passed=%u vf=%08x q=%08x p=%08x\n",
+            unsigned(passed), s.nCOP2[2].nV0, s.nCOP2Q, s.nCOP2P);
+        if (!passed) return false;
+    }
     Bytes state(4682);
     const auto put = [&](size_t offset, uint64_t value, size_t bytes = 4) {
         for (size_t byte = 0; byte < bytes; ++byte) state.at(offset + byte) = static_cast<uint8_t>(value >> (8 * byte));
@@ -293,6 +327,14 @@ bool pendingImportTests()
 
 int replayDiagnostic(const char *path)
 {
+    unsigned memoryTraceCase = 64;
+    if (const char *value = std::getenv("PS2X_VU_REPLAY_MEMORY_TRACE_CASE"))
+    {
+        char *end = nullptr;
+        const auto parsed = std::strtoul(value, &end, 10);
+        if (end == value || *end || parsed >= 64) throw std::runtime_error("Invalid VU memory trace case");
+        memoryTraceCase = static_cast<unsigned>(parsed);
+    }
     std::ifstream input(path, std::ios::binary | std::ios::ate);
     if (!input) throw std::runtime_error("Cannot open private replay");
     const auto length = input.tellg();
@@ -328,8 +370,7 @@ int replayDiagnostic(const char *path)
         std::memcpy(s.nCOP2, before.data() + 1, 512);
         std::memcpy(s.nCOP2VI, before.data() + 513, 64);
         std::memcpy(&s.nCOP2A, before.data() + 577, 16);
-        s.nCOP2Q = static_cast<uint32_t>(at(before, 593));
-        s.nCOP2P = static_cast<uint32_t>(at(before, 597));
+        importScalars(s, before);
         s.nCOP2I = static_cast<uint32_t>(at(before, 601));
         s.nCOP2R = static_cast<uint32_t>(at(before, 605));
         s.nPC = static_cast<uint32_t>(at(before, 609));
@@ -351,12 +392,26 @@ int replayDiagnostic(const char *path)
         std::string callbackError;
         TransferTimeline timeline(vm->m_vuMem);
         std::string timelineError;
+        bool traceMemory = current == memoryTraceCase;
+        auto previousData = traceMemory ? data : Bytes{};
+        unsigned traceWrites = 0;
         vm->m_cpu.m_vuMemoryObserver = [&](CMIPS *cpu, uint32 pc, uint32 cycle, uint32 phase) {
             if (!timelineError.empty()) return;
             try {
                 ++timeline.events;
                 if (phase == 2) timeline.kick(cpu->m_State.xgkickAddress, cycle);
                 else timeline.advance(cycle);
+                if (traceMemory && (phase == 1 || phase == 3))
+                    for (unsigned offset = 0; offset < 16384; offset += 16)
+                    {
+                        if (!std::memcmp(vm->m_vuMem + offset, previousData.data() + offset, 16)) continue;
+                        if (++traceWrites > 4096) throw std::runtime_error("VU memory trace exceeds its output limit");
+                        uint32_t words[4];
+                        std::memcpy(words, vm->m_vuMem + offset, sizeof(words));
+                        std::memcpy(previousData.data() + offset, words, sizeof(words));
+                        std::printf("[vu-memory] pc=%04x cycle=%u offset=%04x words=%08x,%08x,%08x,%08x\n",
+                            pc, cycle, offset, words[0], words[1], words[2], words[3]);
+                    }
             } catch (const std::exception &e) {
                 timelineError = std::string(e.what()) + " pc=" + std::to_string(pc) +
                     " cycle=" + std::to_string(cycle) + " phase=" + std::to_string(phase);
@@ -414,6 +469,7 @@ int replayDiagnostic(const char *path)
         if (!timelineError.empty()) throw std::runtime_error(timelineError);
         timeline.finish(s.pipeTime);
         const MIPSSTATE coldFinal = s;
+        traceMemory = false;
         const Bytes coldData(vm->m_vuMem, vm->m_vuMem + 16384);
         const auto coldPackets = actualPackets;
         const auto coldStreamingPackets = timeline.packets;

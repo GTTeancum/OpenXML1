@@ -4,6 +4,25 @@ The bring-up runtime has an opt-in, process-local VU1 recorder. Use it to check
 and time interpreter changes against actual game work without repeating startup.
 This is not a replacement for first-level gameplay validation.
 
+## Cold Memory Trace
+
+`PS2X_VU_REPLAY_MEMORY_TRACE_CASE` selects one zero-based recording index (0-63)
+for a cold-only, one-cycle memory trace. Set it only in the targeted test process
+alongside `PS2X_VU_REPLAY_FILE`. Warm runs retain their ordinary execution path.
+Changed 16-byte rows print as `[vu-memory]` with the pre-step PC, relative end
+cycle, byte offset and four words. PC can identify a waiting instruction when an
+older store retires; this is a memory-change trace, not proof that every printed
+PC issued that cycle. Output is capped at 4096 changed rows. Invalid indices and
+combination with sampling/residual profiling are rejected.
+
+This diagnostic remains inside the replay helper; it adds no game hot-loop hook.
+Final state, memory and GIF comparisons still run. Baseline test image
+`E399C97DDE0E580E98CCDD9FE97D0B7310C9E30168E7A4BFC4B8B4F30FE8C1C7`
+passes 146 VU tests and both captures at normal/1/8/16/64-cycle budgets with
+unchanged digests. A traced spread replay also passes all 32 cases. Tracing helped
+identify the isolated Play! importer's zeroed idle Q/P values; it is not an FPS
+optimization or a reason to relink the game. Private trace outputs remain ignored.
+
 ## One-Cycle Register Forwarding
 
 Regression `a36c659` checks all 16 ACC masks, four signed VI boundary values,

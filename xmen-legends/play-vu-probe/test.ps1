@@ -1,4 +1,4 @@
-param([string]$ReplayPath)
+param([string]$ReplayPath, [ValidateRange(0, 63)][Nullable[int]]$MemoryTraceCase)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $build = Join-Path $root '.tools/Play-VU/out/vu-probe'
@@ -10,6 +10,10 @@ $start.CreateNoWindow = $true
 $start.RedirectStandardOutput = $true
 $start.RedirectStandardError = $true
 if ($ReplayPath) { $start.ArgumentList.Add((Resolve-Path -LiteralPath $ReplayPath).Path) }
+if ($null -ne $MemoryTraceCase) {
+    if (!$ReplayPath) { throw 'Memory tracing requires a replay path.' }
+    $start.Environment['PS2X_VU_REPLAY_MEMORY_TRACE_CASE'] = [string]$MemoryTraceCase
+} else { [void]$start.Environment.Remove('PS2X_VU_REPLAY_MEMORY_TRACE_CASE') }
 $process = [Diagnostics.Process]::new()
 $process.StartInfo = $start
 $started = $false
@@ -35,6 +39,9 @@ try {
     }
     if (!$output.Contains('[play-vu:pending-import-test] passed=1 delayed-read-cycles=6')) {
         throw 'Pending VU-state import regression did not pass.'
+    }
+    if (!$output.Contains('[play-vu:scalar-import-test] passed=1 vf=3f000000 q=3f000000 p=3e800000')) {
+        throw 'Idle scalar pipeline import regression did not pass.'
     }
     if (([regex]::Matches($output, '\[play-vu:wait-test\] mode=\d+ passed=1')).Count -ne 7) {
         throw 'Compiled XGKICK wait regressions did not pass.'
