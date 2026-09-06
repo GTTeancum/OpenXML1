@@ -5,7 +5,8 @@ param(
     [ValidateRange(3, 15)][int]$Rounds = 7,
     [ValidateRange(1, 2048)][int]$Repeats = 1024,
     [ValidateRange(0, 1048576)][int]$SliceCycles = 0,
-    [switch]$BaselinePairsOnly
+    [switch]$BaselinePairsOnly,
+    [switch]$AllowUncoveredBaseline
 )
 
 $ErrorActionPreference = 'Stop'
@@ -83,7 +84,9 @@ for ($round = 0; $round -lt $Rounds; ++$round) {
             }
             $coverage = [regex]::Match($errors,
                 '\[vu-replay:block-coverage\] attempted=(\d+) executed=(\d+) pairs=(\d+)')
-            if ($blocks -and (-not $coverage.Success -or [uint64]$coverage.Groups[3].Value -eq 0)) {
+            if ($blocks -and (-not $coverage.Success -or
+                ([uint64]$coverage.Groups[3].Value -eq 0 -and
+                    !($mode -eq 'baseline' -and $AllowUncoveredBaseline)))) {
                 throw 'Requested native blocks did not execute.'
             }
             if (-not $blocks -and $coverage.Success) { throw 'Unexpected native block execution.' }
@@ -127,6 +130,7 @@ $report = [pscustomobject]@{
     Repeats = $Repeats
     SliceCycles = $SliceCycles
     BaselinePairsOnly = [bool]$BaselinePairsOnly
+    AllowUncoveredBaseline = [bool]$AllowUncoveredBaseline
     Identities = $identities
     Replay = $expectedReplay
     BaselineMedianMs = $medians.baseline

@@ -9,6 +9,21 @@ Bounded first-level timing is recorded below. The user subsequently confirmed
 movement on the performance candidate, but rejected its roughly 5 FPS; combat
 was not tested in that session. See the current TODO before launching anything.
 
+## Short-Slice Native Selection
+
+The current experiment feeds the existing canonical-state native block engine
+with the short slices of the latest private gameplay recording, rather than
+extending the compiled drain bridge to unsupported partial states. Private
+limits remain 64 pairs and 16 blocks. `../export-short-vu-kernels.ps1` reproduces
+and validates the private recipe; do not commit its generated game data.
+All 163 VU tests and 40 recording/budget checks pass. Seven alternating replay
+rounds improve median short-record time 36.60%, with exact matching results;
+this is not a gameplay FPS claim. Build identities, commands and live results
+are recorded in `../HEAP-CHECKPOINT.md`.
+The whole-game candidate subsequently measures **4.664292 FPS**, with no logged
+heap/guest faults, versus the previous 5.443341 FPS observation. No demonstrated
+gameplay gain: do not promote this recipe or present it as a playable handoff.
+
 ## Retained Block Cache
 
 Current bottleneck (September 6): the bounded budget profile measures 94.128 s

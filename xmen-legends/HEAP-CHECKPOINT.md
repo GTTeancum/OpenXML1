@@ -4,7 +4,73 @@ September 6, 2026. Work is local only; no pushes or PRs. Movement was confirmed
 by the user on an earlier build; attacking was not tested there. The performance
 target remains 30 FPS. No result below is an interactive handoff.
 
-## Remaining Execution Cost (Current Work)
+## Short-Slice Native Selection (Current Work)
+
+The existing native block executor already preserves pending pipeline state
+within a 64-cycle slice. The old weighted recipe executes zero blocks in the
+16 short records from the current gameplay capture. Before changing the JIT
+state contract, regenerate the bounded native selection from that workload.
+This is code-word-validated acceleration, not a PC-only substitution or a
+larger VIF service budget. The limits remain 64 private pairs / 16 private
+blocks; public kernels remain included. No additional build tree is needed.
+
+`export-short-vu-kernels.ps1` selects budgets <=64 from the bounded private
+recording, validates those records through reference replay and exports the
+existing native recipe format. Never publish recordings or generated recipes.
+The reproducible output is 16 cases, 965 cycles, digest `2d4d4a5da3b943f3`.
+
+- Source SHA256: `CBAE282147204131268441035DF5EA4F2D91AD32FF2A06F15C89AB4FC0FEC7C9`.
+- Short recording: `0859EA8666882CD6188AE3037E639ED80EFB13947A7FB601762B4A67B3289AEC`.
+- Recipe: `8EADCDC42103829E9951BD501F22B74CD704AB49C8ABFE8A270490E8DBFDEF4F`.
+- New test image: `A6BB9ADFECB9C98C6A84D0AE3FEDCEE6995903571D451B1199FBC130CBB87BD4`.
+- Prior test baseline: `97538CDF3DA3C3DBE8912A5E06086E1DF6370F219CB0B2A272065BB5F26B8FF9`.
+- Candidate: `8065B73C93F2D36C5A6D1914D5ADAB52C642C450E6F56571EFA10B3D2561B111`.
+
+All 163 VU tests and eight complete recordings at full/1/8/16/64-cycle budgets
+pass (40 replay checks). Seven alternating comparisons of 2,048 repetitions
+each give baseline/candidate medians 179.642/113.898 ms, 36.60% lower, 7/7 wins.
+Digest matches; candidate executes 1,419,957 native block pairs including the
+cold pass. This is an isolated workload result, NOT a game FPS measurement.
+`compare-vu-blocks.ps1 -AllowUncoveredBaseline` explicitly allows zero baseline
+block execution but still requires its counter and nonzero candidate execution.
+Its focused regression and the gameplay reporting gate tests pass.
+
+Local configuration (configure and build are separate operations):
+
+```powershell
+./xmen-legends/export-short-vu-kernels.ps1
+./xmen-legends/build-below-normal.ps1 -ConfigureCache 'PS2X_VU_NATIVE_PAIRS_FILE:FILEPATH=C:/Programming/GitHub/OpenXML1/xmen-legends/disc/vu-native-pairs-short.inc'
+./xmen-legends/build-below-normal.ps1 -Target ps2x_tests
+./xmen-legends/build-below-normal.ps1 -LinkOnly -OutputName ps2EntryRunner.candidate
+```
+
+The previous recipe is `disc/vu-native-pairs-weighted.inc`. Keep the new choice
+experimental until whole-game evidence supports it. The old profile executable
+still contains the previous recipe and can run with profiling disabled for a
+bounded comparison. Do not overwrite protected runtime slots for extra backups.
+
+Whole-game result: **REJECTED for performance promotion**. Candidate `8065B73C...`
+completes in 193.669247 seconds, exit 0, vsync limit reached, zero logged heap/
+guest faults. The same 128-presentation window takes 27.442533 seconds,
+**4.664292 FPS**, versus the earlier weighted recipe's 5.443341 FPS. These are
+shared-host observations, not a controlled regression percentage, but there is
+no demonstrated gameplay improvement. Native block coverage rises to 118,479,343
+pairs; greater coverage alone is not a win. Compiled calls >=258,049, retries
+>=77,825 and retained-cache hits >=576,594 verify the expected execution paths.
+No profilers, audit, input or screenshots were enabled. Startup is restored and
+the owned game is closed. All changes remain local; no handoff or goal completion.
+
+NEXT: broader exact short-slice acceleration needs whole-workload attribution,
+not more selection sweeps on this tiny corpus. Determine native block overhead
+versus remaining reference execution before changing the partial-state bridge;
+never widen 64-cycle service budgets. The short recipe remains experimental in
+the active build cache, not the accepted default. The profile slot retains the
+old recipe for comparisons without rebuilding. Temporary comparator executable
+was removed (7,993,856 bytes), along with 208 regenerated Debug directories
+(about 6 MiB); no new build trees or screenshots. Fixed logs use
+`vu-short-*` and `gameplay-vulkan-rate-retry-cache-realloc.*` in the active tree.
+
+## Remaining Execution Cost (Previous Profile)
 
 Candidate `117EFB10...` completes the cached phase profile in 186.829 seconds,
 and the combined phase/bridge profile in 189.566 seconds. Both have zero logged
