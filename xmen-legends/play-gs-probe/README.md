@@ -6,6 +6,54 @@ window, or send interactive input. The rendering test creates a logical device
 and shaders but no presentation surface. No GPU backend has been integrated into
 PS2Recomp yet. Reuse the existing Play VU build tree.
 
+The runtime adapter is now implemented and tested in isolation through the
+actual `GSRasterBackend` interface. It is not selected by a game executable yet.
+
+## Adapter Checkpoint
+
+September 6 adapter test SHA-256:
+`221DADAD0AA9023B9E935DE350CE34A29470B70666F1E1D1FFECDCE1BFA762C8`.
+Twelve checks pass: sprite, independent strip triangle, split indexed upload,
+palette load/skip/reload, local copy, local-to-host bytes, CPU presentation,
+CPU clear/write imported to GPU, and reset preserving VRAM. Ten cases compare
+all 4 MiB of VRAM; the other two compare transfer bytes and presentation pixels.
+
+The adapter translates decoded batches into ordered register writes, caches
+unchanged state/vertex attributes, and keeps GPU VRAM authoritative. CPU reads,
+snapshots and display conversion synchronize it explicitly. The CPU delegate
+retains transfer bookkeeping and display composition. Direct diagnostic writes
+and clears import synchronized memory back to the GPU. These slow diagnostic
+operations must not become per-pixel game rendering paths. No input, interrupts,
+guest execution or scheduler logic was replaced.
+
+Six alternating same-executable synthetic GPU/CPU timing pairs, three per
+workload, include final full-memory readback and retain exact VRAM equality.
+CPU reference is AVX2 with prepared indexed sampling enabled:
+
+| Workload | GPU ms (three runs) | CPU ms (three runs) |
+| --- | --- | --- |
+| 23,424 small 8x8 triangles | 7.082, 11.631, 6.917 | 36.595, 41.703, 29.984 |
+| 512 large 160x112 triangles | 5.653, 6.280, 4.436 | 156.694, 160.334, 156.607 |
+
+These are nearest-filtered synthetic scenes on a shared machine, not gameplay
+FPS or a sustained rate guarantee. The game remains at its previous measured
+rate until runtime integration and a real first-level benchmark are completed.
+
+Initial bridge `E0F024AB...` was slower on tiny triangles. After attribute-write
+caching, `FC7765DC...` still spent 25-36 ms in readback, including 33 ms for a
+single warmup triangle. `framework-cached-readback.patch` fixes that bottleneck:
+staging buffers prefer HOST_CACHED memory, fall back to required HOST_VISIBLE
+memory when unavailable, and invalidate mapped memory after GPU completion to
+support non-coherent memory. Existing allocation callers retain their required
+properties. The Vulkan function pointer is loaded, moved and reset consistently.
+Readback now takes roughly 3-7 ms in this run, including pending rendering.
+Other hardware/fallback memory types have not been tested.
+
+The original five offscreen cases still pass after the patch, executable
+`F4E920011A98687C377AC0CAB81577D7E82EA59507EAEA7884AD168D9D29CAF0`.
+The patch reverse-checks cleanly and is required by CMake. Nothing was submitted
+upstream or linked into a new game build.
+
 ## Dependencies
 
 - Play: `83700b2c31e593bc94e845b4b31b797be84dda59`, existing `.tools/Play-VU`.
@@ -25,12 +73,21 @@ No full Vulkan SDK, separate emulator checkout, or game assets are required.
 From the OpenXML1 repository root in PowerShell:
 
 ```powershell
+git -C .tools/Play-VU/deps/Framework apply (Resolve-Path ./xmen-legends/play-gs-probe/framework-cached-readback.patch).Path
 & ./xmen-legends/build-below-normal.ps1 -BuildPath .tools/Play-VU/out/vu-probe -ConfigureCache OPENXML1_BUILD_GS_PROBE=ON
 & ./xmen-legends/build-below-normal.ps1 -BuildPath .tools/Play-VU/out/vu-probe -Target play_gs_capabilities
 & ./xmen-legends/play-gs-probe/test-capabilities.ps1
 & ./xmen-legends/build-below-normal.ps1 -BuildPath .tools/Play-VU/out/vu-probe -Target play_gs_offscreen
 & ./xmen-legends/play-gs-probe/test-capabilities.ps1 -Offscreen
+& ./xmen-legends/build-below-normal.ps1 -BuildPath .tools/Play-VU/out/vu-probe -Target play_gs_adapter_test
+& ./xmen-legends/play-gs-probe/test-capabilities.ps1 -Adapter
+& ./xmen-legends/play-gs-probe/test-capabilities.ps1 -Adapter -Benchmark
 ```
+
+Apply the patch only once; the current working checkout already has it. Use an
+absolute patch path if invoking Git from another directory. The adapter runner
+clears inherited PS2X diagnostics and enables the prepared CPU sampler. Optional
+timings reuse `adapter-benchmark.log`; ordinary checks reuse `adapter.log`.
 
 Builds use the existing BelowNormal resource-limited wrapper. The hidden query
 runs at Normal priority with affinity 0xF and a 60-second timeout. Its fixed
@@ -73,8 +130,14 @@ not correct game rendering, gameplay FPS, depth/blending, or every GS format.
 
 ## Next Gate
 
-Implement an opt-in adapter at the existing `GSRasterBackend` interface, with
-synthetic equivalence tests before a performance candidate:
+The isolated adapter now implements the initial plan below. Next wire it into
+the real runtime as an opt-in backend, preserve CPU default selection, add
+positive execution evidence to benchmark gates, and build a measured candidate.
+Use the existing external `runtime-engine.cmake` integration pattern; the GS
+frontend constructor can wrap its CPU backend before initialization. Provide a
+runtime-local config path, not the probe's current-working-directory config.
+
+Remaining game integration checks:
 
 - `Submit` receives complete decoded state/vertices. Translate strips/fans as
   independent triangles, preserving provoking color and raw XYOFFSET units.
@@ -90,8 +153,8 @@ synthetic equivalence tests before a performance candidate:
 - Leave GS interrupt/timing ownership with PS2Recomp. No replacement input,
   scheduler, guest execution, or game logic is needed for this adapter.
 
-The interface inspection supports this plan, not a claim that the adapter is
-implemented. CPU VU execution remains a major cost, so GPU rendering alone is
+The adapter tests do not prove all depth/blending/fog/filtering combinations or
+real level fidelity. CPU VU execution remains a major cost, so GPU rendering alone is
 not a promised route to 30 FPS. No gameplay candidate was linked this turn.
 
 Regular cleanup removed 225 stale Debug directories and 29 obsolete files,

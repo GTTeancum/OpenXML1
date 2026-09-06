@@ -1,13 +1,7 @@
-#include "AppConfig.h"
 #include "gs/GSH_Vulkan/GSH_VulkanOffscreen.h"
 #include <cstdio>
 #include <stdexcept>
 #include <array>
-
-fs::path CAppConfig::GetBasePath() const
-{
-    return fs::current_path();
-}
 
 namespace
 {

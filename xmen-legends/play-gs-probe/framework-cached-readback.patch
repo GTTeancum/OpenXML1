@@ -1,0 +1,126 @@
+diff --git a/include/vulkan/Buffer.h b/include/vulkan/Buffer.h
+index 1a3de03..7a43ec5 100644
+--- a/include/vulkan/Buffer.h
++++ b/include/vulkan/Buffer.h
+@@ -13,7 +13,7 @@ namespace Framework
+ 		{
+ 		public:
+ 			        CBuffer() = default;
+-			        CBuffer(CDevice&, const VkPhysicalDeviceMemoryProperties&, VkBufferUsageFlags, VkMemoryPropertyFlags, VkDeviceSize);
++			        CBuffer(CDevice&, const VkPhysicalDeviceMemoryProperties&, VkBufferUsageFlags, VkMemoryPropertyFlags, VkDeviceSize, VkMemoryPropertyFlags preferredProperties = 0);
+ 			        CBuffer(const CBuffer&) = delete;
+ 			        CBuffer(CBuffer&&);
+ 			virtual ~CBuffer();
+@@ -32,7 +32,7 @@ namespace Framework
+ 			void Write(VkQueue, CCommandBufferPool&, const VkPhysicalDeviceMemoryProperties&, const void*);
+ 			
+ 		private:
+-			void Create(const VkPhysicalDeviceMemoryProperties&, VkBufferUsageFlags, VkMemoryPropertyFlags, VkDeviceSize);
++			void Create(const VkPhysicalDeviceMemoryProperties&, VkBufferUsageFlags, VkMemoryPropertyFlags, VkDeviceSize, VkMemoryPropertyFlags);
+ 			void MoveFrom(CBuffer&&);
+ 			
+ 			CDevice* m_device = nullptr;
+diff --git a/include/vulkan/Device.h b/include/vulkan/Device.h
+index 2ccb0da..15732a3 100644
+--- a/include/vulkan/Device.h
++++ b/include/vulkan/Device.h
+@@ -113,6 +113,7 @@ namespace Framework
+ 			DECLARE_FUNCTION(vkFreeMemory)
+ 			DECLARE_FUNCTION(vkMapMemory)
+ 			DECLARE_FUNCTION(vkUnmapMemory)
++			DECLARE_FUNCTION(vkInvalidateMappedMemoryRanges)
+ 			
+ 			//Device address
+ 			DECLARE_FUNCTION(vkGetBufferDeviceAddress);
+diff --git a/src/vulkan/Buffer.cpp b/src/vulkan/Buffer.cpp
+index 626425d..6b823ff 100644
+--- a/src/vulkan/Buffer.cpp
++++ b/src/vulkan/Buffer.cpp
+@@ -7,11 +7,11 @@
+ 
+ using namespace Framework::Vulkan;
+ 
+-CBuffer::CBuffer(CDevice& device, const VkPhysicalDeviceMemoryProperties& memoryProperties, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkDeviceSize size)
++CBuffer::CBuffer(CDevice& device, const VkPhysicalDeviceMemoryProperties& memoryProperties, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkDeviceSize size, VkMemoryPropertyFlags preferredProperties)
+ : m_device(&device)
+ , m_size(size)
+ {
+-	Create(memoryProperties, usage, properties, size);
++	Create(memoryProperties, usage, properties, size, preferredProperties);
+ }
+ 
+ CBuffer::CBuffer(CBuffer&& rhs)
+@@ -65,7 +65,7 @@ VkDeviceMemory CBuffer::GetMemory() const
+ 	return m_memory;
+ }
+ 
+-void CBuffer::Create(const VkPhysicalDeviceMemoryProperties& memoryProperties, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkDeviceSize size)
++void CBuffer::Create(const VkPhysicalDeviceMemoryProperties& memoryProperties, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkDeviceSize size, VkMemoryPropertyFlags preferredProperties)
+ {
+ 	auto result = VK_SUCCESS;
+ 
+@@ -90,7 +90,11 @@ void CBuffer::Create(const VkPhysicalDeviceMemoryProperties& memoryProperties, V
+ 	auto memoryAllocateInfo = Framework::Vulkan::MemoryAllocateInfo();
+ 	memoryAllocateInfo.pNext = allocateStructChain.GetNext();
+ 	memoryAllocateInfo.allocationSize = memoryRequirements.size;
+-	memoryAllocateInfo.memoryTypeIndex = GetMemoryTypeIndex(memoryProperties, memoryRequirements.memoryTypeBits, properties);
++	memoryAllocateInfo.memoryTypeIndex = GetMemoryTypeIndex(memoryProperties, memoryRequirements.memoryTypeBits, properties | preferredProperties);
++	if(memoryAllocateInfo.memoryTypeIndex == VULKAN_MEMORY_TYPE_INVALID && preferredProperties != 0)
++	{
++		memoryAllocateInfo.memoryTypeIndex = GetMemoryTypeIndex(memoryProperties, memoryRequirements.memoryTypeBits, properties);
++	}
+ 	assert(memoryAllocateInfo.memoryTypeIndex != Framework::Vulkan::VULKAN_MEMORY_TYPE_INVALID);
+ 
+ 	result = m_device->vkAllocateMemory(*m_device, &memoryAllocateInfo, nullptr, &m_memory);
+@@ -106,7 +110,7 @@ void CBuffer::Read(VkQueue queue, CCommandBufferPool& commandBufferPool,
+ 	auto result = VK_SUCCESS;
+ 
+ 	auto stagingBuffer = CBuffer(*m_device, memoryProperties,
+-		VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, m_size);
++		VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, m_size, VK_MEMORY_PROPERTY_HOST_CACHED_BIT);
+ 	
+ 	auto commandBuffer = commandBufferPool.AllocateBuffer();
+ 	
+@@ -152,6 +156,14 @@ void CBuffer::Read(VkQueue queue, CCommandBufferPool& commandBufferPool,
+ 		result = m_device->vkMapMemory(*m_device, stagingBuffer.GetMemory(), 0, VK_WHOLE_SIZE, 0, &bufferPtr);
+ 		CHECKVULKANERROR(result);
+ 
++		// Cached staging memory need not be coherent with completed device writes.
++		VkMappedMemoryRange range = {};
++		range.sType = VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE;
++		range.memory = stagingBuffer.GetMemory();
++		range.size = VK_WHOLE_SIZE;
++		result = m_device->vkInvalidateMappedMemoryRanges(*m_device, 1, &range);
++		CHECKVULKANERROR(result);
++
+ 		memcpy(bufferData, bufferPtr, m_size);
+ 
+ 		m_device->vkUnmapMemory(*m_device, stagingBuffer.GetMemory());
+diff --git a/src/vulkan/Device.cpp b/src/vulkan/Device.cpp
+index 88149c3..2a482e3 100644
+--- a/src/vulkan/Device.cpp
++++ b/src/vulkan/Device.cpp
+@@ -106,6 +106,7 @@ void CDevice::Reset()
+ 	vkFreeMemory = nullptr;
+ 	vkMapMemory = nullptr;
+ 	vkUnmapMemory = nullptr;
++	vkInvalidateMappedMemoryRanges = nullptr;
+ 	
+ 	vkGetBufferDeviceAddress = nullptr;
+ 
+@@ -229,6 +230,7 @@ CDevice& CDevice::operator =(CDevice&& rhs)
+ 	std::swap(vkFreeMemory, rhs.vkFreeMemory);
+ 	std::swap(vkMapMemory, rhs.vkMapMemory);
+ 	std::swap(vkUnmapMemory, rhs.vkUnmapMemory);
++	std::swap(vkInvalidateMappedMemoryRanges, rhs.vkInvalidateMappedMemoryRanges);
+ 	
+ 	std::swap(vkGetBufferDeviceAddress, rhs.vkGetBufferDeviceAddress);
+ 
+@@ -359,6 +361,7 @@ void CDevice::Create(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo&
+ 	SET_PROC_ADDR(vkFreeMemory);
+ 	SET_PROC_ADDR(vkMapMemory);
+ 	SET_PROC_ADDR(vkUnmapMemory);
++	SET_PROC_ADDR(vkInvalidateMappedMemoryRanges);
+ 	
+ 	SET_PROC_ADDR(vkGetBufferDeviceAddress);
+ 
