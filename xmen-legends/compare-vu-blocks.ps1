@@ -4,6 +4,7 @@ param(
     [string]$CapturePath = '',
     [ValidateRange(3, 15)][int]$Rounds = 7,
     [ValidateRange(1, 2048)][int]$Repeats = 1024,
+    [ValidateRange(0, 1048576)][int]$SliceCycles = 0,
     [switch]$BaselinePairsOnly
 )
 
@@ -44,6 +45,7 @@ for ($round = 0; $round -lt $Rounds; ++$round) {
         $start.Environment['PS2X_VU_REPLAY_FILE'] = $capture
         $start.Environment['PS2X_VU_REPLAY_REPEATS'] = [string]$Repeats
         $start.Environment['PS2X_VU_REPLAY_PAIRS'] = '1'
+        if ($SliceCycles -gt 0) { $start.Environment['PS2X_VU_REPLAY_SLICE_CYCLES'] = [string]$SliceCycles }
         if ($blocks) { $start.Environment['PS2X_VU_REPLAY_BLOCKS'] = '1' }
         $process = [Diagnostics.Process]::new()
         $process.StartInfo = $start
@@ -123,6 +125,7 @@ $report = [pscustomobject]@{
     RecordedAtUtc = [DateTime]::UtcNow.ToString('o')
     Rounds = $Rounds
     Repeats = $Repeats
+    SliceCycles = $SliceCycles
     BaselinePairsOnly = [bool]$BaselinePairsOnly
     Identities = $identities
     Replay = $expectedReplay

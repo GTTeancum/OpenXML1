@@ -4,6 +4,47 @@ The bring-up runtime has an opt-in, process-local VU1 recorder. Use it to check
 and time interpreter changes against actual game work without repeating startup.
 This is not a replacement for first-level gameplay validation.
 
+## Budget Trace Initialization
+
+PS2Recomp `053b1bc` removes two unconditional clears of the 2,432-byte local
+budget-trace array in `VU1Interpreter::run`. The matched pre-change binary
+contained a `memset(0x980)` followed by an array-initialization helper on the
+ordinary diagnostics-off path. The final binary contains neither. Every trace
+entry is fully written before its count-limited reader can access it; this does
+not change guest instructions, cycle timing, queues, or selected kernels.
+
+The normal test image is
+`78076FBB69E84003A4C1C1B406C196413BFB43FAB8C7313992FC9DF74C91BFBB`.
+All 134 VU tests and both captures at normal and 1/8/16/64-cycle budgets pass.
+`tests/test-vu-budget-trace.ps1` also launches two headless, process-local
+fixtures with diagnostics enabled: budgets 3 and 40. It checks every retained
+PC, opcode pair, and signed VI register value, including 32-entry ring wrap.
+
+Seven alternating comparisons against `633cf92` test image
+`2F9FA03552A04BC007AE7B376F676ABDFD2208ED8D3473AAA7D7EBCEDDCEC6B7`:
+
+| Capture / slice budget | Repeats | Baseline ms | Candidate ms | Reduction | Wins |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original / normal | 1024 | 2334.653 | 2315.661 | 0.813% | 4/7 |
+| Spread / normal | 2048 | 2007.371 | 1960.860 | 2.317% | 5/7 |
+| Original / 8 cycles | 512 | 2060.460 | 1912.508 | 7.181% | 7/7 |
+| Spread / 8 cycles | 1024 | 1711.016 | 1626.306 | 4.951% | 5/7 |
+
+`compare-vu-blocks.ps1 -SliceCycles 8` sets the same budget on both processes
+and records it in the fixed comparison report. Normal-budget gains are small;
+shorter slices expose repeated-call overhead but are not a substitute for the
+game's actual workload mix. These numbers are not gameplay FPS improvements.
+
+The subsequent opt-in game relink contains `053b1bc`, SHA-256
+`CE26EA1E3D4586D61D6AFA855AD76E625174C9703965669CD155386C35488DAB`,
+163,364,352 bytes. Its unprofiled run verified real New Game/NYC loading and
+normal exit at vsync 1400. Presents 1152/1280 arrived at 193.0931207 and
+225.2273819 seconds: **3.9833 FPS** over 128 frames. The runtime-owned framebuffer
+still shows textured New York/Wolverine with the existing black props, missing
+foliage, and HUD/effect defects. This is not a meaningful measured gameplay gain
+against the earlier 4.14 FPS sample. Startup files are restored, the process is
+closed, and saved primary/staged images remain unchanged.
+
 ## Residual Pair Profiling
 
 The optional `PS2X_ENABLE_VU_PAIR_PROFILE` CMake switch adds diagnostics only to
@@ -51,10 +92,29 @@ including counter reconciliation. Conflicting export modes are rejected.
 Aggregating by instruction words and giving each capture equal normalized
 weight predicts that a 64-word selection could cover 6,831 original and 3,753
 spread residual pairs, compared with 6,578 and 1,976 today. That would replace
-42 currently selected words. This is **not yet an implemented selection or
-measured speedup**. Keep block provenance, weights, and selection unchanged;
-validate actual coverage and exact output, then compare repeated timings on
-both captures before considering a gameplay build.
+42 currently selected words. That selection has now been implemented and
+**rejected on timing**, despite matching the predicted coverage.
+
+`select-vu-residual-pairs.ps1` accepts `-ProfilePath` CSV files and `-RecipePath`,
+optionally writing a private `-OutputPath`. It aggregates matching words across
+PCs, weights each capture equally, and deterministically ranks ties by words.
+`-Limit` controls the selected-set coverage report; the recipe retains the full
+ranking and CMake's private-pair limit controls compilation. Only word-selection
+lines change; block definitions, PC hit weights, provenance, and edges retain
+their original order. The memory-only regression suite checks weighting, ties,
+metadata preservation, malformed fields/columns, duplicates, and bounds.
+
+The rejected recipe `disc/vu-native-pairs-residual.inc` has SHA-256
+`297DBE13E21D77535A28155D3D89F719006E4955600E6D5C8710551B736FF7F0`;
+test image `593A7B1CDE386330256E458F5ED0287BB3584D479FC8544E91F9BCDD343C4044`
+passed all 133 then-current VU tests and both sliced captures. All 26 generated
+block bodies and their dispatcher were byte-identical. Normal native/interpreted
+counts were 78,170 / 2,024 original and 26,602 / 4,432 spread (cold plus one repeat).
+Seven alternating comparisons against `2F9FA035...` measured
+2294.803 / 2338.945 ms original (1.924% slower) and 1963.659 / 1980.650 ms spread
+(0.865% slower), two wins of seven each. Tiny budgets also lost substantial
+native-pair coverage when blocks could not execute. The original weighted
+64-pair / 16-block selection is restored. No game build used the rejected recipe.
 
 The preceding 64-to-128 private-pair experiment was rejected: seven alternating
 comparisons measured 2516.006 / 2592.948 ms on original and 2046.555 / 2120.754 ms
