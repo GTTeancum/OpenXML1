@@ -6,7 +6,7 @@
 
 namespace
 {
-constexpr uint32_t statusMask = 0xcf3, macMask = 0xff;
+constexpr uint32_t statusMask = 0xfff, macMask = 0xffff;
 
 uint32_t fmacLanes(uint32_t bits)
 {
@@ -178,7 +178,9 @@ VUCompiledState::Output PlayVuRuntimeBridge::exportState(const VUCompiledState::
     v.clip = latestFlag(s.pipeClip, s.nCOP2CF, result.drainedCycle) & 0xffffff;
     const auto sticky = latestFlag(s.pipeSticky, s.nCOP2SF, result.drainedCycle);
     v.status = ((sticky & 0xf0000) ? 1u : 0u) | ((sticky & 0xf00000) ? 2u : 0u) |
-        ((sticky & 0xf) ? 0x40u : 0u) | ((sticky & 0xf0) ? 0x80u : 0u) | (result.scalarStatus & 0xc30u);
+        ((sticky & 0xf000000) ? 4u : 0u) | ((sticky & 0xf0000000) ? 8u : 0u) |
+        ((sticky & 0xf) ? 0x40u : 0u) | ((sticky & 0xf0) ? 0x80u : 0u) |
+        ((sticky & 0xf00) ? 0x100u : 0u) | ((sticky & 0xf000) ? 0x200u : 0u) | (result.scalarStatus & 0xc30u);
     output.elapsed = result.drainedCycle;
     output.statusMask = statusMask;
     output.macMask = macMask;

@@ -45,9 +45,9 @@ struct CompiledVuSession::Impl
     uint32_t top = 0, itop = 0;
     std::string error;
 
-    Impl()
+    explicit Impl(Arithmetic arithmetic)
     {
-        cpu.m_vuFmacCompiler = selectFmac;
+        cpu.m_vuFmacCompiler = arithmetic == Arithmetic::RuntimeFused ? selectFmacRuntimeFused : selectFmac;
         cpu.m_pMemoryMap->InsertReadMap(0, 16383, data.data(), 0);
         cpu.m_pMemoryMap->InsertWriteMap(0, 16383, data.data(), 0);
         cpu.m_pMemoryMap->InsertInstructionMap(0, 16383, code.data(), 1);
@@ -91,7 +91,7 @@ struct CompiledVuSession::Impl
     }
 };
 
-CompiledVuSession::CompiledVuSession() : impl(std::make_unique<Impl>()) {}
+CompiledVuSession::CompiledVuSession(Arithmetic arithmetic) : impl(std::make_unique<Impl>(arithmetic)) {}
 CompiledVuSession::~CompiledVuSession() = default;
 
 uint64_t compiledVuDrainCycle(const MIPSSTATE &s, uint64_t transferEnd)

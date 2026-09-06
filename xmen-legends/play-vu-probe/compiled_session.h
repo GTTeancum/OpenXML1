@@ -12,6 +12,7 @@
 class CompiledVuSession
 {
 public:
+    enum class Arithmetic { Separate, RuntimeFused };
     struct Result
     {
         bool executed = false;
@@ -26,7 +27,7 @@ public:
         uint64_t scalarEnd = 0;
         bool scalarFlagsValid = false;
     };
-    CompiledVuSession();
+    explicit CompiledVuSession(Arithmetic = Arithmetic::Separate);
     ~CompiledVuSession();
     CompiledVuSession(const CompiledVuSession &) = delete;
     CompiledVuSession &operator=(const CompiledVuSession &) = delete;

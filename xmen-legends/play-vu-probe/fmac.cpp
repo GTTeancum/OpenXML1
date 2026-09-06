@@ -58,7 +58,7 @@ __m128i narrowMask(__m256d mask)
         _mm256_setr_epi32(0,2,4,6,0,2,4,6)));
 }
 
-template<Kind kind, Source source, bool accumulator>
+template<Kind kind, Source source, bool accumulator, bool fused>
 uint32 execute(CMIPS *cpu, uint32 opcode)
 {
     auto &s = cpu->m_State;
@@ -96,8 +96,18 @@ uint32 execute(CMIPS *cpu, uint32 opcode)
         {
             extra = classifyVector(product, dest).flags;
             const auto prior = operands(_mm_loadu_si128(reinterpret_cast<const __m128i *>(&s.nCOP2A)));
-            if constexpr (kind == Kind::MultiplyAdd) { exact = _mm256_add_pd(_mm256_cvtps_pd(prior),product); value = _mm_add_ps(prior,value); }
-            else { exact = _mm256_sub_pd(_mm256_cvtps_pd(prior),product); value = _mm_sub_ps(prior,value); }
+            if constexpr (kind == Kind::MultiplyAdd)
+            {
+                exact = _mm256_add_pd(_mm256_cvtps_pd(prior),product);
+                if constexpr (fused) value = _mm_fmadd_ps(left,right,prior);
+                else value = _mm_add_ps(prior,value);
+            }
+            else
+            {
+                exact = _mm256_sub_pd(_mm256_cvtps_pd(prior),product);
+                if constexpr (fused) value = _mm_fnmadd_ps(left,right,prior);
+                else value = _mm_sub_ps(prior,value);
+            }
         }
         else exact = product;
     }
@@ -141,7 +151,7 @@ uint32 packLane(uint32 flags, unsigned lane)
         ((flags & 4) << (shift + 6)) | ((flags & 8) << (shift + 9));
 }
 
-template<Kind kind, Source source, bool accumulator>
+template<Kind kind, Source source, bool accumulator, bool fused>
 uint32 execute(CMIPS *cpu, uint32 opcode)
 {
     auto &s = cpu->m_State;
@@ -190,12 +200,14 @@ uint32 execute(CMIPS *cpu, uint32 opcode)
                 if constexpr (kind == Kind::MultiplyAdd)
                 {
                     exact = double(prior) + product;
-                    value = _mm_add_ss(_mm_set_ss(prior), value);
+                    if constexpr (fused) value = _mm_set_ss(std::fma(left, right, prior));
+                    else value = _mm_add_ss(_mm_set_ss(prior), value);
                 }
                 else
                 {
                     exact = double(prior) - product;
-                    value = _mm_sub_ss(_mm_set_ss(prior), value);
+                    if constexpr (fused) value = _mm_set_ss(std::fma(-left, right, prior));
+                    else value = _mm_sub_ss(_mm_set_ss(prior), value);
                 }
             }
             else exact = product;
@@ -211,23 +223,23 @@ uint32 execute(CMIPS *cpu, uint32 opcode)
 }
 #endif
 
-template<bool accumulator>
+template<bool accumulator, bool fused>
 FmacOperation select(unsigned function)
 {
     switch (function)
     {
 #define BC(group, kind) \
-    case group: return &execute<Kind::kind, Source::X, accumulator>; \
-    case group + 1: return &execute<Kind::kind, Source::Y, accumulator>; \
-    case group + 2: return &execute<Kind::kind, Source::Z, accumulator>; \
-    case group + 3: return &execute<Kind::kind, Source::W, accumulator>;
+    case group: return &execute<Kind::kind, Source::X, accumulator, fused>; \
+    case group + 1: return &execute<Kind::kind, Source::Y, accumulator, fused>; \
+    case group + 2: return &execute<Kind::kind, Source::Z, accumulator, fused>; \
+    case group + 3: return &execute<Kind::kind, Source::W, accumulator, fused>;
     BC(0x00, Add)
     BC(0x04, Subtract)
     BC(0x08, MultiplyAdd)
     BC(0x0c, MultiplySubtract)
     BC(0x18, Multiply)
 #undef BC
-#define OP(code, kind, source) case code: return &execute<Kind::kind, Source::source, accumulator>;
+#define OP(code, kind, source) case code: return &execute<Kind::kind, Source::source, accumulator, fused>;
     OP(0x1c, Multiply, Q) OP(0x1e, Multiply, I)
     OP(0x20, Add, Q) OP(0x21, MultiplyAdd, Q)
     OP(0x22, Add, I) OP(0x23, MultiplyAdd, I)
@@ -238,8 +250,8 @@ FmacOperation select(unsigned function)
     OP(0x2d, MultiplySubtract, Vector)
 #undef OP
     case 0x2e:
-        if constexpr (accumulator) return &execute<Kind::CrossMultiply, Source::Vector, true>;
-        else return &execute<Kind::CrossSubtract, Source::Vector, false>;
+        if constexpr (accumulator) return &execute<Kind::CrossMultiply, Source::Vector, true, fused>;
+        else return &execute<Kind::CrossSubtract, Source::Vector, false, fused>;
     default: return nullptr;
     }
 }
@@ -252,11 +264,22 @@ FmacOperation selectFmacScalar(uint32 opcode)
 #endif
 {
     const unsigned op = opcode & 63;
-    return op >= 0x3c ? select<true>((opcode & 3) | ((opcode >> 4) & 0x7c)) : select<false>(op);
+    return op >= 0x3c ? select<true, false>((opcode & 3) | ((opcode >> 4) & 0x7c)) : select<false, false>(op);
+}
+
+#if defined(FMAC_USE_AVX2)
+FmacOperation selectFmacAvx2Fused(uint32 opcode)
+#else
+FmacOperation selectFmacScalarFused(uint32 opcode)
+#endif
+{
+    const unsigned op = opcode & 63;
+    return op >= 0x3c ? select<true, true>((opcode & 3) | ((opcode >> 4) & 0x7c)) : select<false, true>(op);
 }
 
 #if !defined(FMAC_USE_AVX2)
 FmacOperation selectFmacAvx2(uint32 opcode);
+FmacOperation selectFmacAvx2Fused(uint32 opcode);
 
 bool fmacAvx2Available()
 {
@@ -275,5 +298,21 @@ bool fmacAvx2Available()
 FmacOperation selectFmac(uint32 opcode)
 {
     return fmacAvx2Available() ? selectFmacAvx2(opcode) : selectFmacScalar(opcode);
+}
+
+bool fmacFmaAvailable()
+{
+    static const bool supported = [] {
+        if (!fmacAvx2Available()) return false;
+        int info[4];
+        __cpuidex(info,1,0);
+        return (info[2] & 0x1000) != 0;
+    }();
+    return supported;
+}
+
+FmacOperation selectFmacRuntimeFused(uint32 opcode)
+{
+    return fmacFmaAvailable() ? selectFmacAvx2Fused(opcode) : selectFmacScalarFused(opcode);
 }
 #endif

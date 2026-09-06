@@ -7,6 +7,69 @@ PS2Recomp state header, but does not link its runtime, read the ISO, create a ga
 window, or enable a replacement engine.
 There is no gameplay FPS claim or interactive handoff yet.
 
+## Runtime Arithmetic Compatibility
+
+Current image: `CA7AB282F405BBAA70265C0D0DA59223731E13080231B446054F2D8BD36ACEF0`.
+All **22 eligible recordings now match architectural values, memory, graphics
+packet bytes and completion timing** through the typed producer. Verify with:
+
+```powershell
+./xmen-legends/play-vu-probe/test.ps1 -ReplayPath xmen-legends/disc/vu-replay.bin -RequireRecordedMatch
+./xmen-legends/play-vu-probe/test.ps1 -ReplayPath xmen-legends/disc/vu-replay-spread.bin -RequireRecordedMatch
+```
+
+The old differences were caused by multiply/add contraction. Inspection of the
+unchanged runtime baseline `77E6FDB3...` and its timestamp-matched map
+(`0x6a9d20cb`) found FMA instructions in `execUpper`, native upper kernels and
+other VU code. A temporary fused-helper experiment eliminated every recorded
+VF/memory/packet/Q difference, but failed the separate-rounding underflow test.
+That experiment returned failure (exit 12); it was not promoted as a passing
+implementation. The temporary test-runner behavior was removed.
+
+Sessions now choose an immutable arithmetic policy at construction:
+`Separate` remains the default, while `RuntimeFused` matches the existing
+runtime's host arithmetic. The typed runtime bridge and recording comparison
+explicitly use `RuntimeFused`; neither policy depends on captured expected
+values or a game/program identity. FMA selection checks CPUID/OS support, with
+a scalar `std::fma` fallback. Both modes retain the same widened flag model.
+This is compatibility with the current runtime, not a claim that fused host
+arithmetic reproduces every hardware exception or rounding detail.
+
+All 39,168 scalar/vector comparisons pass in both modes. Another 128 compiled
+tests distinguish the modes across MADD/MSUB, accumulator writes and all masks.
+Existing separate-rounding regressions remain unchanged and pass. Complete
+STATUS/MAC export (`0xfff/0xffff`) now includes U/O current and sticky bits;
+4,096 status round trips and 64 independent pending/reset cases pass, as do
+the prior timing, ownership, ABI and rejection tests.
+
+Architectural comparison covers every VF/ACC/scalar word, all 16 VI bits, full
+flags, PC, elapsed cycles, TOP/ITOP, halt/branch state, data memory and timed
+packets. Inactive branch target/delay payloads are not architectural output.
+VI host containers can differ in sign extension (`00008000` versus `ffff8000`);
+those differences are separately printed, not hidden as raw-state equality.
+Runtime branch/address code explicitly truncates VI reads to 16 bits. A live
+commit/resume test is still required; no replacement engine is enabled yet.
+
+Final three-round timings, same complete-call scope and 256 warm repetitions:
+
+| Recording | Round | Runtime Eligible ms | Typed Call ms |
+| --- | ---: | ---: | ---: |
+| Original | 1 | 304.709 | 83.327886 |
+| Original | 2 | 314.777 | 82.756086 |
+| Original | 3 | 299.253 | 87.018986 |
+| Spread | 1 | 79.651 | 28.757792 |
+| Spread | 2 | 81.383 | 26.963692 |
+| Spread | 3 | 78.298 | 27.453192 |
+
+Median eligible runtime/compiled ratios are approximately 3.66x/2.90x, not
+gameplay FPS. All rounds required recorded architectural matches. Runtime
+capture/commit, GS, cold compilation and returned-output disposal remain
+outside this timer. Next exercise actual commit/resume and fallback, retaining
+the original engine for unsupported states, then measure a game candidate.
+General VI/store timing and exceptional arithmetic still need coverage beyond
+these recordings. No game build, screenshot, push or PR was made. Older
+partial-mask and numerical-mismatch checkpoints below are historical.
+
 ## Arithmetic Throughput Checkpoint
 
 Current image: `2FBC117747FA8D516DD5BAA954B26299B05E8C9C45E624553FF06D31ACE07CD2`.

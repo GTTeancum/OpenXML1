@@ -19,7 +19,7 @@ public:
     Result evaluate(const VUCompiledState::Input &, const std::array<uint8_t, 16384> &code,
         const std::array<uint8_t, 16384> &data);
 private:
-    CompiledVuSession session;
+    CompiledVuSession session{CompiledVuSession::Arithmetic::RuntimeFused};
 };
 
 bool runtimeBridgeTests();

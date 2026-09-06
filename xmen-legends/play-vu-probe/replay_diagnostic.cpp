@@ -455,7 +455,7 @@ bool pendingImportTests()
 
 int replayDiagnostic(const char *path)
 {
-    CompiledVuSession detachedSession;
+    CompiledVuSession detachedSession{CompiledVuSession::Arithmetic::RuntimeFused};
     PlayVuRuntimeBridge runtimeBridge;
     unsigned memoryTraceCase = 64;
     if (const char *value = std::getenv("PS2X_VU_REPLAY_MEMORY_TRACE_CASE"))
@@ -522,7 +522,7 @@ int replayDiagnostic(const char *path)
             s.savedNextBlockIntRegVal = static_cast<uint32_t>(at(before, 4672));
         }
         std::vector<Bytes> actualPackets, expectedPackets;
-        vm->m_cpu.m_vuFmacCompiler = selectFmac;
+        vm->m_cpu.m_vuFmacCompiler = selectFmacRuntimeFused;
         std::string callbackError;
         TransferTimeline timeline(vm->m_vuMem);
         std::string timelineError;
@@ -640,9 +640,9 @@ int replayDiagnostic(const char *path)
             !std::memcmp(runtimeOutput.state.acc, &s.nCOP2A, sizeof(runtimeOutput.state.acc)) &&
             !std::memcmp(&runtimeOutput.state.q, &drained.q, 4) && !std::memcmp(&runtimeOutput.state.p, &drained.p, 4) &&
             runtimeOutput.elapsed == drained.cycle && runtimeOutput.state.cycles == runtimeInput.cycle + drained.cycle &&
-            runtimeOutput.state.mac == drained.mac && runtimeOutput.state.clip == drained.clip &&
-            (runtimeOutput.state.status & 0xc3) == (drained.status & 0xc3) &&
-            runtimeOutput.statusMask == 0xcf3 && runtimeOutput.macMask == DrainedControl::macMask &&
+            runtimeOutput.state.mac == drained.fullMac && runtimeOutput.state.clip == drained.clip &&
+            runtimeOutput.state.status == (drained.fmacStatus | detached.scalarStatus) &&
+            runtimeOutput.statusMask == 0xfff && runtimeOutput.macMask == 0xffff &&
             runtimeOutput.data == detached.data && runtimeOutput.packets.size() == detached.packets.size();
         if (!exportMatches) throw std::runtime_error("Typed runtime export diverged from completed-state diagnostic");
         for (size_t i = 0; i < runtimeOutput.packets.size(); ++i)
@@ -750,6 +750,37 @@ int replayDiagnostic(const char *path)
             timeline.packets.size(), expectedPackets.size(), unsigned(timeline.packets == expectedPackets),
             streamingBytes, unsigned(timeline.completionCycles == expectedCompletionCycles), completionDiffs,
             static_cast<unsigned long long>(timeline.time), timeline.events);
+        const auto &v = runtimeOutput.state;
+        const bool vfMatches = !std::memcmp(v.vf, after.data() + 1, sizeof(v.vf));
+        bool viMatches = true;
+        unsigned viStorageDiffs = 0;
+        for (unsigned reg = 0; reg < 16; ++reg)
+        {
+            const uint32_t actual = uint32_t(v.vi[reg]), expected = uint32_t(at(after,513 + reg * 4));
+            // VI is a 16-bit architectural register; retain visibility of host sign extension.
+            viMatches &= (actual & 0xffffu) == (expected & 0xffffu);
+            if (actual != expected)
+            {
+                ++viStorageDiffs;
+                std::printf("[play-vu:vi-storage-diff] case=%u reg=%u actual=%08x expected=%08x\n",
+                    current,reg,actual,expected);
+            }
+        }
+        const bool accMatches = !std::memcmp(v.acc, after.data() + 577, sizeof(v.acc));
+        const bool scalarMatches = !std::memcmp(&v.q, after.data() + 593, 4) &&
+            !std::memcmp(&v.p, after.data() + 597, 4) && !std::memcmp(&v.i, after.data() + 601, 4) && v.r == at(after, 605);
+        const bool controlFullMatches = v.pc == at(after, 609) && v.mac == expectedMac && v.status == expectedStatus &&
+            v.clip == at(after, 617) && v.cycles == at(after, 625, 8) && runtimeOutput.elapsed == expectedEnd &&
+            v.top == at(after, 639) && v.itop == at(after, 643) &&
+            v.ebit == bool(after[633]) && v.haltAfterDelaySlot == bool(after[634]) &&
+            v.dBitEnabled == bool(after[635]) && v.tBitEnabled == bool(after[636]) &&
+            v.stoppedByD == bool(after[637]) && v.stoppedByT == bool(after[638]) &&
+            !v.branchPending && !after[647];
+        const bool dataMatches = std::equal(runtimeOutput.data.begin(),runtimeOutput.data.end(),afterData.begin());
+        const bool packetsMatch = timeline.packets == expectedPackets && timeline.completionCycles == expectedCompletionCycles;
+        std::printf("[play-vu:architectural-result] case=%u match=%u vf=%u vi16=%u acc=%u scalar=%u control=%u memory=%u packets=%u vi-storage-diffs=%u full-flags=1 runtime-commit-tested=0\n",
+            current,unsigned(vfMatches && viMatches && accMatches && scalarMatches && controlFullMatches && dataMatches && packetsMatch),
+            unsigned(vfMatches),unsigned(viMatches),unsigned(accMatches),unsigned(scalarMatches),unsigned(controlFullMatches),unsigned(dataMatches),unsigned(packetsMatch),viStorageDiffs);
         unsigned auxiliaryDiff = 0;
         const auto compareWord = [&](const char *name, uint32_t actual, size_t offset) {
             const auto expected = static_cast<uint32_t>(at(after, offset));

@@ -1,5 +1,6 @@
-param([string]$ReplayPath, [ValidateRange(0, 63)][Nullable[int]]$MemoryTraceCase)
+param([string]$ReplayPath, [ValidateRange(0, 63)][Nullable[int]]$MemoryTraceCase, [switch]$RequireRecordedMatch)
 $ErrorActionPreference = 'Stop'
+if ($RequireRecordedMatch -and !$ReplayPath) { throw 'Recorded-match verification requires a replay path.' }
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $build = Join-Path $root '.tools/Play-VU/out/vu-probe'
 $exe = (Resolve-Path -LiteralPath (Join-Path $build 'Release/play_vu_probe.exe')).Path
@@ -49,7 +50,8 @@ try {
     if (!$output.Contains('[play-vu:session-test] passed=1 detached=1 fp-restored=1 cache-replaced=1 rejection-recovered=1')) {
         throw 'Detached compiled session regressions did not pass.'
     }
-    if (!$output.Contains('[play-vu:typed-bridge-test] passed=1 pending-import=1 staged-export=1 partial-flags=1 runtime-accepted=0')) {
+    if (!$output.Contains('[play-vu:typed-bridge-test] passed=1 pending-import=1 staged-export=1 full-flags=1 runtime-accepted=0') -or
+        !$output.Contains('[play-vu:flag-roundtrip] passed=1 cases=4096 full-status=1 independent-mac=1')) {
         throw 'Typed runtime bridge regressions did not pass.'
     }
     if (([regex]::Matches($output, '\[play-vu:scalar-flags\] case=\d+ passed=1')).Count -ne 13 -or
@@ -65,7 +67,8 @@ try {
         throw 'Independent MAC/STATUS regressions did not pass.'
     }
     if (([regex]::Matches($output, '\[play-vu:fmac-range\] case=\d+ passed=1')).Count -ne 6 -or
-        !$output.Contains('[play-vu:fmac-parity] passed=1 cases=19584')) {
+        !$output.Contains('[play-vu:fmac-parity] passed=1 cases=39168') -or
+        !$output.Contains('[play-vu:fmac-models] passed=1 cases=128 separate-default=1 fused-runtime=1 immutable-session=1')) {
         throw 'FMAC range/result regressions did not pass.'
     }
     if (([regex]::Matches($output, '\[play-vu:wait-test\] mode=\d+ passed=1')).Count -ne 7) {
@@ -75,6 +78,13 @@ try {
         if (!$output.Contains('[play-vu:replay-summary]') -or
             !$output.Contains('repeatable=1 compatibility-accepted=0')) {
             throw 'Replay diagnostic did not complete. This is not a compatibility pass.'
+        }
+        if ($RequireRecordedMatch) {
+            $summary = [regex]::Match($output, '\[play-vu:replay-summary\] records=\d+ eligible=(\d+) ')
+            $matches = [regex]::Matches($output, '\[play-vu:architectural-result\] case=\d+ match=1 ')
+            if (!$summary.Success -or [int]$summary.Groups[1].Value -eq 0 -or $matches.Count -ne [int]$summary.Groups[1].Value) {
+                throw 'An eligible recording differs in architectural state, memory or timed packets.'
+            }
         }
     } elseif (!$output.Contains('[play-vu] 21 unmodified upstream tests passed') -or
         ([regex]::Matches($output, '\[play-vu:budget\]')).Count -ne 4 -or
