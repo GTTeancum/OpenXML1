@@ -5,6 +5,7 @@ param(
     [switch]$CoverageProfile,
     [switch]$CpuRasterProfile,
     [switch]$CaptureFrame,
+    [switch]$CompiledVu,
     [ValidateRange(30, 1800)]
     [int]$TimeoutSeconds = 600
 )
@@ -65,6 +66,10 @@ foreach ($key in @('PS2X_DISABLE_HOST_INPUT', 'PS2X_XMEN_HOST_CLOCK',
     $start.Environment[$key] = '1'
 }
 $start.Environment['PS2X_RUN_VSYNC_LIMIT'] = '1400'
+if ($CompiledVu) {
+    $start.Environment['PS2X_VU_COMPILED'] = '1'
+    $start.Environment['PS2X_VU_COMPILED_STATS'] = '1'
+}
 if ($PhaseProfile) { $start.Environment['PS2X_RUNTIME_PHASE_PROFILE'] = '1' }
 if ($CpuRasterProfile) { $start.Environment['PS2X_GS_CPU_PROFILE'] = '1' }
 if ($CoverageProfile) { $start.Environment['PS2X_VU_COVERAGE_PROFILE'] = '1' }
@@ -78,6 +83,7 @@ $writers = @{}
 $tasks = @{}
 $markers = @{}
 $blockPairs = 0L
+$compiledCalls = 0L
 $reachedLimit = $false
 $newGameHandler = $false
 $levelPackage = $false
@@ -119,6 +125,7 @@ try {
                 }
                 if ($line -match '^\[run:probe-limit\] vsync=1400\b') { $reachedLimit = $true }
                 if ($line -match '^\[vu:blocks\] stopped .* pairs=(\d+)') { $blockPairs = [long]$Matches[1] }
+                if ($line -match '^\[vu:compiled\] accepted=(\d+)') { $compiledCalls = [long]$Matches[1] }
                 if ($line -match '^\[xmen-new-?game-handler\]') { $newGameHandler = $true }
                 if ($line.Contains('path="maps/nyc/alison/nyc1_1_1.igb"')) { $levelPackage = $true }
                 if ($line -match '^\[(?:ee-thread:missing-pc|guest-branch:missing-target)\]|^Error during program execution:') {
@@ -145,6 +152,7 @@ try {
         & (Join-Path $PSScriptRoot 'summarize-vu-coverage.ps1') -LogPath $errLog -RequireGameplaySpan
     } else { $null }
     $verified = $process.ExitCode -eq 0 -and $guestFaultLines -eq 0 -and
+        (!$CompiledVu -or $compiledCalls -gt 0) -and
         $reachedLimit -and $blockPairs -gt 0 -and
         $newGameHandler -and $levelPackage -and
         $markers.ContainsKey('1152') -and $markers.ContainsKey('1280')
@@ -153,6 +161,7 @@ try {
         Executable = $exe; Sha256 = $identity; PhaseProfile = [bool]$PhaseProfile
         CoverageProfile = [bool]$CoverageProfile
         CpuRasterProfile = [bool]$CpuRasterProfile
+        CompiledVu = [bool]$CompiledVu; CompiledCallsLowerBound = $compiledCalls
         Coverage = $coverage
         StartupMode = 'TitleGameplayFirst'; HostInput = $false
         ExitCode = $process.ExitCode; ReachedLimit = $reachedLimit; BlockPairs = $blockPairs

@@ -3,9 +3,68 @@
 This builds only the VU compiler, its supporting stream code, and the 21 existing
 VU test cases from [Play!](https://github.com/jpd002/Play-), plus isolated contract
 tests and an optional private VU-recording diagnostic. A typed bridge uses the
-PS2Recomp state header, but does not link its runtime, read the ISO, create a game
-window, or enable a replacement engine.
+PS2Recomp state header. The standalone probe does not read the ISO or create a
+game window; the optional runtime extension below now connects it to the game.
 There is no gameplay FPS claim or interactive handoff yet.
+
+## Experimental Runtime Hook: Not Ready for Gameplay
+
+Local PS2Recomp commit `e7408e9` adds the opt-in hook and replay validation.
+The full-drain hook is compiled only when `PS2X_VU_COMPILED_ENGINE_DIR` points
+here, and executes only with `PS2X_VU_COMPILED=1`. It is **off by default**.
+Unsupported entries retain the original engine; short slices through 64 cycles
+never enter the adapter. Existing standalone libraries and one build tree are
+reused. No runtime class layout or generated guest source changed.
+
+Configure using `build-below-normal.ps1 -Target ps2x_tests -ConfigureCache`
+with `PS2X_VU_COMPILED_ENGINE_DIR=C:/Programming/GitHub/OpenXML1/xmen-legends/play-vu-probe`.
+Keep the existing `PS2X_VU_COMPILED_TEST_DIR` setting to include integration tests.
+Set `PS2X_VU_REPLAY_COMPILED=1` for hybrid replay validation. The first pass
+always verifies the original engine against the complete recorded state;
+compiled passes compare completed architectural state, memory and timed packets.
+Inactive scheduling payloads may differ and are not called raw-state matches.
+Fallback passes still require raw-state equality. The replay digest identifies
+the recording, not raw compiled output equality.
+
+Final test image `86FC5144826AF17612F221054FC1D071969EE4D4CB4004519275E1DC04572281`
+passes all 153 default-mode VU tests, including six producer integration tests.
+Both 32-record captures pass original-engine normal/1/8/16/64-cycle checks.
+Hybrid checks commit 14 original/eight spread cases, with exact architectural,
+memory and packet matches; 64-cycle hybrid checks use only verified fallback.
+Globally enabling the engine for the older PS2VU1 suite gives 81/82 passes:
+the existing mixed-size XGKICK test compares inactive serialized bookkeeping.
+It is retained unchanged. A separate paired test verifies the mixed-size
+packets, registers, memory and completed cycles against short-slice execution.
+This does not establish equivalence for unrecorded game workloads.
+
+Three alternating 256-warm-repeat runs measured the actual hybrid adapter,
+including capture/commit, copying, fallback and packet observation:
+
+| Capture | Original engine ms | Hybrid ms | Median ratio |
+| --- | --- | --- | ---: |
+| Original | 377.809 / 387.518 / 396.911 | 172.172 / 169.875 / 171.689 | 2.257x |
+| Spread | 163.085 / 158.544 / 157.904 | 111.808 / 111.216 / 114.248 | 1.418x |
+
+These omit cold compilation and full GS drawing and are **not gameplay FPS**.
+Measurement image was `7EBE9221D09DB4AE5DF638E92F274646EF297E2852DF3FDE98F27F9E7532A630`.
+
+Game candidate `AAAC937D19F676137A9650BFFFC1F814DDEBBACD4FB049D660D6F8A02218CE6A`
+includes this opt-in performance experiment and the queued title/FPS counter.
+Its compiled-on run committed at least 208,897 calls but failed before the
+1152/1280 measurement markers: null-object virtual dispatch at guest call
+`0x396e7c`, return `0x396e84`, missing target `0xa3a1d0`. Its 99-second total
+runtime is not a speedup. Fixed `gameplay-compiled-failure` logs preserve it.
+The same executable with the engine off completed at 2026-09-06 09:56 UTC,
+zero guest faults, all workload gates, 128 presents in 25.715718 seconds
+(4.97750 FPS, approximate shared-host timing). Earlier builds sometimes failed
+at a similar call; that does not exonerate the new engine.
+
+Next isolate the first divergent state or ordering in the compiled-on workload,
+including singleton allocation at `0x38cfd0` and its allocator dispatch through
+`0x14cb28/0x14cb3c`. Existing allocator diagnostics are available in the runtime.
+Do not patch around the null pointer or promote this candidate as a verified
+speedup. Controls were disabled in both benchmarks and both processes ended.
+All commits stay local; no push or PR. Sections below describe older checkpoints.
 
 ## Real Runtime Boundary Tests
 

@@ -18,7 +18,15 @@ $newGameHandler = $true
 $levelPackage = $true
 $markers = @{ '1152' = 1; '1280' = 2 }
 $guestFaultLines = 0
+$CompiledVu = $false
+$compiledCalls = 0L
 if (!(& $check)) { throw 'Healthy workload rejected.' }
+$CompiledVu = $true
+if (& $check) { throw 'Requested compiled engine was accepted without execution evidence.' }
+$compiledCalls = 1L
+if (!(& $check)) { throw 'Verified compiled workload rejected.' }
+$CompiledVu = $false
+$compiledCalls = 0L
 $guestFaultLines = 1
 if (& $check) { throw 'A guest fault with process exit zero was accepted.' }
 $guestFaultLines = 0

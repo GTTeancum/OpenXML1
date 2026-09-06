@@ -77,6 +77,80 @@ void register_compiled_vu_producer_tests()
 {
     MiniTest::Case("PS2VU1CompiledProducer", [](TestCase &tc)
     {
+#if defined(PS2X_TEST_COMPILED_VU_HOOK)
+        tc.Run("Hybrid packet storage reuse matches full and sliced observable results", [](TestCase &t)
+        {
+            for (uint32_t slice : {4096u, 1u, 3u, 8u, 64u})
+            {
+                Fixture fast, reference;
+                if (!fast.init() || !reference.init()) { t.Fail("Fixtures initialize"); return; }
+                const uint32_t addresses[] = {0, 8192, 12288}, sizes[] = {4096, 32, 80};
+                std::vector<std::vector<uint8_t>> expected, actual;
+                for (auto *fx : {&fast, &reference})
+                {
+                    for (uint32_t i = 0; i < 3; ++i)
+                    {
+                        fx->vu.state().vi[i + 1] = addresses[i] / 16;
+                        const uint64_t tag = (uint64_t(2) << 58) | 0x8000 | (sizes[i] / 16 - 1);
+                        std::memcpy(fx->data + addresses[i], &tag, 8);
+                        for (uint32_t byte = 16; byte < sizes[i]; ++byte)
+                            fx->data[addresses[i] + byte] = uint8_t(byte * 13 + i * 71);
+                        fx->pair(i * 8, 0x800006fcu | ((i + 1) << 11));
+                    }
+                    fx->pair(24, 0, upperNop | end);
+                    fx->pair(32, 0);
+                }
+                fast.memory.setGifPacketCallback([&](const uint8_t *bytes, uint32_t size) {
+                    actual.emplace_back(bytes, bytes + size);
+                });
+                reference.memory.setGifPacketCallback([&](const uint8_t *bytes, uint32_t size) {
+                    expected.emplace_back(bytes, bytes + size);
+                });
+                const auto before = compiledVuCounters();
+                {
+                    ScopedCompiledVuMode enabled(true);
+                    fast.start(4096);
+                }
+                t.Equals(compiledVuCounters().accepted, before.accepted + 1, "Packet workload really uses compiled engine");
+                {
+                    ScopedCompiledVuMode disabled(false);
+                    reference.start(slice);
+                    for (unsigned calls = 0; reference.vu.isRunning() && calls < 4096; ++calls)
+                        reference.resume(slice);
+                }
+                t.IsTrue(!fast.vu.isRunning() && !reference.vu.isRunning(), "Both drains terminate");
+                t.IsTrue(sameArchitecture(fast.vu.state(), reference.vu.state()),
+                    "Packet reuse preserves every register and exact completion cycle across slice sizes");
+                t.IsTrue(actual == expected && actual.size() == 3, "Packet bytes and boundaries match exactly");
+                t.IsTrue(!std::memcmp(fast.data, reference.data, 16384), "Packet workload data matches");
+            }
+        });
+        tc.Run("Runtime execution hook is opt-in and scoped without changing fallback", [](TestCase &t)
+        {
+            Fixture fast, reference;
+            if (!fast.init() || !reference.init()) { t.Fail("Fixtures initialize"); return; }
+            signalProgram(fast, 0);
+            signalProgram(reference, 0);
+            const auto before = compiledVuCounters();
+            const bool prior = compiledVuEnabled();
+            {
+                ScopedCompiledVuMode disabled(false);
+                reference.start(budget);
+                t.Equals(compiledVuCounters().attempted, before.attempted, "Disabled hook does not call producer");
+                {
+                    ScopedCompiledVuMode enabled(true);
+                    fast.start(budget);
+                    t.Equals(compiledVuCounters().accepted, before.accepted + 1, "Real run entry commits compiled work");
+                    t.IsTrue(sameArchitecture(fast.vu.state(), reference.vu.state()), "Hook result matches normal execution");
+                    t.IsTrue(!std::memcmp(fast.data, reference.data, 16384), "Hook memory matches");
+                    t.Equals(fast.packets, 1u, "Hook publishes exactly once");
+                    t.Equals(uint32_t(fast.memory.gs().siglblid), 0x11223344u, "Hook reaches real GS");
+                }
+                t.IsTrue(!compiledVuEnabled(), "Inner override restores disabled outer mode");
+            }
+            t.Equals(compiledVuEnabled(), prior, "Scoped test restores original mode");
+        });
+#endif
         tc.Run("Committed pending arithmetic resumes and consumes signed VI results", [](TestCase &t)
         {
             Fixture fast, reference;
