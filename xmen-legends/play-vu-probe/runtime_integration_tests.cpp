@@ -82,6 +82,141 @@ void register_compiled_vu_producer_tests()
     MiniTest::Case("PS2VU1CompiledProducer", [](TestCase &tc)
     {
 #if defined(PS2X_TEST_COMPILED_VU_HOOK)
+        tc.Run("FTOI saturates positive overflow without changing masks or flags", [](TestCase &t)
+        {
+            for (unsigned scale : {0u, 4u, 12u, 15u})
+            for (unsigned mask : {1u, 5u, 10u, 15u})
+            {
+                const uint32_t threshold = 0x4f000000u - (scale << 23);
+                for (uint32_t value : {threshold - 1, threshold, threshold + 1,
+                    threshold | 0x80000000u, 0x7f7fffffu, 0xff7fffffu, 0x7f800000u,
+                    0xff800000u, 0x7fc12345u, 0xffc12345u, 1u, 0x80000001u})
+                {
+                    Fixture fast, reference;
+                    if (!fast.init() || !reference.init()) { t.Fail("Fixtures initialize"); return; }
+                    for (auto *fx : {&fast, &reference})
+                    {
+                        for (unsigned lane = 0; lane < 4; ++lane)
+                        {
+                            const uint32_t bits = value ^ ((lane & 1) ? 0x80000000u : 0u);
+                            std::memcpy(&fx->vu.state().vf[1][lane], &bits, 4);
+                            fx->vu.state().vf[2][lane] = float(lane + 1);
+                        }
+                        const unsigned variant = scale == 0 ? 0 : scale == 4 ? 1 : scale == 12 ? 2 : 3;
+                        fx->pair(8, lowerNop, (mask << 21) | (2u << 16) | (1u << 11) | 0x17c | variant);
+                        fx->pair(64, lowerNop, upperNop | end);
+                    }
+                    { ScopedCompiledVuMode disabled(false); fast.start(1); reference.start(budget); }
+                    std::string reason;
+                    t.IsTrue(fast.compiled(reason), "Conversion uses compiled producer");
+                    t.IsTrue(sameArchitecture(fast.vu.state(), reference.vu.state()), "All lanes, masks, flags and cycles match");
+                }
+            }
+        });
+        tc.Run("Immediate storage uses the runtime finite operand rules", [](TestCase &t)
+        {
+            for (uint32_t bits : {0u, 0x80000000u, 1u, 0x800003bfu, 0x007fffffu,
+                0x00800000u, 0x3f800001u, 0x7f7fffffu, 0x7f800000u, 0xff800000u, 0x7fc12345u, 0xffc12345u})
+            {
+                Fixture fast, reference;
+                if (!fast.init() || !reference.init()) { t.Fail("Fixtures initialize"); return; }
+                for (auto *fx : {&fast, &reference})
+                {
+                    fx->pair(8, bits, upperNop | 0x80000000u);
+                    fx->pair(16, lowerNop, (8u << 21) | (3u << 6) | 0x22);
+                    fx->pair(64, lowerNop, upperNop | end);
+                }
+                { ScopedCompiledVuMode disabled(false); fast.start(1); reference.start(budget); }
+                std::string reason;
+                t.IsTrue(fast.compiled(reason), "Immediate uses compiled producer");
+                t.IsTrue(sameArchitecture(fast.vu.state(), reference.vu.state()), "Immediate storage and arithmetic match bitwise");
+            }
+        });
+        tc.Run("Paired immediate loads preserve the old I value for upper arithmetic", [](TestCase &t)
+        {
+            Fixture fast, reference;
+            if (!fast.init() || !reference.init()) { t.Fail("Fixtures initialize"); return; }
+            for (auto *fx : {&fast, &reference})
+            {
+                fx->pair(8, 0x3f800001, upperNop | 0x80000000u);
+                fx->pair(16, 0x3f800000, (4u << 21) | (25u << 6) | 0x22 | 0x80000000u);
+                fx->pair(24, lowerNop, (8u << 21) | (25u << 6) | 0x22);
+                fx->pair(64, lowerNop, upperNop | end);
+            }
+            { ScopedCompiledVuMode disabled(false); fast.start(1); reference.start(budget); }
+            std::string reason;
+            t.IsTrue(fast.compiled(reason), "Paired I workload uses compiled producer");
+            t.IsTrue(sameArchitecture(fast.vu.state(), reference.vu.state()), "Old and new I values match reference");
+            t.Equals(fast.vu.state().vf[25][1], reference.vu.state().vf[25][1], "Paired ADDi reads previous immediate");
+        });
+        tc.Run("Q waits preserve scalar visibility and elapsed execution time", [](TestCase &t)
+        {
+            for (unsigned operation = 0; operation < 3; ++operation)
+            for (unsigned gap : {0u, 2u, 6u, 12u})
+            {
+                Fixture fast, reference;
+                if (!fast.init() || !reference.init()) { t.Fail("Fixtures initialize"); return; }
+                for (auto *fx : {&fast, &reference})
+                {
+                    fx->vu.state().vf[1][0] = 8.0f;
+                    fx->vu.state().vf[2][0] = 4.0f;
+                    fx->pair(8, 0x800003bcu | operation | (operation == 1 ? 0u : (1u << 11)) | (2u << 16));
+                    fx->pair(16 + gap * 8, 0x800003bf); // WAITQ
+                    fx->pair(24 + gap * 8, lowerNop, (8u << 21) | (1u << 11) | (3u << 6) | 0x1c); // MULq vf3.x,vf1.x
+                    fx->pair(64 + gap * 8, lowerNop, upperNop | end);
+                }
+                { ScopedCompiledVuMode disabled(false); fast.start(1); reference.start(budget); }
+                std::string reason;
+                t.IsTrue(fast.compiled(reason), "Scalar wait uses compiled producer");
+                if (!sameArchitecture(fast.vu.state(), reference.vu.state()))
+                    std::printf("[q-wait-diff] op=%u gap=%u cycles=%llu/%llu q=%.9g/%.9g\n",
+                        operation, gap, static_cast<unsigned long long>(fast.vu.state().cycles),
+                        static_cast<unsigned long long>(reference.vu.state().cycles), fast.vu.state().q, reference.vu.state().q);
+                t.IsTrue(sameArchitecture(fast.vu.state(), reference.vu.state()), "Q values, flags and completion time match");
+            }
+        });
+        tc.Run("Q stalls age pending writes and guard arithmetic delay slots", [](TestCase &t)
+        {
+            for (unsigned variant = 0; variant < 5; ++variant)
+            {
+                Fixture fast, reference;
+                if (!fast.init() || !reference.init()) { t.Fail("Fixtures initialize"); return; }
+                const uint32_t add3 = (8u << 21) | (1u << 11) | (3u << 6) | 0x28;
+                for (auto *fx : {&fast, &reference})
+                {
+                    fx->vu.state().vf[1][0] = 8.0f;
+                    fx->vu.state().vf[2][0] = 4.0f;
+                    fx->pair(8, 0x80020bbc, variant == 0 ? add3 : upperNop);
+                    fx->pair(16, 0x800003bf, variant == 1 ?
+                        ((8u << 21) | (1u << 11) | (3u << 6) | 0x1c) : upperNop);
+                    if (variant == 2 || variant == 3)
+                    {
+                        fx->pair(16, 0x40000002, variant == 3 ? add3 : upperNop); // B 40
+                        fx->pair(24, 0x800003bf);
+                    }
+                    if (variant == 4) fx->pair(16, 0x800003bf, upperNop | 0x80000000u);
+                    fx->pair(40, lowerNop, (8u << 21) | (3u << 11) | (4u << 6) | 0x28);
+                    fx->pair(80, lowerNop, upperNop | end);
+                }
+                { ScopedCompiledVuMode disabled(false); fast.start(1); reference.start(budget); }
+                const auto initial = fast.vu.state();
+                std::string reason;
+                const bool accepted = fast.compiled(reason);
+                t.Equals(accepted, variant != 3, "Only busy Q after local delay-slot arithmetic falls back");
+                if (!accepted)
+                {
+                    t.IsTrue(sameArchitecture(initial, fast.vu.state()), "Rejected private work is not published");
+                    ScopedCompiledVuMode disabled(false);
+                    fast.resume(budget);
+                }
+                if (!sameArchitecture(fast.vu.state(), reference.vu.state()))
+                    std::printf("[q-edge-diff] variant=%u cycles=%llu/%llu q=%.9g/%.9g vf3=%.9g/%.9g vf4=%.9g/%.9g\n",
+                        variant, static_cast<unsigned long long>(fast.vu.state().cycles),
+                        static_cast<unsigned long long>(reference.vu.state().cycles), fast.vu.state().q, reference.vu.state().q,
+                        fast.vu.state().vf[3][0], reference.vu.state().vf[3][0], fast.vu.state().vf[4][0], reference.vu.state().vf[4][0]);
+                t.IsTrue(sameArchitecture(fast.vu.state(), reference.vu.state()), "Wait, paired upper and incoming VF results match");
+            }
+        });
         tc.Run("An incoming register wait ages the other pending register writes", [](TestCase &t)
         {
             const unsigned orders[][3] = {{0,1,2}, {0,2,1}, {1,0,2}, {1,2,0}, {2,0,1}, {2,1,0}};

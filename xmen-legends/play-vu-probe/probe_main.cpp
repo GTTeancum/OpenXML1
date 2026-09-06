@@ -39,6 +39,81 @@ extern "C" void playVuCheckRegisters(void (*function)(void *), void *context,
     const uint32_t *sentinel, uint32_t *actual);
 bool runTransferTests();
 
+static void mutateContext(uint32_t *context)
+{
+    context[1] = context[0];
+    context[0] = 0x40900000;
+}
+
+static bool checkContextCalls()
+{
+    bool passed = true;
+    for (unsigned variant = 0; variant < 2; ++variant)
+    {
+        alignas(16) uint32_t context[4]{};
+        Framework::CMemStream stream;
+        Jitter::CJitter jitter(Jitter::CreateCodeGen());
+        jitter.SetStream(&stream);
+        jitter.Begin();
+        jitter.PushCst(0x3f800001);
+        jitter.PullRel(0);
+        jitter.PushCtx();
+        jitter.Call(reinterpret_cast<void*>(&mutateContext), 1, Jitter::CJitter::RETURN_VALUE_NONE);
+        if (variant == 0) jitter.PushCst(0x3f800000);
+        else jitter.PushRel(0);
+        jitter.PullRel(variant == 0 ? 0 : 8);
+        jitter.End();
+        CMemoryFunction function(stream.GetBuffer(), stream.GetSize());
+        reinterpret_cast<void (*)(void *)>(function.GetCode())(context);
+        const bool match = context[1] == 0x3f800001 &&
+            (variant == 0 ? context[0] == 0x3f800000 : context[2] == 0x40900000);
+        passed &= match;
+        std::printf("[play-vu:context-call] variant=%u passed=%u observed=%08x after=%08x\n",
+            variant, unsigned(match), context[1], context[variant == 0 ? 0 : 2]);
+    }
+    return passed;
+}
+
+static void mutateWideContext(uint32_t *context)
+{
+    for (unsigned i = 0; i < 4; ++i) context[i] ^= 0xffffffffu;
+}
+
+static bool checkWideContextCalls()
+{
+    bool passed = true;
+    for (unsigned words : {1u, 2u, 4u})
+    {
+        alignas(16) uint32_t context[16]{};
+        for (unsigned i = 0; i < 4; ++i) context[i] = 0x12340000 + i;
+        Framework::CMemStream stream;
+        Jitter::CJitter jitter(Jitter::CreateCodeGen());
+        jitter.SetStream(&stream);
+        jitter.Begin();
+        for (unsigned stage = 0; stage < 2; ++stage)
+        {
+            const unsigned offset = 32 + stage * 16;
+            if (words == 1) { jitter.PushRel(0); jitter.PullRel(offset); }
+            if (words == 2) { jitter.PushRel64(0); jitter.PullRel64(offset); }
+            if (words == 4) { jitter.MD_PushRel(0); jitter.MD_PullRel(offset); }
+            if (stage == 0)
+            {
+                jitter.PushCtx();
+                jitter.Call(reinterpret_cast<void*>(&mutateWideContext), 1, Jitter::CJitter::RETURN_VALUE_NONE);
+            }
+        }
+        jitter.End();
+        CMemoryFunction function(stream.GetBuffer(), stream.GetSize());
+        reinterpret_cast<void (*)(void *)>(function.GetCode())(context);
+        bool match = true;
+        for (unsigned i = 0; i < words; ++i)
+            match &= context[8 + i] == (0x12340000u + i) && context[12 + i] == ~(0x12340000u + i);
+        passed &= match;
+        std::printf("[play-vu:context-wide] words=%u passed=%u\n", words, unsigned(match));
+    }
+    return passed;
+}
+
 static bool checkWindowsAbi()
 {
     alignas(16) uint32_t context[25][4]{};
@@ -94,6 +169,7 @@ int main(int argc, const char **argv)
     std::fesetround(FE_TOWARDZERO);
     FpUtils::SetDenormalHandlingMode();
     if (!checkWindowsAbi()) return 6;
+    if (!checkContextCalls() || !checkWideContextCalls()) return 13;
     if (!runTransferTests()) return 7;
     if (!pendingImportTests()) return 8;
     if (!compiledSessionTests()) return 9;

@@ -1,0 +1,53 @@
+diff --git a/include/Jitter.h b/include/Jitter.h
+index 167dc00..b368805 100644
+--- a/include/Jitter.h
++++ b/include/Jitter.h
+@@ -284,6 +284,7 @@ namespace Jitter
+ 		public:
+ 			unsigned int GetRelativeVersion(uint32);
+ 			unsigned int IncrementRelativeVersion(uint32);
++			void InvalidateAll();
+ 
+ 		private:
+ 			typedef std::unordered_map<uint32, unsigned int> RelativeVersionMap;
+diff --git a/src/Jitter_Optimize.cpp b/src/Jitter_Optimize.cpp
+index 3c33fae..58dbd03 100644
+--- a/src/Jitter_Optimize.cpp
++++ b/src/Jitter_Optimize.cpp
+@@ -16,9 +16,12 @@ using namespace Jitter;
+ 
+ unsigned int CJitter::CRelativeVersionManager::GetRelativeVersion(uint32 relativeId)
+ {
+-	RelativeVersionMap::const_iterator versionIterator(m_relativeVersions.find(relativeId));
+-	if(versionIterator == m_relativeVersions.end()) return 0;
+-	return versionIterator->second;
++	return m_relativeVersions[relativeId];
++}
++
++void CJitter::CRelativeVersionManager::InvalidateAll()
++{
++	for(auto& entry : m_relativeVersions) ++entry.second;
+ }
+ 
+ unsigned int CJitter::CRelativeVersionManager::IncrementRelativeVersion(uint32 relativeId)
+@@ -76,6 +79,8 @@ CJitter::VERSIONED_STATEMENT_LIST CJitter::GenerateVersionedStatementList(const
+ 
+ 	for(auto newStatement : statements)
+ 	{
++		// Native calls can read or change CPU state through their context pointer.
++		if(newStatement.op == OP_CALL) result.relativeVersions.InvalidateAll();
+ 		ReplaceUse()(newStatement.src1, result.relativeVersions);
+ 		ReplaceUse()(newStatement.src2, result.relativeVersions);
+ 		ReplaceUse()(newStatement.src3, result.relativeVersions);
+@@ -1536,6 +1541,11 @@ bool CJitter::DeadcodeElimination(VERSIONED_STATEMENT_LIST& versionedStatementLi
+ 			if(outerStatementIterator == innerStatementIterator) continue;
+ 
+ 			const auto& innerStatement(*innerStatementIterator);
++			if(candidate->IsRelative() && innerStatement.op == OP_CALL)
++			{
++				used = true;
++				break;
++			}
+ 
+ 			innerStatement.VisitSources(
+ 			    [&](const SymbolRefPtr& innerSymbolRef, bool) {

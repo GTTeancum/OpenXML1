@@ -46,7 +46,7 @@ try {
     }
 } finally { $archive.Dispose() }
 
-$stem = if ($AuditCompiledVu) { 'gameplay-compiled-audit' } elseif ($PhaseProfile -or $CoverageProfile -or $CpuRasterProfile) { 'gameplay-phase' } else { 'gameplay-rate' }
+$stem = if ($AuditCompiledVu) { 'gameplay-compiled-audit' } elseif ($PhaseProfile -or $CoverageProfile -or $CpuRasterProfile) { 'gameplay-phase' } elseif ($CompiledVu) { 'gameplay-compiled-rate' } else { 'gameplay-rate' }
 $outLog = Join-Path $build "$stem.out.log"
 $errLog = Join-Path $build "$stem.err.log"
 $start = [Diagnostics.ProcessStartInfo]::new($exe)

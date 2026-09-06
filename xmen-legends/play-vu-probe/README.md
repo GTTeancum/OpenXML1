@@ -5,9 +5,88 @@ VU test cases from [Play!](https://github.com/jpd002/Play-), plus isolated contr
 tests and an optional private VU-recording diagnostic. A typed bridge uses the
 PS2Recomp state header. The standalone probe does not read the ISO or create a
 game window; the optional runtime extension below now connects it to the game.
-There is no gameplay FPS claim or interactive handoff yet.
+Bounded first-level timing is recorded below; there is no interactive handoff yet.
 
-## Current Shadow-Audit Checkpoint
+## Q, Native-Call And Conversion Corrections
+
+The two subsequent game recordings exposed separate compiler defects, now
+reproducible and fixed locally. The engine remains opt-in/off by default;
+compiler tests alone do not establish gameplay speed or interactive playability.
+
+- Native calls could observe a deleted earlier CPU-state store, or a later
+  generated read could reuse a pre-call constant. `codegen-context-calls.patch`
+  preserves relative stores across calls and invalidates their known versions.
+  Both direct regressions fail before/pass after; read-only-before-call tests
+  also cover 32/64/128-bit reloads. This repairs the paired-immediate discrepancy
+  without changing the game's immediate instruction ordering.
+- Runtime-mode Q synchronization now occurs at compiled entry boundaries,
+  including isolated branch/delay pairs. Actual elapsed waits age incoming VF
+  masks. Busy Q after local upper arithmetic conservatively rejects private
+  execution via the generated epilogue, not an exception through JIT frames.
+  Twelve DIV/SQRT/RSQRT gap cases and five pending-write/paired-upper/branch/I-bit
+  cases verify values, flags, timing, and clean fallback.
+- Immediate storage matches the runtime's finite-operand rules, with 12 raw
+  input cases. FTOI0/4/12/15 now saturate positive overflow to INT_MAX instead of
+  host conversion's INT_MIN. The correction is emitted as SIMD operations,
+  not a per-conversion native callback; 192 scale/mask/value cases pass.
+
+Runtime test SHA-256:
+`0A68DF003B202B8E0E01246A37EDA330D700422B0F3FBFD5BF3BD48C2CD987F1`.
+All 161 default VU tests, including 14 compiled integration cases, pass.
+Both original recordings retain exact results at normal/1/8/16/64-cycle budgets.
+All four saved failure cases now pass hybrid replay: EFU through unchanged
+fallback, and incoming waits/Q-call/FTOI through compiled execution. The Q-call
+record now matches all 2,874 cycles and 13 timed packets; the FTOI record matches
+all 263 cycles, registers, data and three timed packets. Private record names
+are `vu-efu-failure.bin`, `vu-entry-wait-failure.bin`, `vu-q-call-failure.bin`
+and `vu-ftoi-failure.bin`; never stage these game-derived captures.
+
+Final standalone probe
+`D3D906DD159A8201BEF3B76338198730D67FDBD1FD2A57EE6794FB3607D5C17E`
+passes all public contracts and 21 unchanged upstream VU tests. The unchanged
+CodeGenTestSuite passes (exit 0), SHA-256
+`94A77D0059161E3BC34A9762ED0E78DBA68F201FD55349CEEF23D5F4444BF966`.
+The GS suite remains 86/87 with the previously documented CSR/IMR failure.
+It is not a full-suite pass.
+
+Candidate `A25C7698...` (before FTOI correction) stopped its fourth audit at
+5,991 accepted calls / tick 381 / PC `0x16a8`, saving the now-fixed FTOI case.
+New Game and NYC package markers appeared; no valid FPS was produced. The
+candidate with all corrections completed its fifth audit at 11:02 UTC:
+`A8B0EF858621D1ECB202E100A4E3B622B3A8B4D5DEA7E7066FD0FD1A7502F043`.
+At least 258,049 compiled calls matched the original engine before publication;
+the run reached its 1,400-vsync limit, New Game, NYC package and both presentation
+markers, with runtime exit 0 and zero logged guest faults. This bounded run did
+not reproduce the earlier null dispatch; it does not prove unrestricted play.
+The harness deliberately excludes audits from `WorkloadVerified` and FPS and
+ends with its non-benchmark exception even when the runtime finishes cleanly.
+The subsequent same-binary pair completed without logged guest faults:
+
+| Mode | Recorded UTC | 128-present interval | FPS |
+| --- | --- | --- | --- |
+| Compiled on, no audit | 2026-09-06 11:06:02 | 22.6916101 s | 5.640851 |
+| Compiled off | 2026-09-06 11:09:33 | 26.8608598 s | 4.765298 |
+
+This one shared-host pair shows about 18.4% higher FPS, not the 30 FPS target
+or a repeated-trial confidence estimate. Both runs verified New Game, the NYC
+package, native blocks, present markers 1152/1280, runtime exit 0 and the
+1,400-vsync limit. The non-audit compiled run accepted at least 258,049 calls.
+Input was disabled and no visual-fidelity or interactive-control claim is made.
+Fixed `gameplay-compiled-rate` and `gameplay-rate` logs/reports retain the pair;
+the older 4.97750 FPS result belongs to the preceding candidate.
+All owned game/build/test processes have ended and startup scripts are restored.
+Next profile the remaining whole-game cost with this correctness-checked engine,
+prioritizing substantial VU and GS savings over more detached correctness probes.
+Do not promote compiled mode or announce a controls-enabled handoff yet.
+
+Automatic first-nonblack and preset-frame screenshot dumps are disabled in the
+new performance candidate. Explicit `PS2X_DUMP_PRESENT_RANGE`, latest-frame
+capture, and `PS2X_CAPTURE_FIRST_NONBLACK=1` remain available when needed.
+No capture app or desktop input was used. All source changes and commits stay
+local; no pushes or PRs. Nested checkpoint `09d1cf1` contains the capture change.
+The sections below retain earlier checkpoint evidence.
+
+## Earlier Shadow-Audit Checkpoint
 
 As of 2026-09-06 10:35 UTC, all changes remain local: no PS2Recomp push or PR.
 Local PS2Recomp commit `e49ab1d` provides the private pre-publication audit.
@@ -554,12 +633,15 @@ From the OpenXML1 root, apply the patch once to the pinned CodeGen checkout:
 $patch = (Resolve-Path xmen-legends/play-vu-probe/codegen-win64-simd.patch).Path
 git -C .tools/Play-VU/deps/CodeGen apply --check $patch
 git -C .tools/Play-VU/deps/CodeGen apply $patch
+$contextPatch = (Resolve-Path xmen-legends/play-vu-probe/codegen-context-calls.patch).Path
+git -C .tools/Play-VU/deps/CodeGen apply --check $contextPatch
+git -C .tools/Play-VU/deps/CodeGen apply $contextPatch
 $observerPatch = (Resolve-Path xmen-legends/play-vu-probe/play-vu-memory-observer.patch).Path
 git -C .tools/Play-VU apply --check $observerPatch
 git -C .tools/Play-VU apply $observerPatch
 ```
 
-CMake refuses configuration if either patch is absent. A reverse `--check`
+CMake refuses configuration if any required patch is absent. A reverse `--check`
 confirms an already-applied patch; do not apply twice or reset unrelated edits.
 Configure once with MSVC x64 and MASM. Lower the configuring shell's
 priority before launching CMake, so compiler-identification children inherit it:

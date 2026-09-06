@@ -527,6 +527,22 @@ int replayDiagnostic(const char *path)
         TransferTimeline timeline(vm->m_vuMem);
         std::string timelineError;
         bool traceMemory = current == memoryTraceCase;
+        if (traceMemory)
+            for (uint32_t pc = 0; pc < code.size(); pc += 8)
+            {
+                const auto lower = static_cast<uint32_t>(at(code, pc));
+                const auto upper = static_cast<uint32_t>(at(code, pc + 4));
+                char loName[32]{}, hiName[32]{}, loArgs[128]{}, hiArgs[128]{};
+                auto *arch = vm->m_cpu.m_pArch;
+                arch->GetInstructionMnemonic(&vm->m_cpu, pc, lower, loName, sizeof(loName));
+                arch->GetInstructionOperands(&vm->m_cpu, pc, lower, loArgs, sizeof(loArgs));
+                arch->GetInstructionMnemonic(&vm->m_cpu, pc + 4, upper, hiName, sizeof(hiName));
+                arch->GetInstructionOperands(&vm->m_cpu, pc + 4, upper, hiArgs, sizeof(hiArgs));
+                if (upper & 0x80000000u)
+                    std::printf("[vu-code] pc=%04x upper=%s %s lower=I:%08x\n", pc, hiName, hiArgs, lower);
+                else
+                    std::printf("[vu-code] pc=%04x upper=%s %s lower=%s %s\n", pc, hiName, hiArgs, loName, loArgs);
+            }
         auto previousData = traceMemory ? data : Bytes{};
         unsigned traceWrites = 0;
         vm->m_cpu.m_vuMemoryObserver = [&](CMIPS *cpu, uint32 pc, uint32 cycle, uint32 phase) {

@@ -127,7 +127,7 @@ index 62b3f2c..d23169a 100644
  
  //0F
 diff --git a/Source/ee/MA_VU_Upper.cpp b/Source/ee/MA_VU_Upper.cpp
-index 7200729..cc53e3c 100644
+index 7200729..dbcb1c4 100644
 --- a/Source/ee/MA_VU_Upper.cpp
 +++ b/Source/ee/MA_VU_Upper.cpp
 @@ -28,7 +28,17 @@ void CMA_VU::CUpper::CompileInstruction(uint32 nAddress, CMipsJitter* codeGen, C
@@ -149,8 +149,21 @@ index 7200729..cc53e3c 100644
  
  	auto setTDBitException = [&](uint32 exceptionValue) {
  		//Only set TD bit exception if there's no other outstanding
+@@ -76,6 +86,12 @@ void CMA_VU::CUpper::SetRelativePipeTime(uint32 relativePipeTime)
+ 
+ void CMA_VU::CUpper::LOI(uint32 nValue)
+ {
++	if(m_pCtx->m_vuFmacCompiler)
++	{
++		const uint32 exponent = (nValue >> 23) & 0xFF;
++		if(exponent == 0) nValue &= 0x80000000;
++		else if(exponent == 0xFF) nValue = (nValue & 0x80000000) | 0x7F7FFFFF;
++	}
+ 	m_codeGen->PushCst(nValue);
+ 	m_codeGen->PullRel(offsetof(CMIPS, m_State.nCOP2I));
+ }
 diff --git a/Source/ee/VUShared.cpp b/Source/ee/VUShared.cpp
-index 52360eb..273b2d7 100644
+index 52360eb..7a94d51 100644
 --- a/Source/ee/VUShared.cpp
 +++ b/Source/ee/VUShared.cpp
 @@ -264,9 +264,29 @@ void VUShared::TestSZFlags(CMipsJitter* codeGen, uint8 dest, size_t regOffset, u
@@ -262,7 +275,60 @@ index 52360eb..273b2d7 100644
  }
  
  void VUShared::SetStatus(CMipsJitter* codeGen, size_t srcOffset)
-@@ -1584,7 +1632,7 @@ void VUShared::RNEXT(CMipsJitter* codeGen, uint8 dest, uint8 ft)
+@@ -893,12 +941,28 @@ void VUShared::DIV(CMipsJitter* codeGen, uint8 nFs, uint8 nFsf, uint8 nFt, uint8
+ 	codeGen->EndIf();
+ }
+ 
++namespace
++{
++void SaturatePositiveFtoi(CMipsJitter* codeGen, uint8 source, uint32 fractionalBits)
++{
++	// Host truncation returns INT_MIN for either overflow direction. Positive
++	// raw float encodings at or above 2^(31-fractionalBits) instead saturate high.
++	codeGen->MD_PushCstExpandW(0x7FFFFFFF);
++	codeGen->Swap();
++	codeGen->MD_PushRel(offsetof(CMIPS, m_State.nCOP2[source]));
++	codeGen->MD_PushCstExpandW(0x4F000000 - (fractionalBits << 23) - 1);
++	codeGen->MD_CmpGtW();
++	codeGen->MD_BitSelect();
++}
++}
++
+ void VUShared::FTOI0(CMipsJitter* codeGen, uint8 nDest, uint8 nFt, uint8 nFs)
+ {
+ 	if(nFt == 0) return;
+ 
+ 	codeGen->MD_PushRel(offsetof(CMIPS, m_State.nCOP2[nFs]));
+ 	codeGen->MD_ToInt32TruncateS();
++	SaturatePositiveFtoi(codeGen, nFs, 0);
+ 	PullVector(codeGen, nDest, offsetof(CMIPS, m_State.nCOP2[nFt]));
+ }
+ 
+@@ -910,6 +974,7 @@ void VUShared::FTOI4(CMipsJitter* codeGen, uint8 nDest, uint8 nFt, uint8 nFs)
+ 	codeGen->MD_PushCstExpandS(16.0f);
+ 	codeGen->MD_MulS();
+ 	codeGen->MD_ToInt32TruncateS();
++	SaturatePositiveFtoi(codeGen, nFs, 4);
+ 	PullVector(codeGen, nDest, offsetof(CMIPS, m_State.nCOP2[nFt]));
+ }
+ 
+@@ -921,6 +986,7 @@ void VUShared::FTOI12(CMipsJitter* codeGen, uint8 nDest, uint8 nFt, uint8 nFs)
+ 	codeGen->MD_PushCstExpandS(4096.0f);
+ 	codeGen->MD_MulS();
+ 	codeGen->MD_ToInt32TruncateS();
++	SaturatePositiveFtoi(codeGen, nFs, 12);
+ 	PullVector(codeGen, nDest, offsetof(CMIPS, m_State.nCOP2[nFt]));
+ }
+ 
+@@ -932,6 +998,7 @@ void VUShared::FTOI15(CMipsJitter* codeGen, uint8 nDest, uint8 nFt, uint8 nFs)
+ 	codeGen->MD_PushCstExpandS(32768.0f);
+ 	codeGen->MD_MulS();
+ 	codeGen->MD_ToInt32TruncateS();
++	SaturatePositiveFtoi(codeGen, nFs, 15);
+ 	PullVector(codeGen, nDest, offsetof(CMIPS, m_State.nCOP2[nFt]));
+ }
+ 
+@@ -1584,7 +1651,7 @@ void VUShared::RNEXT(CMipsJitter* codeGen, uint8 dest, uint8 ft)
  	RGET(codeGen, dest, ft);
  }
  
@@ -271,7 +337,7 @@ index 52360eb..273b2d7 100644
  {
  	size_t destination = g_pipeInfoQ.heldValue;
  	QueueInPipeline(g_pipeInfoQ, codeGen, LATENCY_RSQRT, relativePipeTime);
-@@ -1605,8 +1653,17 @@ void VUShared::RSQRT(CMipsJitter* codeGen, uint8 nFs, uint8 nFsf, uint8 nFt, uin
+@@ -1605,8 +1672,17 @@ void VUShared::RSQRT(CMipsJitter* codeGen, uint8 nFs, uint8 nFsf, uint8 nFt, uin
  	{
  		codeGen->FP_PushRel32(GetVectorElement(nFs, nFsf));
  		codeGen->FP_PushRel32(GetVectorElement(nFt, nFtf));
@@ -325,10 +391,10 @@ index a2991f1..d6265ef 100644
  	void SQbase(CMipsJitter*, uint8, uint8);
  	void SQD(CMipsJitter*, uint8, uint8, uint8, uint32);
 diff --git a/Source/ee/VuBasicBlock.cpp b/Source/ee/VuBasicBlock.cpp
-index a1ca3ca..d49fd7d 100644
+index a1ca3ca..d210af1 100644
 --- a/Source/ee/VuBasicBlock.cpp
 +++ b/Source/ee/VuBasicBlock.cpp
-@@ -3,6 +3,35 @@
+@@ -3,6 +3,51 @@
  #include "offsetof_def.h"
  #include "MemoryUtils.h"
  #include "Vpu.h"
@@ -336,6 +402,22 @@ index a1ca3ca..d49fd7d 100644
 +
 +namespace
 +{
++uint32 WaitVuQ(CMIPS* context, uint32 relativeCycle, uint32 allowWait)
++{
++	auto& state = context->m_State;
++	const uint32 now = state.pipeTime + relativeCycle;
++	const uint32 elapsed = state.pipeQ.counter > now ? state.pipeQ.counter - now : 0;
++	if(elapsed && !allowWait)
++	{
++		state.nHasException = MIPS_EXCEPTION_BREAKPOINT;
++		return 0;
++	}
++	state.pipeTime += elapsed;
++	for(uint32 i = relativeCycle; i < 3; ++i)
++		state.pipeFmacWrite[i] = elapsed < 3 - i ? state.pipeFmacWrite[i + elapsed] : uint128{};
++	return 1;
++}
++
 +void WaitVuXgkick(CMIPS* context, uint32 pc, uint32 relativeCycle)
 +{
 +	auto& state = context->m_State;
@@ -364,7 +446,7 @@ index a1ca3ca..d49fd7d 100644
  
  CVuBasicBlock::CVuBasicBlock(CMIPS& context, uint32 begin, uint32 end, BLOCK_CATEGORY category)
      : CBasicBlock(context, begin, end, category)
-@@ -22,6 +51,16 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -22,6 +67,16 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  	assert((m_begin & 0x07) == 0);
  	assert(((m_end + 4) & 0x07) == 0);
  	auto arch = static_cast<CMA_VU*>(m_context.m_pArch);
@@ -381,8 +463,30 @@ index a1ca3ca..d49fd7d 100644
  
  	bool hasPendingXgKick = false;
  	const auto clearPendingXgKick =
-@@ -72,6 +111,29 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -70,8 +125,51 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+ 
+ 		//No upper instruction reads from P
  		assert(hiOps.readP == false);
++		if(m_context.m_vuStatusObserver && loOps.syncQ && !(opcodeHi & VUShared::VU_UPPEROP_BIT_I))
++		{
++			// Partitioning puts dynamic Q waits at entry or in a branch delay slot.
++			if(address != m_begin && (address != m_begin + 8 ||
++			   arch->IsInstructionBranch(&m_context, m_begin, firstLo) != MIPS_BRANCH_NORMAL))
++				throw std::runtime_error("Q wait inside unsplit VU block");
++			jitter->PushCtx();
++			jitter->PushCst(relativePipeTime);
++			const bool allowWait = address == m_begin || firstHi == 0x000002FF;
++			jitter->PushCst(allowWait);
++			jitter->Call(reinterpret_cast<void*>(&WaitVuQ), 3, allowWait ?
++			    Jitter::CJitter::RETURN_VALUE_NONE : Jitter::CJitter::RETURN_VALUE_32);
++			if(!allowWait)
++			{
++				jitter->PushCst(0);
++				jitter->BeginIf(Jitter::CONDITION_EQ);
++				jitter->Goto(jitter->GetLastBlockLabel());
++				jitter->EndIf();
++			}
++		}
  
  		bool loIsXgKick = (opcodeLo & ~(0x1F << 11)) == 0x800006FC;
 +		if(m_context.m_vuXgkickWait && address != m_begin && loIsXgKick &&
@@ -411,7 +515,7 @@ index a1ca3ca..d49fd7d 100644
  
  		if(extraPipeTimeIndex < 3)
  		{
-@@ -86,7 +148,9 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -86,7 +184,9 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  			setStallBits(hiOps.readF1, hiOps.readElemF1);
  			setStallBits(loOps.readF0, loOps.readElemF0);
  			setStallBits(loOps.readF1, loOps.readElemF1);
@@ -422,7 +526,7 @@ index a1ca3ca..d49fd7d 100644
  			{
  				for(int32 stallIdx = 0; stallIdx < 4; stallIdx++)
  				{
-@@ -98,13 +162,18 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -98,13 +198,18 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  						jitter->PushCst(0);
  						jitter->BeginIf(Jitter::CONDITION_NE);
  						{
@@ -445,7 +549,7 @@ index a1ca3ca..d49fd7d 100644
  							jitter->Add();
  							jitter->PullRel(offsetof(CMIPS, m_State.pipeTime));
  						}
-@@ -169,6 +238,12 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -169,6 +274,12 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  		}
  
  		uint32 compileHints = hints[instructionIndex] | m_blockCompileHints;
@@ -458,7 +562,7 @@ index a1ca3ca..d49fd7d 100644
  		arch->SetCompileHints(compileHints);
  		arch->SetRelativePipeTime(relativePipeTime);
  		arch->CompileInstruction(addressHi, jitter, &m_context, addressHi - m_begin);
-@@ -251,7 +326,10 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -251,7 +362,10 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  			clearPendingXgKick();
  		}
  
@@ -469,7 +573,7 @@ index a1ca3ca..d49fd7d 100644
  
  		if(address == integerBranchDelayInfo.useRegAddress)
  		{
-@@ -335,6 +413,8 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -335,6 +449,8 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  				//We need to compile the instruction at the branch target because it will be executed
  				//before the branch is taken
  				uint32 branchTgtAddress = branchOpcodeAddr + VUShared::GetBranch(branchOpcodeLo & 0x7FF) + 8;
@@ -478,7 +582,7 @@ index a1ca3ca..d49fd7d 100644
  				arch->CompileInstruction(branchTgtAddress, jitter, &m_context, address - m_begin);
  			}
  		}
-@@ -357,6 +437,8 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -357,6 +473,8 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  					//If we haven't taken the jump, execute the instruction after the delay slot
  					uint32 nextOpcodeAddr = address + 8;
  					uint32 nextOpcodeLo = m_context.m_pMemoryMap->GetInstruction(nextOpcodeAddr);
@@ -487,7 +591,7 @@ index a1ca3ca..d49fd7d 100644
  					arch->CompileInstruction(nextOpcodeAddr, jitter, &m_context, nextOpcodeAddr - m_begin);
  				}
  				jitter->EndIf();
-@@ -382,7 +464,21 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -382,7 +500,21 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  		jitter->PullRel(offsetof(CMIPS, m_State.pipeTime));
  	}
  
@@ -510,7 +614,7 @@ index a1ca3ca..d49fd7d 100644
  	{
  		//Clear unused writes
  		//TODO: Find a way to push that to the next block (would become index 0 of next block)
-@@ -409,13 +505,18 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -409,13 +541,18 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  			if(stall.nV[i] != 0)
  			{
  				jitter->PushCst(stall.nV[i]);
@@ -530,11 +634,26 @@ index a1ca3ca..d49fd7d 100644
  		{
  			return false;
  		}
+@@ -436,6 +573,7 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+ 	jitter->PushCst(integerTrailingDelayInfo.regIndex);
+ 	jitter->PullRel(offsetof(CMIPS, m_State.savedNextBlockIntRegIdx));
+ 
++	jitter->MarkLastBlockLabel();
+ 	CompileEpilog(jitter, loopsOnItself && m_isLinkable);
+ }
+ 
 diff --git a/Source/ee/VuExecutor.cpp b/Source/ee/VuExecutor.cpp
-index 72e80fc..e2d5d2f 100644
+index 72e80fc..9ff50fa 100644
 --- a/Source/ee/VuExecutor.cpp
 +++ b/Source/ee/VuExecutor.cpp
-@@ -60,7 +60,7 @@ BasicBlockPtr CVuExecutor::BlockFactory(CMIPS& context, uint32 begin, uint32 end
+@@ -1,5 +1,6 @@
+ #include "VuExecutor.h"
+ #include "VuBasicBlock.h"
++#include "MA_VU.h"
+ #include "VUShared.h"
+ #include "xxhash.h"
+ 
+@@ -60,7 +61,7 @@ BasicBlockPtr CVuExecutor::BlockFactory(CMIPS& context, uint32 begin, uint32 end
  			}
  		}
  		//Check if we have a block that has the same contents but not the same range. Reuse the code of that block if that's the case.
@@ -543,10 +662,20 @@ index 72e80fc..e2d5d2f 100644
  		{
  			auto result = std::make_shared<CVuBasicBlock>(context, begin, end, m_blockCategory);
  			result->CopyFunctionFrom(beginBlockIterator->second);
-@@ -102,7 +102,24 @@ void CVuExecutor::PartitionFunction(uint32 startAddress)
+@@ -102,7 +103,41 @@ void CVuExecutor::PartitionFunction(uint32 startAddress)
  		uint32 addrHi = address + 4;
  		uint32 lowerOp = m_context.m_pMemoryMap->GetInstruction(addrLo);
  		uint32 upperOp = m_context.m_pMemoryMap->GetInstruction(addrHi);
++		auto arch = static_cast<CMA_VU*>(m_context.m_pArch);
++		const auto syncQ = [&](uint32 pc, uint32 lo, uint32 hi) {
++			return m_context.m_vuStatusObserver && !(hi & VUShared::VU_UPPEROP_BIT_I) &&
++			       arch->GetAffectedOperands(&m_context, pc, lo).syncQ;
++		};
++		if(address != startAddress && syncQ(address, lowerOp, upperOp))
++		{
++			endAddress = address - 4;
++			break;
++		}
 +		if(m_context.m_vuXgkickWait && address != startAddress &&
 +		   !(upperOp & VUShared::VU_UPPEROP_BIT_I) && (lowerOp & ~(0x1F << 11)) == 0x800006FC)
 +		{
@@ -554,6 +683,13 @@ index 72e80fc..e2d5d2f 100644
 +			break;
 +		}
  		auto branchType = m_context.m_pArch->IsInstructionBranch(&m_context, addrLo, lowerOp);
++		if(address != startAddress && branchType == MIPS_BRANCH_NORMAL && address + 12 < m_maxAddress &&
++		   syncQ(address + 8, m_context.m_pMemoryMap->GetInstruction(address + 8),
++		         m_context.m_pMemoryMap->GetInstruction(address + 12)))
++		{
++			endAddress = address - 4;
++			break;
++		}
 +		if(m_context.m_vuXgkickWait && address != startAddress && branchType == MIPS_BRANCH_NORMAL &&
 +		   address + 12 < m_maxAddress)
 +		{
