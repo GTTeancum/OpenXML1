@@ -34,7 +34,9 @@ The immediate priority is frame rate and responsiveness. A September 4 same-exec
 
 The September 5 candidate integrates the verified native-block work through PS2Recomp `1c6a874`, including a fix for overlapping register writes. It reaches textured New York and Wolverine through the real New Game handler, but the latest unprofiled 128-frame sample is only **3.11 FPS**. This does not demonstrate an improvement over the earlier 3.97 FPS sample; neither is a controlled before/after comparison. The candidate remains opt-in and the saved primary/staged builds are unchanged. Black props, missing foliage, and HUD/effect defects remain.
 
-A separate gameplay profile attributes about **64.6%** of measured wall time to VU processing and **24.4%** to graphics submission/drawing; waiting is negligible. Practical frame rate remains the main unfinished requirement. The current runtime passes **128/128 VU-related tests** and both private gameplay captures at normal and 1/8/16/64-cycle slicing. This is not a full-suite pass or proof of gameplay fidelity. An arithmetic shortcut passed those checks but measured slower and was removed.
+A separate gameplay profile attributes about **64.6%** of measured wall time to VU processing and **24.4%** to graphics submission/drawing; waiting is negligible. Practical frame rate remains the main unfinished requirement. The latest source passes **129/129 VU-related tests** and both private gameplay captures at normal and 1/8/16/64-cycle slicing. This is not a full-suite pass or proof of gameplay fidelity. An arithmetic shortcut passed those checks but measured slower and was removed.
+
+The latest source change simplifies FMAC flag generation. Seven alternating offline comparisons improve VU execution time by **2.8%** on the original capture and **4.1%** on the broader capture, winning all seven pairs in each set. The generic portion is submitted as [PS2Recomp PR #250](https://github.com/ran-j/PS2Recomp/pull/250), with 426/426 upstream-based tests passing and exhaustive flag-packing coverage. This change is not yet linked into the gameplay candidate; no new gameplay FPS improvement is claimed.
 
 <details>
 <summary>Earlier performance experiments and upstream contributions</summary>
@@ -230,8 +232,9 @@ Runtime and recompiler changes are developed in the public [GTTeancum/PS2Recomp 
 - [#231: Correct TEXCLUT addressing for CSM1 and CSM2](https://github.com/ran-j/PS2Recomp/pull/231)
 - [#232: Expand VIF UNPACK V4-5 channels](https://github.com/ran-j/PS2Recomp/pull/232)
 - [#237: Expand VIF UNPACK V2 and V3 lanes](https://github.com/ran-j/PS2Recomp/pull/237)
+- [#250: Reduce VU FMAC flag packing and initialization work](https://github.com/ran-j/PS2Recomp/pull/250)
 
-All fifteen submissions are open as of August 30, 2026. Game-specific diagnostics and unfinished compatibility work remain on `codex/xmen-legends-bringup` until they can be reduced to reusable changes with focused tests.
+The first fifteen entries above were recorded as open on August 30, 2026; #250 was submitted on September 5. Game-specific diagnostics and unfinished compatibility work remain on `codex/xmen-legends-bringup` until they can be reduced to reusable changes with focused tests.
 
 ## Legal
 

@@ -974,3 +974,49 @@ still updates its separate sticky pipeline when a MAC update is omitted;
 all flag arithmetic or retirement may be removed from PS2Recomp. Our unified
 pipeline, sticky product flags, exact pending state and graphics-transfer cycle
 contract need their own proof. No Play! code was copied or integrated.
+
+## FMAC Producer Packing
+
+First tested publishing each VF/ACC/VI readiness field only at compiled-block
+exit. The interpreter/native instruction helpers do not read those arrays within
+a block, and exact tests passed, but seven alternating original replays measured
+2909.037 / 2906.008 ms: effectively tied. This experiment was removed. Its test
+hash was `DEDA52ECA6566505845A858C8A2B5A4FFF5D543BF1016808EC0F769A6B2EDFB7`.
+
+A fresh execution-only profile of that variant used 2048 original repetitions:
+415 samples, 53 external, 362 in-module, zero dropped/failed samples, matching
+image/map timestamp `0x6a9cb4f9`. Native destination-14 flag production was the
+largest single symbol, with 34 samples (9.39%). Disassembly showed scalar bit
+assembly and a zeroed 40-byte stack temporary copied into each new flag entry.
+The initial 4096-repeat attempt hit the existing total execution-budget guard;
+the successful rerun used 2048 without relaxing that guard. The fixed profile
+log now intentionally belongs to an older image than the current linker map.
+
+Accepted `110ed3a` uses portable integer swaps to transpose four flag nibbles
+into Z/S/U/O lane masks. One shared `VUFlags::packFmac` serves interpreted and
+native flag generation. Sticky accumulation, readiness, queue selection, and
+retirement remain unchanged. Direct `memset` initialization removes MSVC's
+temporary-copy sequence; all entry fields have zero integer/bool defaults.
+The inspected native specialization still calls the packing helper out of line.
+
+Tests exhaust 65,536 flag patterns across 16 destinations, plus 4,096 cases
+covering high flag/destination bits. The complete focused suite passes 129/129,
+and both recorded workloads retain exact state, memory, GIF payload/timing,
+cycle counts and digests at normal and 1/8/16/64-cycle slicing.
+
+| Capture / repeats | Accepted baseline | New producer | Result |
+| --- | --- | --- | --- |
+| Original / 1024 | 2462.786 ms | 2394.965 ms | 2.754% lower, 7/7 wins |
+| Spread / 2048 | 2098.631 ms | 2012.671 ms | 4.096% lower, 7/7 wins |
+
+These are seven-round alternating comparisons on the shared host, not gameplay
+FPS or a measurement of the upstream-only subset. No new live gameplay run or
+runtime executable was produced. Test hash:
+`AE4D88555CD487A736551DC92B9A51D4F037084B59A97EF52F864FF15F029931`.
+
+The generic subset is submitted as
+[PS2Recomp PR #250](https://github.com/ran-j/PS2Recomp/pull/250), commit `3e50ad9`,
+based directly on upstream main `14b1e5c`. Its complete Release suite passes
+426/426. The existing contribution checkout and build directory were reused;
+no game assets, private native kernels, new checkout, or extra binary slot is
+included. The existing occupancy-mask branch is preserved separately.
