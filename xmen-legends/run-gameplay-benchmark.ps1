@@ -7,6 +7,7 @@ param(
     [switch]$CaptureFrame,
     [switch]$CompiledVu,
     [switch]$AuditCompiledVu,
+    [switch]$AuditBilinear,
     [ValidateRange(30, 1800)]
     [int]$TimeoutSeconds = 600
 )
@@ -46,7 +47,7 @@ try {
     }
 } finally { $archive.Dispose() }
 
-$stem = if ($AuditCompiledVu) { 'gameplay-compiled-audit' } elseif ($PhaseProfile -or $CoverageProfile -or $CpuRasterProfile) { 'gameplay-phase' } elseif ($CompiledVu) { 'gameplay-compiled-rate' } else { 'gameplay-rate' }
+$stem = if ($AuditCompiledVu) { 'gameplay-compiled-audit' } elseif ($AuditBilinear) { 'gameplay-filter-audit' } elseif ($PhaseProfile -or $CoverageProfile -or $CpuRasterProfile) { 'gameplay-phase' } elseif ($CompiledVu) { 'gameplay-compiled-rate' } else { 'gameplay-rate' }
 $outLog = Join-Path $build "$stem.out.log"
 $errLog = Join-Path $build "$stem.err.log"
 $start = [Diagnostics.ProcessStartInfo]::new($exe)
@@ -77,6 +78,7 @@ if ($CompiledVu) {
 }
 if ($PhaseProfile) { $start.Environment['PS2X_RUNTIME_PHASE_PROFILE'] = '1' }
 if ($CpuRasterProfile) { $start.Environment['PS2X_GS_CPU_PROFILE'] = '1' }
+if ($AuditBilinear) { $start.Environment['PS2X_GS_VERIFY_BILINEAR'] = '1' }
 if ($CoverageProfile) { $start.Environment['PS2X_VU_COVERAGE_PROFILE'] = '1' }
 if ($CaptureFrame) { $start.Environment['PS2X_DUMP_PRESENT_RANGE'] = '1280-1280' }
 
@@ -89,6 +91,7 @@ $tasks = @{}
 $markers = @{}
 $blockPairs = 0L
 $compiledCalls = 0L
+$bilinearSamples = 0L
 $reachedLimit = $false
 $newGameHandler = $false
 $levelPackage = $false
@@ -131,14 +134,16 @@ try {
                 if ($line -match '^\[run:probe-limit\] vsync=1400\b') { $reachedLimit = $true }
                 if ($line -match '^\[vu:blocks\] stopped .* pairs=(\d+)') { $blockPairs = [long]$Matches[1] }
                 if ($line -match '^\[vu:compiled\] accepted=(\d+)') { $compiledCalls = [long]$Matches[1] }
+                if ($line -match '^\[gs:bilinear-audit\] samples=(\d+) mismatches=0') { $bilinearSamples = [long]$Matches[1] }
                 if ($line -match '^\[xmen-new-?game-handler\]') { $newGameHandler = $true }
                 if ($line.Contains('path="maps/nyc/alison/nyc1_1_1.igb"')) { $levelPackage = $true }
-                if ($line -match '^\[(?:ee-thread:missing-pc|guest-branch:missing-target|vu:compiled-audit-failed)\]|^Error during program execution:') {
+                if ($line -match '^\[(?:ee-thread:missing-pc|guest-branch:missing-target|vu:compiled-audit-failed|gs:bilinear-audit-failed)\]|^Error during program execution:') {
                     ++$guestFaultLines
                     if ($null -eq $firstGuestFault) {
                         $firstGuestFault = $line.Substring(0, [Math]::Min(1024, $line.Length))
                     }
-                    if ($AuditCompiledVu -and $line.StartsWith('[vu:compiled-audit-failed]') -and !$process.HasExited) {
+                    if ((($AuditCompiledVu -and $line.StartsWith('[vu:compiled-audit-failed]')) -or
+                        ($AuditBilinear -and $line.StartsWith('[gs:bilinear-audit-failed]'))) -and !$process.HasExited) {
                         try { $process.Kill() }
                         catch [InvalidOperationException] { if (!$process.HasExited) { throw } }
                     }
@@ -160,11 +165,13 @@ try {
     $coverage = if ($CoverageProfile) {
         & (Join-Path $PSScriptRoot 'summarize-vu-coverage.ps1') -LogPath $errLog -RequireGameplaySpan
     } else { $null }
-    $verified = !$AuditCompiledVu -and $process.ExitCode -eq 0 -and $guestFaultLines -eq 0 -and
+    $completed = $process.ExitCode -eq 0 -and $guestFaultLines -eq 0 -and
         (!$CompiledVu -or $compiledCalls -gt 0) -and
+        (!$AuditBilinear -or $bilinearSamples -gt 0) -and
         $reachedLimit -and $blockPairs -gt 0 -and
         $newGameHandler -and $levelPackage -and
         $markers.ContainsKey('1152') -and $markers.ContainsKey('1280')
+    $verified = $completed -and !$AuditCompiledVu -and !$AuditBilinear
     $report = [ordered]@{
         RecordedAtUtc = [DateTime]::UtcNow.ToString('o')
         Executable = $exe; Sha256 = $identity; PhaseProfile = [bool]$PhaseProfile
@@ -172,6 +179,8 @@ try {
         CpuRasterProfile = [bool]$CpuRasterProfile
         CompiledVu = [bool]$CompiledVu; CompiledCallsLowerBound = $compiledCalls
         AuditCompiledVu = [bool]$AuditCompiledVu
+        AuditBilinear = [bool]$AuditBilinear; BilinearSamplesLowerBound = $bilinearSamples
+        AuditVerified = [bool]($completed -and ($AuditCompiledVu -or $AuditBilinear))
         Coverage = $coverage
         StartupMode = 'TitleGameplayFirst'; HostInput = $false
         ExitCode = $process.ExitCode; ReachedLimit = $reachedLimit; BlockPairs = $blockPairs
@@ -190,7 +199,7 @@ try {
     }
     $report | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $build "$stem.json")
     [pscustomobject]$report | Format-List
-    if (!$verified) {
+    if (!$completed) {
         throw 'Run did not complete the native-block workload; do not use it as a gameplay benchmark.'
     }
 } finally {
