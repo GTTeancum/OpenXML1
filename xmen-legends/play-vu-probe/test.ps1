@@ -36,6 +36,9 @@ try {
     if (!$output.Contains('[play-vu:pending-import-test] passed=1 delayed-read-cycles=6')) {
         throw 'Pending VU-state import regression did not pass.'
     }
+    if (([regex]::Matches($output, '\[play-vu:wait-test\] mode=\d+ passed=1')).Count -ne 7) {
+        throw 'Compiled XGKICK wait regressions did not pass.'
+    }
     if ($ReplayPath) {
         if (!$output.Contains('[play-vu:replay-summary]') -or
             !$output.Contains('repeatable=1 compatibility-accepted=0')) {

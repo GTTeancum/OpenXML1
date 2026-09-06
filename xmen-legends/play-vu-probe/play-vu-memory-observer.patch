@@ -1,21 +1,23 @@
 diff --git a/Source/MIPS.h b/Source/MIPS.h
-index fc28a8f..cc54263 100644
+index fc28a8f..85aa935 100644
 --- a/Source/MIPS.h
 +++ b/Source/MIPS.h
-@@ -172,6 +172,8 @@ public:
+@@ -172,6 +172,10 @@ public:
  	void** m_pageLookup = nullptr;
  
  	std::function<void(CMIPS*)> m_emptyBlockHandler;
 +	// Install before compiling VU blocks; observers must not change guest state.
 +	std::function<void(CMIPS*, uint32, uint32, uint32)> m_vuMemoryObserver;
++	// Returns elapsed wait cycles before an XGKICK block; install before compilation.
++	std::function<uint32(CMIPS*, uint32, uint32)> m_vuXgkickWait;
  
  	CMIPSArchitecture* m_pArch = nullptr;
  	CMIPSCoprocessor* m_pCOP[4];
 diff --git a/Source/ee/VuBasicBlock.cpp b/Source/ee/VuBasicBlock.cpp
-index a1ca3ca..c18f02f 100644
+index a1ca3ca..7a1b362 100644
 --- a/Source/ee/VuBasicBlock.cpp
 +++ b/Source/ee/VuBasicBlock.cpp
-@@ -3,6 +3,26 @@
+@@ -3,6 +3,35 @@
  #include "offsetof_def.h"
  #include "MemoryUtils.h"
  #include "Vpu.h"
@@ -23,6 +25,15 @@ index a1ca3ca..c18f02f 100644
 +
 +namespace
 +{
++void WaitVuXgkick(CMIPS* context, uint32 pc, uint32 relativeCycle)
++{
++	auto& state = context->m_State;
++	const uint32 elapsed = context->m_vuXgkickWait(context, pc, state.pipeTime + relativeCycle);
++	state.pipeTime += elapsed;
++	for(uint32 i = relativeCycle; i < 3; ++i)
++		state.pipeFmacWrite[i] = elapsed < 3 - i ? state.pipeFmacWrite[i + elapsed] : uint128{};
++}
++
 +void ObserveVuMemory(CMIPS* context, uint32 pc, uint32 cycle, uint32 phase)
 +{
 +	if(context->m_vuMemoryObserver) context->m_vuMemoryObserver(context, pc, cycle, phase);
@@ -42,10 +53,40 @@ index a1ca3ca..c18f02f 100644
  
  CVuBasicBlock::CVuBasicBlock(CMIPS& context, uint32 begin, uint32 end, BLOCK_CATEGORY category)
      : CBasicBlock(context, begin, end, category)
-@@ -72,6 +92,16 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -22,6 +51,16 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+ 	assert((m_begin & 0x07) == 0);
+ 	assert(((m_end + 4) & 0x07) == 0);
+ 	auto arch = static_cast<CMA_VU*>(m_context.m_pArch);
++	const uint32 firstLo = m_context.m_pMemoryMap->GetInstruction(m_begin);
++	const uint32 firstHi = m_context.m_pMemoryMap->GetInstruction(m_begin + 4);
++	if(m_context.m_vuXgkickWait && !(firstHi & VUShared::VU_UPPEROP_BIT_I) &&
++	   (firstLo & ~(0x1F << 11)) == 0x800006FC)
++	{
++		jitter->PushCtx();
++		jitter->PushCst(m_begin);
++		jitter->PushCst(0);
++		jitter->Call(reinterpret_cast<void*>(&WaitVuXgkick), 3, Jitter::CJitter::RETURN_VALUE_NONE);
++	}
+ 
+ 	bool hasPendingXgKick = false;
+ 	const auto clearPendingXgKick =
+@@ -72,6 +111,29 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  		assert(hiOps.readP == false);
  
  		bool loIsXgKick = (opcodeLo & ~(0x1F << 11)) == 0x800006FC;
++		if(m_context.m_vuXgkickWait && address != m_begin && loIsXgKick &&
++		   !(opcodeHi & VUShared::VU_UPPEROP_BIT_I))
++		{
++			// A branch plus its delay slot must remain one block. Only the NOP-upper
++			// branch form has no locally produced arithmetic to age across this wait.
++			if(address != m_begin + 8 || firstHi != 0x000002FF ||
++			   arch->IsInstructionBranch(&m_context, m_begin, firstLo) != MIPS_BRANCH_NORMAL)
++				throw std::runtime_error("XGKICK wait in unsupported delay-slot block");
++			jitter->PushCtx();
++			jitter->PushCst(address);
++			jitter->PushCst(relativePipeTime);
++			jitter->Call(reinterpret_cast<void*>(&WaitVuXgkick), 3, Jitter::CJitter::RETURN_VALUE_NONE);
++		}
 +		bool observeStore = false;
 +		const bool observeLower = m_context.m_vuMemoryObserver && !(opcodeHi & VUShared::VU_UPPEROP_BIT_I);
 +		if(observeLower)
@@ -59,7 +100,7 @@ index a1ca3ca..c18f02f 100644
  
  		if(extraPipeTimeIndex < 3)
  		{
-@@ -251,7 +281,10 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -251,7 +313,10 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  			clearPendingXgKick();
  		}
  
@@ -70,7 +111,7 @@ index a1ca3ca..c18f02f 100644
  
  		if(address == integerBranchDelayInfo.useRegAddress)
  		{
-@@ -335,6 +368,8 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -335,6 +400,8 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  				//We need to compile the instruction at the branch target because it will be executed
  				//before the branch is taken
  				uint32 branchTgtAddress = branchOpcodeAddr + VUShared::GetBranch(branchOpcodeLo & 0x7FF) + 8;
@@ -79,7 +120,7 @@ index a1ca3ca..c18f02f 100644
  				arch->CompileInstruction(branchTgtAddress, jitter, &m_context, address - m_begin);
  			}
  		}
-@@ -357,6 +392,8 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -357,6 +424,8 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  					//If we haven't taken the jump, execute the instruction after the delay slot
  					uint32 nextOpcodeAddr = address + 8;
  					uint32 nextOpcodeLo = m_context.m_pMemoryMap->GetInstruction(nextOpcodeAddr);
@@ -88,17 +129,51 @@ index a1ca3ca..c18f02f 100644
  					arch->CompileInstruction(nextOpcodeAddr, jitter, &m_context, nextOpcodeAddr - m_begin);
  				}
  				jitter->EndIf();
-@@ -382,6 +419,8 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -382,7 +451,21 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  		jitter->PullRel(offsetof(CMIPS, m_State.pipeTime));
  	}
  
+-	for(int32 i = extraPipeTimeIndex; i < 3; i++)
 +	if(m_context.m_vuMemoryObserver) EmitVuMemoryObserver(jitter, m_end - 4, 0, 3);
 +
- 	for(int32 i = extraPipeTimeIndex; i < 3; i++)
++	if(m_context.m_vuXgkickWait)
++	{
++		// XGKICK boundaries can create short blocks; carry unretired incoming lanes.
++		for(uint32 i = 0; i < 3; ++i)
++		{
++			if(relativePipeTime < 3 - i)
++				jitter->MD_PushRel(offsetof(CMIPS, m_State.pipeFmacWrite[i + relativePipeTime]));
++			else
++				jitter->MD_PushCstExpandW(0U);
++			jitter->MD_PullRel(offsetof(CMIPS, m_State.pipeFmacWrite[i]));
++		}
++	}
++	else for(int32 i = extraPipeTimeIndex; i < 3; i++)
  	{
  		//Clear unused writes
+ 		//TODO: Find a way to push that to the next block (would become index 0 of next block)
+@@ -409,13 +492,18 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+ 			if(stall.nV[i] != 0)
+ 			{
+ 				jitter->PushCst(stall.nV[i]);
++				if(m_context.m_vuXgkickWait)
++				{
++					jitter->PushRel(offsetof(CMIPS, m_State.pipeFmacWrite[extraPipeTime].nV[i]));
++					jitter->Or();
++				}
+ 				jitter->PullRel(offsetof(CMIPS, m_State.pipeFmacWrite[extraPipeTime].nV[i]));
+ 			}
+ 		}
+ 	}
+ 
+ 	bool loopsOnItself = [&]() {
+-		if(m_begin == m_end)
++		if(m_end - m_begin < 0xC)
+ 		{
+ 			return false;
+ 		}
 diff --git a/Source/ee/VuExecutor.cpp b/Source/ee/VuExecutor.cpp
-index 72e80fc..9c484c6 100644
+index 72e80fc..e2d5d2f 100644
 --- a/Source/ee/VuExecutor.cpp
 +++ b/Source/ee/VuExecutor.cpp
 @@ -60,7 +60,7 @@ BasicBlockPtr CVuExecutor::BlockFactory(CMIPS& context, uint32 begin, uint32 end
@@ -106,7 +181,32 @@ index 72e80fc..9c484c6 100644
  		}
  		//Check if we have a block that has the same contents but not the same range. Reuse the code of that block if that's the case.
 -		if(beginBlockIterator != endBlockIterator)
-+		if(beginBlockIterator != endBlockIterator && !m_context.m_vuMemoryObserver)
++		if(beginBlockIterator != endBlockIterator && !m_context.m_vuMemoryObserver && !m_context.m_vuXgkickWait)
  		{
  			auto result = std::make_shared<CVuBasicBlock>(context, begin, end, m_blockCategory);
  			result->CopyFunctionFrom(beginBlockIterator->second);
+@@ -102,7 +102,24 @@ void CVuExecutor::PartitionFunction(uint32 startAddress)
+ 		uint32 addrHi = address + 4;
+ 		uint32 lowerOp = m_context.m_pMemoryMap->GetInstruction(addrLo);
+ 		uint32 upperOp = m_context.m_pMemoryMap->GetInstruction(addrHi);
++		if(m_context.m_vuXgkickWait && address != startAddress &&
++		   !(upperOp & VUShared::VU_UPPEROP_BIT_I) && (lowerOp & ~(0x1F << 11)) == 0x800006FC)
++		{
++			endAddress = address - 4;
++			break;
++		}
+ 		auto branchType = m_context.m_pArch->IsInstructionBranch(&m_context, addrLo, lowerOp);
++		if(m_context.m_vuXgkickWait && address != startAddress && branchType == MIPS_BRANCH_NORMAL &&
++		   address + 12 < m_maxAddress)
++		{
++			const uint32 delayLo = m_context.m_pMemoryMap->GetInstruction(address + 8);
++			const uint32 delayHi = m_context.m_pMemoryMap->GetInstruction(address + 12);
++			if(!(delayHi & VUShared::VU_UPPEROP_BIT_I) && (delayLo & ~(0x1F << 11)) == 0x800006FC)
++			{
++				endAddress = address - 4;
++				break;
++			}
++		}
+ 		if(upperOp & VUShared::VU_UPPEROP_BIT_E)
+ 		{
+ 			endAddress = address + 0xC;

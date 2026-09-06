@@ -362,6 +362,16 @@ int replayDiagnostic(const char *path)
                     " cycle=" + std::to_string(cycle) + " phase=" + std::to_string(phase);
             }
         };
+        vm->m_cpu.m_vuXgkickWait = [&](CMIPS *, uint32 pc, uint32 cycle) -> uint32 {
+            if (!timelineError.empty()) return 0;
+            try {
+                timeline.finish(cycle);
+                return static_cast<uint32>(timeline.time - cycle);
+            } catch (const std::exception &e) {
+                timelineError = std::string(e.what()) + " wait-pc=" + std::to_string(pc);
+                return 0;
+            }
+        };
         vm->m_cpu.m_pMemoryMap->InsertReadMap(0x8400u, 0x8423u,
             [&](uint32_t address, uint32_t) -> uint32_t {
                 if (address == 0x8400u) return static_cast<uint32_t>(at(before, 639));

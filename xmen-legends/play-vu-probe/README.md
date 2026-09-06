@@ -164,8 +164,9 @@ rather than silently omitting memory events. They still need implementation.
 The diagnostic PATH1 timeline reads one qword every two cycles, starting one
 cycle after XGKICK. It advances before stores, after commits and at block ends,
 and drains remaining bytes after E-bit termination. It does not mutate guest
-memory or insert stalls. Overlapping transfers that require a VU stall, backward
-events, oversized packets and unterminated chains are errors, not skipped work.
+memory. Without the separate pre-issue wait hook described below, overlapping
+transfers remain errors. Backward events, oversized packets and unterminated
+chains are errors, not skipped work.
 Callbacks catch errors inside the generated-code boundary and report failure
 after execution. This is not yet a scheduler or a production bridge.
 
@@ -227,12 +228,46 @@ matching all recorded packet completion times and reproducing each cold result
 over 256 warm executions. Arithmetic, memory and packet-byte differences remain;
 the summary explicitly reports `eligible=14 accepted=0`.
 
-The spread capture runs records 5/9/12/17 with matching packet completion times,
-then fails at record 19: overlapping XGKICK at PC 6496, cycle 64 requires a VU
-stall that the observer does not implement. This is an expected diagnostic
-limitation, not a passing spread test. Record 9 also has 176 differing memory
-bytes and eight differing VF words. Later records were not executed. Do not
-promote this engine into gameplay on the basis of the successful timing checks.
+At this checkpoint, the spread capture ran records 5/9/12/17, then failed at
+record 19: overlapping XGKICK at PC 6496, cycle 64 required a VU stall. The
+following checkpoint resolves that failure, not the remaining arithmetic and
+short-slice limitations.
+
+## Pre-Issue Transfer Wait
+
+The same reproducible Play! patch now adds optional `m_vuXgkickWait`, installed
+before compilation. It returns elapsed wait cycles without modifying VU state.
+Generated blocks call it before an XGKICK pair, advance pipeline time, and age
+incoming FMAC hazard masks by the elapsed wait. Pending arithmetic can therefore
+finish during the transfer wait without charging the same delay twice.
+
+The opt-in executor partitions before XGKICK, or before a branch whose delay slot
+contains XGKICK. The latter retains branch execution before the wait and currently
+requires a NOP upper instruction on the branch pair. Other delay-slot forms reject
+compilation rather than applying an incorrect wait. Short blocks carry unretired
+incoming FMAC masks into their successors. Address-dependent generated code cannot
+be reused at another address. Changing either callback's presence requires a
+cache/executor reset. With neither callback installed, ordinary upstream tests
+use the original execution path, apart from a bounds guard for one-pair blocks.
+
+Seven compiled synthetic tests pass: consecutive transfers, an arithmetic result
+partly retired during a wait, a dependent read after the wait, new arithmetic
+issued after a long wait, incoming hazards carried through a short block, and
+branch-delay transfers with and without a dependent upper instruction. They run
+with the existing eight transfer tests, pending-import regression, ABI check,
+21 unmodified upstream tests and budget/XGKICK contracts.
+
+Verified image: `1B56D4693EF2EF5697C54384F313002FA5150AE8E01297911E2B733280BF7D0C`.
+Both private diagnostics now complete: original 14/32 eligible, spread 8/32
+eligible (5/9/12/17/19/21/23/29). All packet completion times match and all warm
+runs reproduce cold output. Previously failing spread case 19 finishes its last
+transfer at cycle 627 with nine packets; two packet bytes still differ. Spread
+case 21 has identical packet bytes, while case 9 retains 78 differing packet
+bytes and case 29 has 35. Both diagnostics still report `accepted=0`.
+
+No game binary was built or launched. The wait-enabled path has no controlled
+speed comparison yet; neither earlier speedup figure establishes its performance.
+Do not promote it into gameplay on the basis of transfer timing alone.
 
 Next: bridge exact short-cycle budgets and validate architectural results,
 memory writes, and packet ordering against the existing private recordings before
