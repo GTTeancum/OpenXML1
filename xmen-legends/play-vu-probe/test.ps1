@@ -1,3 +1,4 @@
+param([string]$ReplayPath)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $build = Join-Path $root '.tools/Play-VU/out/vu-probe'
@@ -8,6 +9,7 @@ $start.UseShellExecute = $false
 $start.CreateNoWindow = $true
 $start.RedirectStandardOutput = $true
 $start.RedirectStandardError = $true
+if ($ReplayPath) { $start.ArgumentList.Add((Resolve-Path -LiteralPath $ReplayPath).Path) }
 $process = [Diagnostics.Process]::new()
 $process.StartInfo = $start
 $started = $false
@@ -21,11 +23,19 @@ try {
     if (!$process.WaitForExit(120000)) { throw 'VU probe exceeded its two-minute limit.' }
     $output = $stdout.GetAwaiter().GetResult()
     $errors = $stderr.GetAwaiter().GetResult()
-    $output
+    $output -split '\r?\n'
     $errors
     'SHA256=' + (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
     if ($process.ExitCode -ne 0) { throw "VU probe failed: exit $($process.ExitCode)" }
-    if (!$output.Contains('[play-vu] 21 unmodified upstream tests passed') -or
+    if (!$output.Contains('[play-vu:synthetic-abi] xmm-corrupt-mask=0x0 output-errors=0')) {
+        throw 'Public synthetic Windows register-preservation regression did not pass.'
+    }
+    if ($ReplayPath) {
+        if (!$output.Contains('[play-vu:replay-summary]') -or
+            !$output.Contains('repeatable=1 compatibility-accepted=0')) {
+            throw 'Replay diagnostic did not complete. This is not a compatibility pass.'
+        }
+    } elseif (!$output.Contains('[play-vu] 21 unmodified upstream tests passed') -or
         ([regex]::Matches($output, '\[play-vu:budget\]')).Count -ne 4 -or
         !$output.Contains('[play-vu:xgkick] callbacks=1')) {
         throw 'Probe did not complete the expected test and contract checks.'

@@ -1,0 +1,52 @@
+diff --git a/src/Jitter_CodeGen_x86_64.cpp b/src/Jitter_CodeGen_x86_64.cpp
+index 8fab4a8..b4a724e 100644
+--- a/src/Jitter_CodeGen_x86_64.cpp
++++ b/src/Jitter_CodeGen_x86_64.cpp
+@@ -387,10 +387,21 @@ void CCodeGen_x86_64::Emit_Prolog(const StatementList& statements, unsigned int
+ 	m_totalStackAlloc = savedRegAlignAdjust + maxParamSpillSize + stackSize;
+ 	m_totalStackAlloc += 0x20;
+ 
+-	m_stackLevel = 0x20;
+-	m_paramSpillBase = 0x20 + stackSize;
++	const uint32 savedMdSize = (m_platformAbi == PLATFORM_ABI_WIN32) ? 10 * 16 : 0;
++	m_totalStackAlloc += savedMdSize;
++	m_stackLevel = 0x20 + savedMdSize;
++	m_paramSpillBase = m_stackLevel + stackSize;
+ 
+ 	m_assembler.SubIq(CX86Assembler::MakeRegisterAddress(CX86Assembler::rSP), m_totalStackAlloc);
++	if(m_platformAbi == PLATFORM_ABI_WIN32)
++	{
++		// The Windows ABI preserves XMM6-XMM15 across generated-code calls.
++		for(uint32 i = 0; i < 10; ++i)
++		{
++			auto reg = static_cast<CX86Assembler::XMMREGISTER>(CX86Assembler::xMM6 + i);
++			m_assembler.MovapsVo(CX86Assembler::MakeIndRegOffAddress(CX86Assembler::rSP, 0x20 + i * 16), reg);
++		}
++	}
+ 
+ 	//-------------------------------
+ 	//Stack Frame
+@@ -403,6 +414,8 @@ void CCodeGen_x86_64::Emit_Prolog(const StatementList& statements, unsigned int
+ 	//------------------			<----- rSP + m_paramSpillBase
+ 	//Temporary symbols (stackSize) + align adjustment
+ 	//------------------			<----- rSP + m_stackLevel
++	//Windows nonvolatile SIMD registers (savedMdSize)
++	//------------------
+ 	//Param spill area for callee (0x20 bytes)
+ 	//------------------			<----- rSP
+ 	//(Low address)
+@@ -410,6 +423,14 @@ void CCodeGen_x86_64::Emit_Prolog(const StatementList& statements, unsigned int
+ 
+ void CCodeGen_x86_64::Emit_Epilog()
+ {
++	if(m_platformAbi == PLATFORM_ABI_WIN32)
++	{
++		for(uint32 i = 0; i < 10; ++i)
++		{
++			auto reg = static_cast<CX86Assembler::XMMREGISTER>(CX86Assembler::xMM6 + i);
++			m_assembler.MovapsVo(reg, CX86Assembler::MakeIndRegOffAddress(CX86Assembler::rSP, 0x20 + i * 16));
++		}
++	}
+ 	m_assembler.AddIq(CX86Assembler::MakeRegisterAddress(CX86Assembler::rSP), m_totalStackAlloc);
+ 
+ 	for(int i = m_maxRegisters - 1; i >= 0; i--)

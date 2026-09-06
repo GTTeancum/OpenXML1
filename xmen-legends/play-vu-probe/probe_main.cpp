@@ -1,6 +1,7 @@
 #define NOMINMAX
 #include <windows.h>
 #include "VuAssembler.h"
+#include "replay_diagnostic.h"
 #include "FpUtils.h"
 #include "AddTest.h"
 #include "BranchTest.h"
@@ -25,6 +26,47 @@
 #include "TriAceTest.h"
 #include <cstdio>
 #include <cfenv>
+#include <cstring>
+#include "Jitter.h"
+#include "Jitter_CodeGenFactory.h"
+#include "MemStream.h"
+#include "MemoryFunction.h"
+
+extern "C" void playVuCheckRegisters(void (*function)(void *), void *context,
+    const uint32_t *sentinel, uint32_t *actual);
+
+static bool checkWindowsAbi()
+{
+    alignas(16) uint32_t context[25][4]{};
+    Framework::CMemStream stream;
+    Jitter::CJitter jitter(Jitter::CreateCodeGen());
+    jitter.SetStream(&stream);
+    jitter.Begin();
+    for (unsigned vector = 0; vector < 12; ++vector)
+    {
+        jitter.MD_PushRel(vector * 16);
+        jitter.MD_PushRel(12 * 16);
+        jitter.MD_AddW();
+    }
+    for (int vector = 11; vector >= 0; --vector)
+        jitter.MD_PullRel((13 + vector) * 16);
+    jitter.End();
+    for (unsigned vector = 0; vector < 13; ++vector)
+        for (unsigned lane = 0; lane < 4; ++lane)
+            context[vector][lane] = 0x12340000u + vector * 4 + lane;
+    CMemoryFunction function(stream.GetBuffer(), stream.GetSize());
+    alignas(16) const uint32_t sentinel[] = {0x3f123456, 0x40123456, 0x41123456, 0x42123456};
+    uint32_t actual[40]{};
+    playVuCheckRegisters(reinterpret_cast<void (*)(void *)>(function.GetCode()), context, sentinel, actual);
+    unsigned corruptMask = 0, outputErrors = 0;
+    for (unsigned reg = 0; reg < 10; ++reg)
+        if (std::memcmp(actual + reg * 4, sentinel, sizeof(sentinel))) corruptMask |= 1u << reg;
+    for (unsigned vector = 0; vector < 12; ++vector)
+        for (unsigned lane = 0; lane < 4; ++lane)
+            outputErrors += context[13 + vector][lane] != context[vector][lane] + context[12][lane];
+    std::printf("[play-vu:synthetic-abi] xmm-corrupt-mask=0x%x output-errors=%u\n", corruptMask, outputErrors);
+    return corruptMask == 0 && outputErrors == 0;
+}
 
 #define VU_TEST(Name) {#Name, []() -> CTest* { return new C##Name(); }}
 static const struct { const char *name; CTest *(*create)(); } tests[] = {
@@ -40,8 +82,19 @@ static const struct { const char *name; CTest *(*create)(); } tests[] = {
 int main(int argc, const char **argv)
 {
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    if (argc > 2)
+    {
+        std::fprintf(stderr, "Usage: play_vu_probe [private-replay.bin]\n");
+        return 2;
+    }
     std::fesetround(FE_TOWARDZERO);
     FpUtils::SetDenormalHandlingMode();
+    if (!checkWindowsAbi()) return 6;
+    if (argc == 2)
+    {
+        try { return replayDiagnostic(argv[1]); }
+        catch (const std::exception &e) { std::fprintf(stderr, "%s\n", e.what()); return 5; }
+    }
     auto testVm = std::make_unique<CTestVm>();
     for (const auto &entry : tests)
     {
