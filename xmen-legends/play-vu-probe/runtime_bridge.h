@@ -2,8 +2,7 @@
 #include "compiled_session.h"
 #include "ps2_vu_compiled_state.h"
 
-// Conversion for detached full drains. Partial flag masks deliberately prevent
-// VUCompiledState::commit from accepting results until full flags are implemented.
+// Conversion for detached full drains; the runtime validates output before commit.
 class PlayVuRuntimeBridge
 {
 public:

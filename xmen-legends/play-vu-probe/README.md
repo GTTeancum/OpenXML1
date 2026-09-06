@@ -7,6 +7,49 @@ PS2Recomp state header, but does not link its runtime, read the ISO, create a ga
 window, or enable a replacement engine.
 There is no gameplay FPS claim or interactive handoff yet.
 
+## Real Runtime Boundary Tests
+
+Local PS2Recomp commit `29310f3` adds an opt-in external test extension only.
+The new `runtime_adapter.cpp` now exercises the actual capture/commit boundary,
+not a copied runtime state implementation. It reuses the standalone session/core
+libraries and compiles the two runtime-facing translation units with the real
+runtime's conditional class-layout definitions. No additional checkout, core
+build directory, game executable or default execution hook is introduced.
+
+```powershell
+./xmen-legends/build-below-normal.ps1 -Target ps2x_tests -ConfigureCache @('PS2X_VU_COMPILED_TEST_DIR=C:/Programming/GitHub/OpenXML1/xmen-legends/play-vu-probe')
+./xmen-legends/build-below-normal.ps1 -Target ps2x_tests
+```
+
+Run `ps2x_tests` with `MINITEST_FILTER=PS2VU1CompiledProducer` for the four
+integration cases, or `MINITEST_FILTER=VU` for the full focused suite. Tests
+need no game input, screen capture, ISO or window. Build and test processes
+were hidden, bounded, and limited to the established four-processor affinity;
+build priority stayed BelowNormal.
+
+Final test image:
+`EDD4F1D4899AB1D4213541DCF1FF4E1BBDBB705E38F1022C0FB001B6F95D7522`.
+All **151 VU tests pass**, including real pending VF/flag import, completed
+state/memory commit, normal-engine continuation consuming signed VI values,
+and a compiled XGKICK packet reaching GS SIGNAL exactly once. Short/over-budget
+attempts leave live state, queues, memory and graphics unchanged; subsequent
+interpreter execution matches the reference. A synthetic graphics sink exception
+propagates after commit rather than returning false and inviting unsafe fallback.
+
+The first graphics assertions failed because the test fixture had no memory-to-GS
+callback on either path. Connecting the fixture's actual graphics sink fixed
+those assertions; no expected results were weakened. Existing raw replay tests
+remain unchanged: both 32-record sets pass normal/1/8/16/64-cycle runs with
+digests `75d4ff1e67bbbc4c` and `6c13c7a10069aeef` respectively. These replay tests
+still run the original engine, not the compiled adapter.
+
+Next connect this tested adapter to an opt-in full-drain execution hook and
+verify hybrid recorded workloads before measuring a game build. These synthetic
+runtime tests do not establish broader workload coverage or gameplay FPS. The
+game candidate remains `61E24D60...`, unchanged. All commits remain local;
+no push, PR, game launch or screenshot was made. No old disc images required
+cleanup. The previous detached-only and partial-flag notes below are history.
+
 ## Runtime Arithmetic Compatibility
 
 Current image: `CA7AB282F405BBAA70265C0D0DA59223731E13080231B446054F2D8BD36ACEF0`.
@@ -47,8 +90,8 @@ flags, PC, elapsed cycles, TOP/ITOP, halt/branch state, data memory and timed
 packets. Inactive branch target/delay payloads are not architectural output.
 VI host containers can differ in sign extension (`00008000` versus `ffff8000`);
 those differences are separately printed, not hidden as raw-state equality.
-Runtime branch/address code explicitly truncates VI reads to 16 bits. A live
-commit/resume test is still required; no replacement engine is enabled yet.
+Runtime branch/address code explicitly truncates VI reads to 16 bits. The real
+commit/resume tests above now cover this handoff; no game replacement engine is enabled yet.
 
 Final three-round timings, same complete-call scope and 256 warm repetitions:
 
@@ -64,8 +107,8 @@ Final three-round timings, same complete-call scope and 256 warm repetitions:
 Median eligible runtime/compiled ratios are approximately 3.66x/2.90x, not
 gameplay FPS. All rounds required recorded architectural matches. Runtime
 capture/commit, GS, cold compilation and returned-output disposal remain
-outside this timer. Next exercise actual commit/resume and fallback, retaining
-the original engine for unsupported states, then measure a game candidate.
+outside this timer. Actual commit/resume and fallback tests now pass as described
+above; a hybrid execution hook and measured game candidate remain next.
 General VI/store timing and exceptional arithmetic still need coverage beyond
 these recordings. No game build, screenshot, push or PR was made. Older
 partial-mask and numerical-mismatch checkpoints below are historical.
