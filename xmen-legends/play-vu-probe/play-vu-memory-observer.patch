@@ -1,8 +1,17 @@
 diff --git a/Source/MIPS.h b/Source/MIPS.h
-index fc28a8f..6080dcc 100644
+index fc28a8f..5105562 100644
 --- a/Source/MIPS.h
 +++ b/Source/MIPS.h
-@@ -172,6 +172,15 @@ public:
+@@ -10,6 +10,8 @@
+ #include "uint128.h"
+ #include <set>
+ 
++class CMipsJitter;
++
+ struct REGISTER_PIPELINE
+ {
+ 	uint32 counter;
+@@ -172,6 +174,16 @@ public:
  	void** m_pageLookup = nullptr;
  
  	std::function<void(CMIPS*)> m_emptyBlockHandler;
@@ -15,6 +24,7 @@ index fc28a8f..6080dcc 100644
 +	using VuFmacOperation = uint32 (*)(CMIPS*, uint32);
 +	// Compile-time arithmetic selection; changing this requires cache invalidation.
 +	std::function<VuFmacOperation(uint32)> m_vuFmacCompiler;
++	std::function<bool(CMIPS*, CMipsJitter*, uint32, uint32, uint32)> m_vuFmacEmitter;
  
  	CMIPSArchitecture* m_pArch = nullptr;
  	CMIPSCoprocessor* m_pCOP[4];
@@ -127,16 +137,22 @@ index 62b3f2c..d23169a 100644
  
  //0F
 diff --git a/Source/ee/MA_VU_Upper.cpp b/Source/ee/MA_VU_Upper.cpp
-index 7200729..dbcb1c4 100644
+index 7200729..5b9c20c 100644
 --- a/Source/ee/MA_VU_Upper.cpp
 +++ b/Source/ee/MA_VU_Upper.cpp
-@@ -28,7 +28,17 @@ void CMA_VU::CUpper::CompileInstruction(uint32 nAddress, CMipsJitter* codeGen, C
+@@ -28,7 +28,23 @@ void CMA_VU::CUpper::CompileInstruction(uint32 nAddress, CMipsJitter* codeGen, C
  
  	m_nBc = (uint8)((m_nOpcode >> 0) & 0x0003);
  
 -	((this)->*(m_pOpVector[m_nOpcode & 0x3F]))();
 +	auto fmac = pCtx->m_vuFmacCompiler ? pCtx->m_vuFmacCompiler(m_nOpcode) : nullptr;
-+	if(fmac)
++	const bool emitted = pCtx->m_vuFmacEmitter &&
++	    pCtx->m_vuFmacEmitter(pCtx, m_codeGen, m_nOpcode, m_relativePipeTime, m_compileHints);
++	if(emitted)
++	{
++		// The emitter includes the exact helper fallback and flag publication.
++	}
++	else if(fmac)
 +	{
 +		m_codeGen->PushCtx();
 +		m_codeGen->PushCst(m_nOpcode);
@@ -149,7 +165,7 @@ index 7200729..dbcb1c4 100644
  
  	auto setTDBitException = [&](uint32 exceptionValue) {
  		//Only set TD bit exception if there's no other outstanding
-@@ -76,6 +86,12 @@ void CMA_VU::CUpper::SetRelativePipeTime(uint32 relativePipeTime)
+@@ -76,6 +92,12 @@ void CMA_VU::CUpper::SetRelativePipeTime(uint32 relativePipeTime)
  
  void CMA_VU::CUpper::LOI(uint32 nValue)
  {

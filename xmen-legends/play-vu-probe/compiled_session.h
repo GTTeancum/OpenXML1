@@ -13,6 +13,7 @@ class CompiledVuSession
 {
 public:
     enum class Arithmetic { Separate, RuntimeFused };
+    enum class Emission { Environment, Helpers, Direct };
     struct Result
     {
         bool executed = false;
@@ -27,7 +28,8 @@ public:
         uint64_t scalarEnd = 0;
         bool scalarFlagsValid = false;
     };
-    explicit CompiledVuSession(Arithmetic = Arithmetic::Separate);
+    explicit CompiledVuSession(Arithmetic = Arithmetic::Separate, Emission = Emission::Environment);
+    uint64_t directInstructionsCompiled() const;
     ~CompiledVuSession();
     CompiledVuSession(const CompiledVuSession &) = delete;
     CompiledVuSession &operator=(const CompiledVuSession &) = delete;

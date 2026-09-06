@@ -85,6 +85,9 @@ try {
     if (([regex]::Matches($output, '\[play-vu:wait-test\] mode=\d+ passed=1')).Count -ne 7) {
         throw 'Compiled XGKICK wait regressions did not pass.'
     }
+    if ($output -notmatch '\[play-vu:direct-fmac\] cases=60480 fast=[1-9]\d* fallback=[1-9]\d* full-state=1 session-hook=1') {
+        throw 'Direct FMAC code generation and exact fallback regressions did not pass.'
+    }
     if ($ReplayPath) {
         if (!$output.Contains('[play-vu:replay-summary]') -or
             !$output.Contains('repeatable=1 compatibility-accepted=0')) {

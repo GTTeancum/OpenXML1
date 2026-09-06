@@ -9,6 +9,47 @@ Bounded first-level timing is recorded below. The user subsequently confirmed
 movement on the performance candidate, but rejected its roughly 5 FPS; combat
 was not tested in that session. See the current TODO before launching anything.
 
+## Direct Arithmetic Experiment
+
+September 6: `PS2X_VU_DIRECT_FMAC` enables an experimental JIT emitter for
+ADD/SUB/MUL only. It remains OFF by default and is not in the game candidate.
+The emitter handles vector/broadcast/Q/I operands, masks, aliases, VF0 sinks
+and accumulator destinations. Signed zeros and bounded operands use direct
+packed arithmetic; all other values retain the existing helper. Queued flags
+and sticky status are preserved. MADD/MSUB and cross-product operations keep
+their original helpers, including the runtime's fused arithmetic semantics.
+
+Standalone image
+`93F1B4708FE1CAE2A11E5AA9EAE0517F14B42255069B5D367A3B6B0B6A05ABB2`
+passes 60,480 complete-state comparisons: 25,531 execute without calling the
+helper and 34,949 exercise the fallback. A mixed direct/helper session also
+verifies dependent arithmetic and a subsequent memory store. The existing
+149,760 scalar/vector comparisons and 21 upstream tests pass.
+
+Runtime test image
+`D61A3F6D7955B446664608D5125CBB3EFABD3560AAFD31D20195A6FBC2E22D92`
+passes 161 VU tests with the emitter enabled, both original recordings at
+full/1/8/16/64-cycle budgets, and four saved failure records. Replay digests
+remain unchanged. Full-drain hybrid acceptance remains 14/8 cases; short
+budgets and the EFU record retain the original engine. Fixed
+`vu-direct-checks.log` records those checks.
+
+Five alternating same-binary, 1,024-repeat ON/OFF pairs did NOT establish a
+useful performance gain. Original-recording execution was slower in four of
+five pairs (median paired time change +9.77%); spread was faster in four of
+five (-3.38%). Absolute times shifted sharply during the run: original OFF
+samples ranged 673.647..1348.453 ms and spread OFF 468.552..863.141 ms. This
+shared-host timing variation makes aggregate medians unreliable; these are
+neither stable speedup estimates nor gameplay FPS. The fixed
+`vu-direct-comparison.log` retains all rounds. No game was built or launched.
+
+Keep this as a disabled, correctness-tested experiment, not a performance
+promotion. Before extending it, inspect generated branch/flag overhead and
+whether checks can be amortized across a compiled block. Do not repeat the
+same per-instruction experiment or substitute unfused MADD. The CPU renderer
+also remains a mandatory performance target: its measured cost alone exceeds
+the complete 30 FPS frame budget. All checkpoints remain local, with no PR.
+
 ## Arithmetic Cost Checkpoint
 
 September 6 offline investigation: a matched-map sample of test image
@@ -47,7 +88,8 @@ current multiply-add path uses separate `MD_MulS`/`MD_AddS`, not fused arithmeti
 Do not silently replace the runtime's fused model with that path. A direct
 emitter must preserve masks, source aliases, result/status rounding, queued
 flags and exceptional-value behavior, with full replay/audit validation.
-This is the next experiment, not an implemented or verified speedup.
+The direct-emission experiment above supersedes this next-step note; it has
+not demonstrated a useful overall speedup.
 
 The restored standalone image
 `3BCC93677C79C609E444A4DE5718B10458AC23D7FD9E9C507D7CC99A05A69164`

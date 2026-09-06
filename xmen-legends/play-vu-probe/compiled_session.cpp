@@ -1,6 +1,7 @@
 #define NOMINMAX
 #include "compiled_session.h"
 #include "fmac.h"
+#include "fmac_emitter.h"
 #include "transfer_timeline.h"
 #include "ee/MA_VU.h"
 #include "ee/VuExecutor.h"
@@ -8,6 +9,7 @@
 #include <cfenv>
 #include <bitset>
 #include <cstring>
+#include <cstdlib>
 #include <stdexcept>
 #include <xmmintrin.h>
 
@@ -72,10 +74,17 @@ struct CompiledVuSession::Impl
     std::bitset<2048> referenceEntries;
     uint32_t top = 0, itop = 0;
     std::string error;
+    uint64_t directInstructions = 0;
 
-    explicit Impl(Arithmetic arithmetic)
+    explicit Impl(Arithmetic arithmetic, Emission emission)
     {
         cpu.m_vuFmacCompiler = arithmetic == Arithmetic::RuntimeFused ? selectFmacRuntimeFused : selectFmac;
+        if (emission == Emission::Direct || (emission == Emission::Environment && std::getenv("PS2X_VU_DIRECT_FMAC")))
+            cpu.m_vuFmacEmitter = [this](CMIPS *context, CMipsJitter *jitter, uint32 opcode, uint32 cycle, uint32 hints) {
+                if (!emitDirectFmac(context, jitter, opcode, cycle, hints)) return false;
+                ++directInstructions;
+                return true;
+            };
         cpu.m_pMemoryMap->InsertReadMap(0, 16383, data.data(), 0);
         cpu.m_pMemoryMap->InsertWriteMap(0, 16383, data.data(), 0);
         cpu.m_pMemoryMap->InsertInstructionMap(0, 16383, code.data(), 1);
@@ -119,8 +128,9 @@ struct CompiledVuSession::Impl
     }
 };
 
-CompiledVuSession::CompiledVuSession(Arithmetic arithmetic) : impl(std::make_unique<Impl>(arithmetic)) {}
+CompiledVuSession::CompiledVuSession(Arithmetic arithmetic, Emission emission) : impl(std::make_unique<Impl>(arithmetic, emission)) {}
 CompiledVuSession::~CompiledVuSession() = default;
+uint64_t CompiledVuSession::directInstructionsCompiled() const { return impl->directInstructions; }
 
 uint64_t compiledVuDrainCycle(const MIPSSTATE &s, uint64_t transferEnd)
 {
