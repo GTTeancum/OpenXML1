@@ -6,12 +6,39 @@
 #include "ee/VuExecutor.h"
 #include <algorithm>
 #include <cfenv>
+#include <bitset>
 #include <cstring>
 #include <stdexcept>
 #include <xmmintrin.h>
 
 namespace
 {
+class UnsupportedEfu : public std::runtime_error
+{
+public:
+    UnsupportedEfu() : std::runtime_error("EFU arithmetic remains on the reference engine") {}
+};
+
+class GuardedVuExecutor : public CVuExecutor
+{
+public:
+    using CVuExecutor::CVuExecutor;
+protected:
+    BasicBlockPtr BlockFactory(CMIPS &cpu, uint32 begin, uint32 end) override
+    {
+        for (uint32 pc = begin; pc <= end; pc += 8)
+        {
+            const auto lower = cpu.m_pMemoryMap->GetInstruction(pc);
+            const auto upper = cpu.m_pMemoryMap->GetInstruction(pc + 4);
+            const auto function = (lower & 3) | ((lower >> 4) & 0x7c);
+            if (!(upper & 0x80000000u) && (lower >> 25) == 0x40 && (lower & 63) >= 0x3c &&
+                function >= 0x70 && function <= 0x7d && function != 0x7b)
+                throw UnsupportedEfu();
+        }
+        return CVuExecutor::BlockFactory(cpu, begin, end);
+    }
+};
+
 class FloatingPointScope
 {
 public:
@@ -38,10 +65,11 @@ struct CompiledVuSession::Impl
     alignas(16) std::array<uint8_t, 16384> code{}, data{};
     CMIPS cpu{MEMORYMAP_ENDIAN_LSBF};
     CMA_VU architecture{16383};
-    CVuExecutor executor{cpu, 16384};
+    GuardedVuExecutor executor{cpu, 16384};
     TransferTimeline timeline{data.data()};
     ScalarFlags scalarFlags;
     bool codeLoaded = false;
+    std::bitset<2048> referenceEntries;
     uint32_t top = 0, itop = 0;
     std::string error;
 
@@ -127,6 +155,12 @@ CompiledVuSession::Result CompiledVuSession::run(const std::array<uint8_t, 16384
             vm.executor.Reset();
             vm.code = code;
             vm.codeLoaded = true;
+            vm.referenceEntries.reset();
+        }
+        if (vm.referenceEntries.test(state.nPC / 8))
+        {
+            result.reason = "EFU arithmetic remains on the reference engine";
+            return result;
         }
         vm.data = data;
         vm.cpu.m_State = state;
@@ -155,6 +189,13 @@ CompiledVuSession::Result CompiledVuSession::run(const std::array<uint8_t, 16384
         result.scalarEnd = scalarEnd;
         result.scalarFlagsValid = true;
         result.executed = true;
+    }
+    catch (const UnsupportedEfu &e)
+    {
+        result = {};
+        result.reason = e.what();
+        impl->referenceEntries.set(state.nPC / 8);
+        impl->executor.Reset();
     }
     catch (const std::exception &e)
     {

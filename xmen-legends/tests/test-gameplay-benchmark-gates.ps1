@@ -19,12 +19,16 @@ $levelPackage = $true
 $markers = @{ '1152' = 1; '1280' = 2 }
 $guestFaultLines = 0
 $CompiledVu = $false
+$AuditCompiledVu = $false
 $compiledCalls = 0L
 if (!(& $check)) { throw 'Healthy workload rejected.' }
 $CompiledVu = $true
 if (& $check) { throw 'Requested compiled engine was accepted without execution evidence.' }
 $compiledCalls = 1L
 if (!(& $check)) { throw 'Verified compiled workload rejected.' }
+$AuditCompiledVu = $true
+if (& $check) { throw 'Diagnostic double-execution was accepted as an FPS measurement.' }
+$AuditCompiledVu = $false
 $CompiledVu = $false
 $compiledCalls = 0L
 $guestFaultLines = 1
@@ -54,6 +58,7 @@ $recognize = [scriptblock]::Create($faultExpression.Extent.Text)
 foreach ($line in @(
     '[ee-thread:missing-pc] id=1 pc=0xa3a4f0',
     '[guest-branch:missing-target] kind=DirectJump',
+    '[vu:compiled-audit-failed] accepted=100 reason=state differs',
     'Error during program execution: test failure'
 )) {
     if (!(& $recognize)) { throw "Guest fault not recognized: $line" }

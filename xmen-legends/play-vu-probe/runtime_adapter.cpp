@@ -1,8 +1,12 @@
 #include "runtime_adapter.h"
 #include "runtime_bridge.h"
+#include "runtime/ps2_vu1_replay.h"
+#include "runtime/ps2_memory.h"
 #include <cstring>
 #include <cstdlib>
 #include <cstdio>
+#include <fstream>
+#include <stdexcept>
 
 namespace
 {
@@ -54,6 +58,25 @@ bool tryCompiledVuDrain(VU1Interpreter &vu, const uint8_t *code, uint32_t codeSi
         return reject(e.what());
     }
     if (!result.evaluated) return reject(result.reason.c_str());
+    static const char *auditPath = std::getenv("PS2X_VU_COMPILED_AUDIT");
+    if (auditPath && *auditPath)
+    {
+        thread_local bool failed = false;
+        if (failed) throw std::runtime_error("Compiled VU audit previously failed; execution remains stopped");
+        thread_local std::ofstream failure(auditPath, std::ios::binary | std::ios::trunc);
+        if (!failure) throw std::runtime_error("Cannot open compiled VU audit replay");
+        std::string difference;
+        const auto tick = memory ? memory->gs().vsyncTick.load(std::memory_order_relaxed) : 0;
+        if (!VUReplay::verifyCompiledDrain(vu, *input, result.output, code, data, gs,
+                tick, &failure, difference))
+        {
+            failed = true;
+            std::fprintf(stderr, "[vu:compiled-audit-failed] accepted=%llu tick=%llu pc=0x%x cycle=%llu reason=%s\n",
+                static_cast<unsigned long long>(counters.accepted), static_cast<unsigned long long>(tick),
+                input->state.pc, static_cast<unsigned long long>(input->cycle), difference.c_str());
+            throw std::runtime_error("Compiled VU audit stopped before live publication: " + difference);
+        }
+    }
     if (!VUCompiledState::commit(vu, *input, result.output, data, dataSize, gs, memory))
         return reject("Runtime rejected compiled output before publication");
     ++counters.accepted;

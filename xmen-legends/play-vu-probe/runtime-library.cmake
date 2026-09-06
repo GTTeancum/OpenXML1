@@ -42,6 +42,7 @@ target_compile_definitions(play_vu_runtime_adapter PRIVATE
 target_include_directories(play_vu_runtime_adapter PRIVATE
     "${CMAKE_SOURCE_DIR}/ps2xRuntime/include/runtime"
     "${play_root}/Source" "${play_root}/deps/Framework/include"
-    "${play_root}/deps/CodeGen/include")
+    "${play_root}/deps/CodeGen/include"
+    "${CMAKE_SOURCE_DIR}/ps2xRuntime/include")
 target_link_libraries(play_vu_runtime_adapter PRIVATE integration_play_vu_session
     integration_play_vu_core integration_CodeGen integration_Framework)

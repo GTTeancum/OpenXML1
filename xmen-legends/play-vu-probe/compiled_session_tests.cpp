@@ -93,9 +93,34 @@ bool compiledSessionTests()
     pending.pipeP = {66, 0x3f800000};
     const auto scalarTail = session.run(code, data, pending, 65);
     if (scalarTail.executed || scalarTail.reason.empty() || !scalarTail.packets.empty() || !environmentIntact()) return false;
+    code.fill(0);
+    {
+        CVuAssembler a(reinterpret_cast<uint32 *>(code.data()));
+        const auto efu = a.CreateLabel();
+        a.Write(nop, 0x80000efc);
+        a.Write(nop, CVuAssembler::Lower::SQ(CVuAssembler::DEST_XYZW, CVuAssembler::VF3, 5, CVuAssembler::VI0));
+        a.Write(nop, CVuAssembler::Lower::B(efu));
+        a.Write(nop, CVuAssembler::Lower::NOP());
+        a.MarkLabel(efu);
+        a.Write(nop, CVuAssembler::Lower::ERLENG(CVuAssembler::VF1));
+        a.Write(nop | CVuAssembler::Upper::E_BIT, CVuAssembler::Lower::NOP());
+        a.Write(nop, CVuAssembler::Lower::NOP());
+    }
+    for (unsigned attempt = 0; attempt < 3; ++attempt)
+    {
+        const auto efu = session.run(code, data, initial, 1048576);
+        if (efu.executed || efu.reason.find("EFU") == std::string::npos || !efu.packets.empty() ||
+            efu.data != std::array<uint8_t, 16384>{} || !environmentIntact()) return false;
+    }
+    auto separateEntry = initial;
+    separateEntry.nPC = 40;
+    if (!session.run(code, data, separateEntry, 1048576).executed || !environmentIntact()) return false;
+    makeCode(0);
     const auto recovered = session.run(code, data, initial, 1048576);
     const bool passed = recovered.executed && recovered.data == result.data &&
         recovered.packets == result.packets && environmentIntact();
+    std::printf("[play-vu:efu-fallback] passed=%u staged-output-discarded=1 cached-entry=1 other-entry=1 code-change=1\n",
+        unsigned(passed));
     std::printf("[play-vu:session-test] passed=%u detached=1 fp-restored=1 cache-replaced=1 rejection-recovered=1\n",
         unsigned(passed));
     return passed;

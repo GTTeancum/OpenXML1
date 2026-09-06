@@ -6,6 +6,7 @@ param(
     [switch]$CpuRasterProfile,
     [switch]$CaptureFrame,
     [switch]$CompiledVu,
+    [switch]$AuditCompiledVu,
     [ValidateRange(30, 1800)]
     [int]$TimeoutSeconds = 600
 )
@@ -45,7 +46,7 @@ try {
     }
 } finally { $archive.Dispose() }
 
-$stem = if ($PhaseProfile -or $CoverageProfile -or $CpuRasterProfile) { 'gameplay-phase' } else { 'gameplay-rate' }
+$stem = if ($AuditCompiledVu) { 'gameplay-compiled-audit' } elseif ($PhaseProfile -or $CoverageProfile -or $CpuRasterProfile) { 'gameplay-phase' } else { 'gameplay-rate' }
 $outLog = Join-Path $build "$stem.out.log"
 $errLog = Join-Path $build "$stem.err.log"
 $start = [Diagnostics.ProcessStartInfo]::new($exe)
@@ -66,9 +67,13 @@ foreach ($key in @('PS2X_DISABLE_HOST_INPUT', 'PS2X_XMEN_HOST_CLOCK',
     $start.Environment[$key] = '1'
 }
 $start.Environment['PS2X_RUN_VSYNC_LIMIT'] = '1400'
+if ($AuditCompiledVu -and !$CompiledVu) { throw 'AuditCompiledVu requires CompiledVu' }
 if ($CompiledVu) {
     $start.Environment['PS2X_VU_COMPILED'] = '1'
     $start.Environment['PS2X_VU_COMPILED_STATS'] = '1'
+    if ($AuditCompiledVu) {
+        $start.Environment['PS2X_VU_COMPILED_AUDIT'] = Join-Path $PSScriptRoot 'disc/vu-compiled-failure.bin'
+    }
 }
 if ($PhaseProfile) { $start.Environment['PS2X_RUNTIME_PHASE_PROFILE'] = '1' }
 if ($CpuRasterProfile) { $start.Environment['PS2X_GS_CPU_PROFILE'] = '1' }
@@ -128,10 +133,14 @@ try {
                 if ($line -match '^\[vu:compiled\] accepted=(\d+)') { $compiledCalls = [long]$Matches[1] }
                 if ($line -match '^\[xmen-new-?game-handler\]') { $newGameHandler = $true }
                 if ($line.Contains('path="maps/nyc/alison/nyc1_1_1.igb"')) { $levelPackage = $true }
-                if ($line -match '^\[(?:ee-thread:missing-pc|guest-branch:missing-target)\]|^Error during program execution:') {
+                if ($line -match '^\[(?:ee-thread:missing-pc|guest-branch:missing-target|vu:compiled-audit-failed)\]|^Error during program execution:') {
                     ++$guestFaultLines
                     if ($null -eq $firstGuestFault) {
                         $firstGuestFault = $line.Substring(0, [Math]::Min(1024, $line.Length))
+                    }
+                    if ($AuditCompiledVu -and $line.StartsWith('[vu:compiled-audit-failed]') -and !$process.HasExited) {
+                        try { $process.Kill() }
+                        catch [InvalidOperationException] { if (!$process.HasExited) { throw } }
                     }
                 }
                 $tasks[$key] = $streams[$key].ReadLineAsync()
@@ -151,7 +160,7 @@ try {
     $coverage = if ($CoverageProfile) {
         & (Join-Path $PSScriptRoot 'summarize-vu-coverage.ps1') -LogPath $errLog -RequireGameplaySpan
     } else { $null }
-    $verified = $process.ExitCode -eq 0 -and $guestFaultLines -eq 0 -and
+    $verified = !$AuditCompiledVu -and $process.ExitCode -eq 0 -and $guestFaultLines -eq 0 -and
         (!$CompiledVu -or $compiledCalls -gt 0) -and
         $reachedLimit -and $blockPairs -gt 0 -and
         $newGameHandler -and $levelPackage -and
@@ -162,6 +171,7 @@ try {
         CoverageProfile = [bool]$CoverageProfile
         CpuRasterProfile = [bool]$CpuRasterProfile
         CompiledVu = [bool]$CompiledVu; CompiledCallsLowerBound = $compiledCalls
+        AuditCompiledVu = [bool]$AuditCompiledVu
         Coverage = $coverage
         StartupMode = 'TitleGameplayFirst'; HostInput = $false
         ExitCode = $process.ExitCode; ReachedLimit = $reachedLimit; BlockPairs = $blockPairs

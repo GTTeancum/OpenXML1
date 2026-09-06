@@ -7,6 +7,57 @@ PS2Recomp state header. The standalone probe does not read the ISO or create a
 game window; the optional runtime extension below now connects it to the game.
 There is no gameplay FPS claim or interactive handoff yet.
 
+## Current Shadow-Audit Checkpoint
+
+As of 2026-09-06 10:35 UTC, all changes remain local: no PS2Recomp push or PR.
+Local PS2Recomp commit `e49ab1d` provides the private pre-publication audit.
+The optional engine is still off by default. Run
+`run-gameplay-benchmark.ps1 -CompiledVu -AuditCompiledVu` to compare each
+accepted result against private original-engine execution before publishing
+state or graphics. The first mismatch saves one bounded private replay and
+the benchmark closes only its owned process, then restores startup. Audit
+runs disable host input and are explicitly excluded from FPS measurement.
+
+Two game failures are now reproducible and covered:
+
+- PC `0x22b0`, after 100 accepted calls: EFU arithmetic differs. Reached EFU
+  blocks now reject the entire private attempt, including staged writes and
+  packets, and use the original engine. Rejection caching is entry/code-specific;
+  other entries still compile and code changes clear it. EFU math is not fixed.
+- PC `0x528`, after 4,918 accepted calls: an incoming VF wait did not age the
+  other pending writes, overcharging two cycles. The Play source patch now
+  resolves the longest incoming dependency first and ages all pending masks.
+  All 72 read-order/register-group/gap variants pass, and the real recording
+  matches registers, memory, timed packets and all 276 cycles without fallback.
+
+Final test SHA-256:
+`CF73728C2E12926AC13E3140B945BA592C02F7289833353D772081C37A09583C`.
+All 156 default-mode VU tests and nine compiled integration tests pass, as do
+both original 32-record captures at normal/1/8/16/64-cycle budgets. The audit
+regression rejects corrupted registers, data, packet content and packet timing
+without modifying live state or GS. Standalone probe
+`831AC8DBBC775B24E0456B19A4177201E7C0C09AFE074003A8AE70A365E07C20`
+passes all 21 upstream tests, the existing contract suite, and the real
+incoming-wait recording with complete architectural equality. The saved Play
+patch reverse-applies cleanly; scoped attributes preserve its LF line endings.
+
+Latest game candidate:
+`9CC0649BC344544A6A39F0DF85E6DF65836F6A25C2EBE400BC9DC31909842B44`.
+Its third audit passed 7,148 compiled calls, reached New Game and NYC package
+markers, then stopped at tick 469 / PC `0x540` / cycle 37118928 before publishing
+a mismatching result. Original replay passes with digest `ddf5b50851320b9f`.
+Compiled output differs in Q, 12 VF words, 88 data bytes, packet bytes and
+completion (2854 vs 2874 cycles). This is the next isolated investigation;
+Q readiness and static/incoming waits are hypotheses, not established causes.
+The fixed private `vu-compiled-failure.bin`, `gameplay-compiled-audit` logs and
+`play-vu-failure.log` preserve it; earlier EFU and incoming-wait captures remain
+in two separate small private files. None are staged in Git.
+
+No new valid gameplay FPS or control handoff is claimed. Last valid baseline
+remains 4.97750 FPS. All owned build/test/game processes have ended. The original
+compiled-on null-object failure below has not been shown resolved. The following
+sections retain earlier checkpoint evidence; their next-step text is historical.
+
 ## Experimental Runtime Hook: Not Ready for Gameplay
 
 Local PS2Recomp commit `e7408e9` adds the opt-in hook and replay validation.

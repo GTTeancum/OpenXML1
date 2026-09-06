@@ -325,7 +325,7 @@ index a2991f1..d6265ef 100644
  	void SQbase(CMipsJitter*, uint8, uint8);
  	void SQD(CMipsJitter*, uint8, uint8, uint8, uint32);
 diff --git a/Source/ee/VuBasicBlock.cpp b/Source/ee/VuBasicBlock.cpp
-index a1ca3ca..c0da016 100644
+index a1ca3ca..d49fd7d 100644
 --- a/Source/ee/VuBasicBlock.cpp
 +++ b/Source/ee/VuBasicBlock.cpp
 @@ -3,6 +3,35 @@
@@ -411,7 +411,41 @@ index a1ca3ca..c0da016 100644
  
  		if(extraPipeTimeIndex < 3)
  		{
-@@ -169,6 +231,12 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -86,7 +148,9 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+ 			setStallBits(hiOps.readF1, hiOps.readElemF1);
+ 			setStallBits(loOps.readF0, loOps.readElemF0);
+ 			setStallBits(loOps.readF1, loOps.readElemF1);
+-			for(int32 i = extraPipeTimeIndex; i < 3; i++)
++			// Resolve the longest incoming dependency first. A wait also ages
++			// unrelated pending writes before the next instruction reads them.
++			for(int32 i = 2; i >= extraPipeTimeIndex; i--)
+ 			{
+ 				for(int32 stallIdx = 0; stallIdx < 4; stallIdx++)
+ 				{
+@@ -98,13 +162,18 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+ 						jitter->PushCst(0);
+ 						jitter->BeginIf(Jitter::CONDITION_NE);
+ 						{
+-							//Clear writes
+-							jitter->MD_PushCstExpandW(0U);
+-							jitter->MD_PullRel(offsetof(CMIPS, m_State.pipeFmacWrite[i]));
++							const uint32 elapsed = i - extraPipeTimeIndex + 1;
++							for(uint32 row = 0; row < 3; row++)
++							{
++								if(row + elapsed < 3)
++									jitter->MD_PushRel(offsetof(CMIPS, m_State.pipeFmacWrite[row + elapsed]));
++								else jitter->MD_PushCstExpandW(0U);
++								jitter->MD_PullRel(offsetof(CMIPS, m_State.pipeFmacWrite[row]));
++							}
+ 
+ 							//Increment pipe time
+ 							jitter->PushRel(offsetof(CMIPS, m_State.pipeTime));
+-							jitter->PushCst(1);
++							jitter->PushCst(elapsed);
+ 							jitter->Add();
+ 							jitter->PullRel(offsetof(CMIPS, m_State.pipeTime));
+ 						}
+@@ -169,6 +238,12 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  		}
  
  		uint32 compileHints = hints[instructionIndex] | m_blockCompileHints;
@@ -424,7 +458,7 @@ index a1ca3ca..c0da016 100644
  		arch->SetCompileHints(compileHints);
  		arch->SetRelativePipeTime(relativePipeTime);
  		arch->CompileInstruction(addressHi, jitter, &m_context, addressHi - m_begin);
-@@ -251,7 +319,10 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -251,7 +326,10 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  			clearPendingXgKick();
  		}
  
@@ -435,7 +469,7 @@ index a1ca3ca..c0da016 100644
  
  		if(address == integerBranchDelayInfo.useRegAddress)
  		{
-@@ -335,6 +406,8 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -335,6 +413,8 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  				//We need to compile the instruction at the branch target because it will be executed
  				//before the branch is taken
  				uint32 branchTgtAddress = branchOpcodeAddr + VUShared::GetBranch(branchOpcodeLo & 0x7FF) + 8;
@@ -444,7 +478,7 @@ index a1ca3ca..c0da016 100644
  				arch->CompileInstruction(branchTgtAddress, jitter, &m_context, address - m_begin);
  			}
  		}
-@@ -357,6 +430,8 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -357,6 +437,8 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  					//If we haven't taken the jump, execute the instruction after the delay slot
  					uint32 nextOpcodeAddr = address + 8;
  					uint32 nextOpcodeLo = m_context.m_pMemoryMap->GetInstruction(nextOpcodeAddr);
@@ -453,7 +487,7 @@ index a1ca3ca..c0da016 100644
  					arch->CompileInstruction(nextOpcodeAddr, jitter, &m_context, nextOpcodeAddr - m_begin);
  				}
  				jitter->EndIf();
-@@ -382,7 +457,21 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -382,7 +464,21 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  		jitter->PullRel(offsetof(CMIPS, m_State.pipeTime));
  	}
  
@@ -476,7 +510,7 @@ index a1ca3ca..c0da016 100644
  	{
  		//Clear unused writes
  		//TODO: Find a way to push that to the next block (would become index 0 of next block)
-@@ -409,13 +498,18 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+@@ -409,13 +505,18 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
  			if(stall.nV[i] != 0)
  			{
  				jitter->PushCst(stall.nV[i]);

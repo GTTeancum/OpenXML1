@@ -50,6 +50,9 @@ try {
     if (!$output.Contains('[play-vu:session-test] passed=1 detached=1 fp-restored=1 cache-replaced=1 rejection-recovered=1')) {
         throw 'Detached compiled session regressions did not pass.'
     }
+    if (!$output.Contains('[play-vu:efu-fallback] passed=1 staged-output-discarded=1 cached-entry=1 other-entry=1 code-change=1')) {
+        throw 'Guarded EFU fallback and cache recovery regressions did not pass.'
+    }
     if (!$output.Contains('[play-vu:typed-bridge-test] passed=1 pending-import=1 staged-export=1 full-flags=1 runtime-accepted=0') -or
         !$output.Contains('[play-vu:flag-roundtrip] passed=1 cases=4096 full-status=1 independent-mac=1')) {
         throw 'Typed runtime bridge regressions did not pass.'

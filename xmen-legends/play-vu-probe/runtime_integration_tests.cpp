@@ -1,11 +1,15 @@
 #include "runtime_adapter.h"
 #include "MiniTest.h"
 #include "runtime/ps2_vu_compiled_state.h"
+#include "runtime/ps2_vu1_replay.h"
+#include "runtime_bridge.h"
 #include "runtime/ps2_memory.h"
 #include "runtime/gs/gs_frontend.h"
 #include <array>
 #include <cstring>
 #include <stdexcept>
+#include <sstream>
+#include <cstdio>
 
 namespace
 {
@@ -78,6 +82,120 @@ void register_compiled_vu_producer_tests()
     MiniTest::Case("PS2VU1CompiledProducer", [](TestCase &tc)
     {
 #if defined(PS2X_TEST_COMPILED_VU_HOOK)
+        tc.Run("An incoming register wait ages the other pending register writes", [](TestCase &t)
+        {
+            const unsigned orders[][3] = {{0,1,2}, {0,2,1}, {1,0,2}, {1,2,0}, {2,0,1}, {2,1,0}};
+            for (unsigned first : {7u, 9u, 15u, 23u})
+            for (const auto &order : orders)
+            for (unsigned gap = 0; gap < 3; ++gap)
+            {
+                Fixture fast, reference;
+                if (!fast.init() || !reference.init()) { t.Fail("Fixtures initialize"); return; }
+                for (auto *fx : {&fast, &reference})
+                {
+                    for (unsigned reg = 1; reg <= 3; ++reg)
+                    {
+                        fx->vu.state().vf[reg][0] = float(reg);
+                        fx->vu.state().vf[reg][3] = 1.0f;
+                        fx->pair((reg - 1) * 8, lowerNop,
+                            (15u << 21) | (reg << 11) | ((first + reg - 1) << 6) | 0x28);
+                    }
+                    unsigned pc = 24;
+                    for (unsigned read : order)
+                    {
+                        const auto reg = first + read;
+                        fx->pair(pc, lowerNop, (15u << 21) | (reg << 16) | (reg << 11) | 0x1ff);
+                        pc += 8 * (gap + 1);
+                    }
+                    fx->pair(pc, lowerNop, upperNop | end);
+                }
+                { ScopedCompiledVuMode disabled(false); fast.start(3); reference.start(3); reference.resume(budget); }
+                std::string reason;
+                t.IsTrue(fast.compiled(reason), "Pending triple write uses compiled producer");
+                t.Equals(fast.vu.state().cycles, reference.vu.state().cycles, "Wait time is charged once, not once per reader");
+                t.IsTrue(sameArchitecture(fast.vu.state(), reference.vu.state()), "All completed registers and flags match");
+            }
+        });
+        tc.Run("Unsupported EFU matrix work falls back without publishing partial results", [](TestCase &t)
+        {
+            Fixture fast, reference;
+            if (!fast.init() || !reference.init()) { t.Fail("Fixtures initialize"); return; }
+            for (auto *fx : {&fast, &reference})
+            {
+                for (unsigned row = 1; row <= 4; ++row) fx->vu.state().vf[row][row - 1] = 1.0f;
+                fx->vu.state().vf[8][0] = 3.0f;
+                fx->vu.state().vf[8][1] = 4.0f;
+                fx->vu.state().vf[8][3] = 1.0f;
+                fx->pair(0, lowerNop, 0x01e809bc); // MULAx ACC,vf1,vf8
+                fx->pair(8, lowerNop, 0x01e810bd); // MADDAy ACC,vf2,vf8
+                fx->pair(16, lowerNop, 0x01e818be); // MADDAz ACC,vf3,vf8
+                fx->pair(24, lowerNop, 0x01e020bf); // MADDAw ACC,vf4,vf0
+                fx->pair(32, lowerNop, 0x01c06bcb); // MADDw vf15,vf13,vf0
+                fx->pair(40, lowerNop, 0x01c00229); // MADD vf8,vf0,vf0
+                fx->pair(64, 0x81c07f3f); // ERLENG vf15
+                fx->pair(72, 0x800007bf); // WAITP
+                fx->pair(80, 0x81ec067c); // MFP vf12
+                fx->pair(88, lowerNop, upperNop | end);
+            }
+            { ScopedCompiledVuMode disabled(false); reference.start(budget); }
+            const auto before = compiledVuCounters();
+            { ScopedCompiledVuMode enabled(true); fast.start(budget); }
+            t.Equals(compiledVuCounters().accepted, before.accepted, "EFU workload remains on reference engine");
+            if (!sameArchitecture(fast.vu.state(), reference.vu.state()))
+            {
+                const auto &a = fast.vu.state(); const auto &b = reference.vu.state();
+                std::printf("[matrix-diff] cycles=%llu/%llu p=%.9g/%.9g mac=%x/%x status=%x/%x pc=%x/%x\n",
+                    static_cast<unsigned long long>(a.cycles), static_cast<unsigned long long>(b.cycles),
+                    a.p, b.p, a.mac, b.mac, a.status, b.status, a.pc, b.pc);
+                for (unsigned r = 0; r < 32; ++r) for (unsigned lane = 0; lane < 4; ++lane)
+                    if (std::memcmp(&a.vf[r][lane], &b.vf[r][lane], sizeof(float)))
+                        std::printf("[matrix-vf] reg=%u lane=%u value=%.9g/%.9g\n", r, lane, a.vf[r][lane], b.vf[r][lane]);
+            }
+            t.IsTrue(sameArchitecture(fast.vu.state(), reference.vu.state()), "Matrix and scalar results match reference");
+            t.Equals(fast.vu.state().vf[8][0], 3.0f, "Accumulator x survives chained operations");
+            t.Equals(fast.vu.state().vf[8][1], 4.0f, "Accumulator y survives chained operations");
+            t.IsTrue(fast.vu.state().p > 0.19f && fast.vu.state().p < 0.21f, "Reciprocal vector length is one fifth");
+        });
+        tc.Run("Shadow audit detects wrong state memory and timed packets without live publication", [](TestCase &t)
+        {
+            Fixture fx;
+            if (!fx.init()) { t.Fail("Fixture initializes"); return; }
+            signalProgram(fx, 0);
+            { ScopedCompiledVuMode disabled(false); fx.start(1); }
+            const auto input = VUCompiledState::capture(fx.vu, budget);
+            if (!input) { t.Fail("Pending program captured"); return; }
+            std::array<uint8_t, 16384> code, data;
+            std::memcpy(code.data(), fx.code, code.size());
+            std::memcpy(data.data(), fx.data, data.size());
+            PlayVuRuntimeBridge bridge;
+            const auto result = bridge.evaluate(*input, code, data);
+            if (!result.evaluated || result.output.packets.empty()) { t.Fail("Producer staged packet"); return; }
+            const auto initial = fx.vu.state();
+            for (unsigned variant = 0; variant < 5; ++variant)
+            {
+                auto altered = result.output;
+                if (variant == 1) altered.state.vf[3][0] += 1.0f;
+                if (variant == 2) altered.data[128] ^= 1;
+                if (variant == 3) altered.packets[0].bytes[16] ^= 1;
+                if (variant == 4) ++altered.packets[0].cycle;
+                std::ostringstream failure(std::ios::binary);
+                std::string reason;
+                const bool valid = VUReplay::verifyCompiledDrain(fx.vu, *input, altered,
+                    fx.code, fx.data, fx.gs, 123, &failure, reason);
+                t.Equals(valid, variant == 0, "Audit accepts correct output and rejects corruption");
+                t.Equals(failure.str().empty(), variant == 0, "Only mismatch writes replay");
+                t.IsTrue(sameArchitecture(initial, fx.vu.state()), "Live state unchanged");
+                t.IsTrue(!std::memcmp(data.data(), fx.data, data.size()), "Live memory unchanged");
+                t.Equals(fx.packets, 0u, "No packet reaches live GS");
+                if (variant != 0)
+                {
+                    std::istringstream replay(failure.str(), std::ios::binary);
+                    const auto verification = VUReplay::replay(replay, 1);
+                    t.IsTrue(verification.error.empty() && verification.cases == 1,
+                        "Saved baseline failure record independently replays");
+                }
+            }
+        });
         tc.Run("Hybrid packet storage reuse matches full and sliced observable results", [](TestCase &t)
         {
             for (uint32_t slice : {4096u, 1u, 3u, 8u, 64u})
