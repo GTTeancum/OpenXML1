@@ -4,6 +4,44 @@
 #include <cstdio>
 #include <cstring>
 
+static bool stickyResetTests(CompiledVuSession &session)
+{
+    for (uint32_t reset : {0u, 0x40u, 0x80u, 0xc0u})
+    for (bool laterArithmetic : {false, true})
+    {
+        alignas(16) std::array<uint8_t, 16384> code{}, data{};
+        CVuAssembler a(reinterpret_cast<uint32 *>(code.data()));
+        for (unsigned cycle = 0; cycle < 9; ++cycle)
+        {
+            auto upper = CVuAssembler::Upper::NOP();
+            auto lower = CVuAssembler::Lower::NOP();
+            if (cycle == 0 || (cycle == 2 && laterArithmetic))
+                upper = CVuAssembler::Upper::ADDbc(CVuAssembler::DEST_X, CVuAssembler::VF4,
+                    cycle == 0 ? CVuAssembler::VF1 : CVuAssembler::VF2,
+                    CVuAssembler::VF0, CVuAssembler::BC_X);
+            if (cycle == 1) lower = 0x2a000000 | reset;
+            if (cycle >= 2 && cycle <= 6)
+                lower = CVuAssembler::Lower::FSAND(static_cast<CVuAssembler::VI_REGISTER>(cycle - 1), 0xc3);
+            if (cycle == 7) upper |= CVuAssembler::Upper::E_BIT;
+            a.Write(upper, lower);
+        }
+        MIPSSTATE initial{};
+        initial.nDelayedJumpAddr = MIPS_INVALID_PC;
+        initial.nCOP2[0].nV3 = 0x3f800000;
+        initial.nCOP2[2].nV0 = 0xbf800000;
+        const auto result = session.run(code, data, initial, 1048576);
+        const uint32_t expected[] = {0, 0, 0x41, reset | 1,
+            laterArithmetic ? (reset | 0x82) : (reset | 1)};
+        bool passed = result.executed;
+        for (unsigned i = 0; i < 5; ++i) passed &= result.state.nCOP2VI[i + 1] == expected[i];
+        std::printf("[play-vu:sticky-reset] reset=%02x later=%u passed=%u reads=%02x,%02x,%02x,%02x,%02x\n",
+            reset, unsigned(laterArithmetic), unsigned(passed), result.state.nCOP2VI[1],
+            result.state.nCOP2VI[2], result.state.nCOP2VI[3], result.state.nCOP2VI[4], result.state.nCOP2VI[5]);
+        if (!passed) return false;
+    }
+    return true;
+}
+
 bool scalarFlagTests()
 {
     struct Case { uint32_t instruction, numerator, denominator, flags; };
@@ -18,6 +56,7 @@ bool scalarFlagTests()
         {0x800003be, 0x3f800000, 0x40800000, 0}
     };
     CompiledVuSession session;
+    if (!stickyResetTests(session)) return false;
     unsigned index = 0;
     for (const auto &test : cases)
     {

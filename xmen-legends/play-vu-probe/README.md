@@ -7,6 +7,29 @@ PS2Recomp state header, but does not link its runtime, read the ISO, create a ga
 window, or enable a replacement engine.
 There is no gameplay FPS claim or interactive handoff yet.
 
+## Arithmetic Sticky Reset Ordering
+
+The opt-in compiled FSSET path queues sign/zero sticky resets in the existing
+four-cycle flag pipeline instead of immediately clearing the live sticky state
+and all pending arithmetic. This emits native pipeline writes, not a callback
+per arithmetic instruction. Without a status observer, the original Play! FSSET
+implementation remains unchanged.
+
+Eight public cases cover all four sign/zero reset combinations, arithmetic
+before the reset, reads before/at retirement, and optional later arithmetic that
+sets sticky bits again. The uncorrected compiled session failed the first case:
+at cycle four, FSAND returned `0x01` instead of `0x41` because the reset had
+discarded the older pending zero flag. All eight cases pass after the change.
+
+Image `1F22FC558565019D3C9E062E39F1A1F233B3C039E44FEB122E560FCC27B53CB7`
+passes the public suite and both existing recordings (14 original/eight spread
+eligible cases), including repeated typed outputs and scalar-status checks.
+This does not complete full flag behavior: same-pair upper arithmetic/FSSET
+STATUS suppression still needs to be handled separately from MAC, as do FMAC
+overflow/underflow and the numeric/timing differences listed below.
+No game build, compatibility acceptance, or gameplay FPS gain is claimed.
+The timing table below belongs to the preceding scalar-status image.
+
 ## Timed Scalar Status
 
 The local bridge now tracks invalid-operation/divide-by-zero status and their
