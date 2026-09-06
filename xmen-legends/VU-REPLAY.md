@@ -936,3 +936,41 @@ identical status/sign behavior and boundary-focused differential tests before
 implementation is accepted. Do not assume the same proof applies to multiply-add
 cancellation, signed zero, the minimum normal, or maximum finite value. No such
 arithmetic fast path has been implemented in this checkpoint.
+
+## Rejected Whole-Block Slot Cache
+
+The September 5 follow-up tested one thread-local slot-allocation plan per
+compiled block, keyed by the exact incoming VF occupancy mask and each occupied
+slot's deadline relative to the entry cycle. All existing eligibility checks
+remained live. Only successful simulations populated the cache; hits reused
+the upper/lower slot arrays without resimulating each instruction.
+
+The 128-test VU suite and original gameplay capture stayed exact. Seven
+alternating 1024-repeat comparisons measured 3274.625 ms baseline versus
+3257.355 ms candidate, only 0.527% lower with 4/7 wins. This does not justify
+the cache. It was removed without linking or running another gameplay build.
+The rejected test hash was
+`09B37A0822E9F0B97475EF86DA83C123CFB7DF5EC760293B3C7E49A1E9CD0BCE`.
+The fixed ignored comparison JSON was reused, not duplicated.
+
+Retained tests expand the mixed-write fixture from 48 to 768 cases. Three
+prelude pairs independently select no write, upper VF write, lower VF load,
+or both; all 64 patterns cross 12 budgets and subsequent one-cycle snapshots.
+They assert pending input values and actual compiled execution at full budgets.
+The restored runtime passes 128/128 VU tests and both 32-record captures at
+normal and 1/8/16/64-cycle slicing, with unchanged digests and cycle counts.
+Test SHA-256:
+`37407B2032245B81C44E84E4510F124F89E3BC85CBB48895E07AD792162DFE0E`.
+
+## Compiled-Flag Reference Audit
+
+Inspected Play!'s current source on September 5 without adding a checkout.
+[`ComputeSkipFlagsHints`](https://github.com/jpd002/Play-/blob/master/Source/ee/VuBasicBlock.cpp)
+tracks which delayed MAC results can be consumed inside the block or after its
+exit. This is a useful example of compile-time liveness analysis.
+However, [`TestSZFlags`](https://github.com/jpd002/Play-/blob/master/Source/ee/VUShared.cpp)
+still updates its separate sticky pipeline when a MAC update is omitted;
+`GetStatus` also carries a TODO for additional flags. This is not evidence that
+all flag arithmetic or retirement may be removed from PS2Recomp. Our unified
+pipeline, sticky product flags, exact pending state and graphics-transfer cycle
+contract need their own proof. No Play! code was copied or integrated.
