@@ -2,6 +2,7 @@ param(
     [ValidateSet('Primary', 'Staged', 'Candidate')]
     [string]$RuntimeVariant = 'Candidate',
     [switch]$PhaseProfile,
+    [switch]$CoverageProfile,
     [switch]$CaptureFrame,
     [ValidateRange(30, 1800)]
     [int]$TimeoutSeconds = 600
@@ -42,7 +43,7 @@ try {
     }
 } finally { $archive.Dispose() }
 
-$stem = if ($PhaseProfile) { 'gameplay-phase' } else { 'gameplay-rate' }
+$stem = if ($PhaseProfile -or $CoverageProfile) { 'gameplay-phase' } else { 'gameplay-rate' }
 $outLog = Join-Path $build "$stem.out.log"
 $errLog = Join-Path $build "$stem.err.log"
 $start = [Diagnostics.ProcessStartInfo]::new($exe)
@@ -64,6 +65,7 @@ foreach ($key in @('PS2X_DISABLE_HOST_INPUT', 'PS2X_XMEN_HOST_CLOCK',
 }
 $start.Environment['PS2X_RUN_VSYNC_LIMIT'] = '1400'
 if ($PhaseProfile) { $start.Environment['PS2X_RUNTIME_PHASE_PROFILE'] = '1' }
+if ($CoverageProfile) { $start.Environment['PS2X_VU_COVERAGE_PROFILE'] = '1' }
 if ($CaptureFrame) { $start.Environment['PS2X_DUMP_PRESENT_RANGE'] = '1280-1280' }
 
 $identity = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash
@@ -93,7 +95,7 @@ try {
     $streams = @{out = $process.StandardOutput; err = $process.StandardError}
     foreach ($key in $streams.Keys) { $tasks[$key] = $streams[$key].ReadLineAsync() }
     $nextReport = 30
-    "GAME_PID=$($process.Id) SHA256=$identity PHASE_PROFILE=$([bool]$PhaseProfile)"
+    "GAME_PID=$($process.Id) SHA256=$identity PHASE_PROFILE=$([bool]$PhaseProfile) COVERAGE_PROFILE=$([bool]$CoverageProfile)"
     while ($tasks.Count -gt 0 -or !$process.HasExited) {
         $readAny = $false
         foreach ($key in @($tasks.Keys)) {
@@ -127,12 +129,19 @@ try {
         if (!$readAny) { Start-Sleep -Milliseconds 5 }
     }
     $process.WaitForExit()
+    foreach ($writer in $writers.Values) { $writer.Dispose() }
+    $writers.Clear()
+    $coverage = if ($CoverageProfile) {
+        & (Join-Path $PSScriptRoot 'summarize-vu-coverage.ps1') -LogPath $errLog -RequireGameplaySpan
+    } else { $null }
     $verified = $process.ExitCode -eq 0 -and $reachedLimit -and $blockPairs -gt 0 -and
         $newGameHandler -and $levelPackage -and
         $markers.ContainsKey('1152') -and $markers.ContainsKey('1280')
     $report = [ordered]@{
         RecordedAtUtc = [DateTime]::UtcNow.ToString('o')
         Executable = $exe; Sha256 = $identity; PhaseProfile = [bool]$PhaseProfile
+        CoverageProfile = [bool]$CoverageProfile
+        Coverage = $coverage
         StartupMode = 'TitleGameplayFirst'; HostInput = $false
         ExitCode = $process.ExitCode; ReachedLimit = $reachedLimit; BlockPairs = $blockPairs
         NewGameHandler = $newGameHandler; LevelPackage = $levelPackage; WorkloadVerified = $verified
@@ -140,7 +149,7 @@ try {
         Frames = 128; FrameSeconds = $null; Fps = $null
         TimingMethod = 'External stderr line observation; shared-host approximate timing'
     }
-    if (!$PhaseProfile -and $verified) {
+    if (!$PhaseProfile -and !$CoverageProfile -and $verified) {
         $report.FrameSeconds = $markers['1280'] - $markers['1152']
         if ($report.FrameSeconds -gt 0) { $report.Fps = 128 / $report.FrameSeconds }
     }

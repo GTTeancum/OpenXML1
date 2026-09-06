@@ -1067,3 +1067,55 @@ timestamp `0x6a9cbcfe`. Top individual symbols were `commitReadyPipelines`
 the earlier deadline experiment. These are sampled VU costs, not whole-game
 percentages. The remaining major task is reducing compiled execution bookkeeping
 without losing delayed-write, sticky-flag, or graphics-transfer semantics.
+
+## Gameplay Coverage Windows
+
+PS2Recomp `955b393` adds opt-in `PS2X_VU_COVERAGE_PROFILE` reporting at VU1
+slice entry on the executing thread. It reads the existing native/interpreted
+pair and block counters, not UI-thread copies. One sample per guest tick feeds
+32-tick windows within ticks 1100-1400; startup counts are subtracted. Owner,
+tick, and counter rollback reset the sampler instead of unsigned-underflowing.
+No VU object layout or instruction semantics changed. The default is off.
+
+The focused suite passes 131/131, including window/reset tests. Both recorded
+captures remain exact with coverage enabled. Test SHA-256:
+`7DDD7C0294EEE2B785AE8CC3E9475AB07EF76F24855F056782C3329561CEE4BA`.
+The test and game links ran BelowNormal with affinity 0xF, one worker, and the
+2048 MiB compiler cap. Candidate SHA-256:
+`CE7E1C90D16606BCDA8D7343980857E660B93E40AEB13DF636B46ED597C1224C`.
+
+Run `run-gameplay-benchmark.ps1 -CoverageProfile -PhaseProfile` for the combined
+report. It reuses `gameplay-phase.*`, records no FPS for an instrumented run,
+and requires contiguous coverage spanning the gameplay interval. The report
+parser rejects malformed counters, duplicates, gaps, short intervals, empty
+workloads, and incomplete spans. Its regression tests use in-memory fixtures.
+An initial file-backed test left `.vu-coverage-test.log`; deletion was denied,
+so it remains untouched. The first live finalizer tried to read a log while its
+writer was still open. The wrapper now closes both writers before parsing.
+
+The corrected full run exited 0 at vsync 1400, verified the New Game handler,
+NYC package, native blocks, and both timing markers, and restored startup files.
+Nine windows covering ticks 1100-1388 contain:
+
+| Path | Instruction pairs | Share of all pairs |
+| --- | --- | --- |
+| Compiled blocks | 265,818,240 | 45.26% |
+| Other native pair kernels | 123,013,207 | 20.95% |
+| Interpreter fallback | 198,437,472 | 33.79% |
+
+Block attempts/executions are 12,109,248 / 10,449,216. The earlier run, whose
+game reached the limit but whose report finalizer failed, produced essentially
+the same split: 66.21% total native / 45.27% blocks. Counts are not time shares.
+The corrected run's 73 phase reports ending at ticks 1100-1388 cover 76,239.624 ms:
+VU exclusive 48,057.24 ms (63.03%), GS 19,384.40 ms (25.43%), guest 4,295.09 ms
+(5.63%), transfers 3,683.26 ms (4.83%); waits remain negligible. Boundary phase
+reports can straddle the coverage interval, so this is a nearby phase estimate,
+not an instruction-by-instruction cost attribution.
+
+This shows substantially more fallback than the original offline recording.
+Next test 128 private pair kernels versus 64 while retaining the same weighted
+recipe and 16 private blocks; do not conflate pair expansion with previously
+rejected block/recipe expansion. Recipe frequency inspection alone predicts
+coverage, not performance. Require both exact recordings and alternating timing
+before another gameplay integration. No frame-rate or rendering gain is claimed
+for the coverage instrumentation itself. The last unprofiled run remains 4.14 FPS.
