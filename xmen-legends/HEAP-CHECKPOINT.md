@@ -4,6 +4,78 @@ September 6, 2026. Work is local only; no pushes or PRs. Movement was confirmed
 by the user on an earlier build; attacking was not tested there. The performance
 target remains 30 FPS. No result below is an interactive handoff.
 
+## Failure Attribution (18:30 UTC)
+
+Runtime and test changes are checkpointed locally in PS2Recomp commit `b4c0043`.
+
+`PS2X_GUEST_BUMP_DIAGNOSTICS` now records the active dispatch source/target and
+registers on the first allocation failure, plus up to 16 live requested-size
+groups ranked by total bytes. The existing 16-failure cap remains. Context is
+thread-local and restored on nested dispatch return/unwind; normal mode emits
+neither these records nor builds the size histogram. This is diagnostic work,
+not a claimed optimization. Its disabled-mode timing cost has not been measured.
+
+`tests/test-compatibility-heap.ps1` passes 27 fresh-process checks both normally
+and with `-Diagnostics` (54 total), including an exhausted-heap dispatch that
+must retain the old allocation and identify source `0x800000`, target `0x200e10`.
+Output bounds and disabled-mode silence are checked. Test image:
+`A5EEE997A40B2BE0F20F79B41C1129303EFEC3AFDCA9796D9FDBFD32C9C18C9C`.
+The fixed `heap-ownership-checks.log` currently contains the diagnostics-on run;
+the preceding off run passed in terminal output.
+
+Candidate `66BB7F1592362DFF83095180001AB14E2B3CF12E1C0E15D56C228C3FA310E429`
+was used for one automated first-fit/in-place/compiled-retry/Vulkan run, with
+heap diagnostics and compiled arithmetic auditing. It reproduces the previous
+32,768-byte failure exactly: frontier 25,151,296; tail 14,528; free 1,590,224;
+largest hole 32,560; live allocations 53,331. Caller record:
+
+```text
+source=0x248068 target=0x231ed0 ra=0x248070 sp=0x1f12550
+a0=0x898ef0 a1=0x8000 a2=0x10 a3=0 s0=0x8000 s1=0
+```
+
+Retail `0x248040` takes a size in a0 and allocator category in a1, resolves the
+allocator through `0x247fc0`, then calls aligned-allocation slot `0xd8` with
+alignment 16 at `0x248068`. The two explicit fixed-32-KiB callers found in static
+disassembly are `0x2dd20c` and `0x2dd510`, both passing category 12. Their routines
+set up/grow command buffers using globals `0x750700..0x750710`, 32,752-byte end
+offsets and linked packet storage. This identifies a command-buffer path to
+investigate, but the immediate caller report alone does NOT distinguish those
+two sites from other callers computing a 32-KiB size dynamically.
+
+Category 12 at `0x247fc0` first checks allocator singleton `0x7472a0`, then falls
+back to `0x747298`, `0x20c960`, and `0x203b60`. Investigate whether the original
+allocator separation/lifetimes are lost when all wrappers allocate from one
+compatibility arena; do not assume all those native arenas are free or expand
+into them without ownership proof.
+
+Largest observed live-size groups by requested bytes:
+
+| Requested size | Live count | Total bytes |
+| ---: | ---: | ---: |
+| 16,384 | 48 | 786,432 |
+| 32,895 | 20 | 657,900 |
+| 479,220 | 1 | 479,220 |
+| 32,768 | 13 | 425,984 |
+| 6,112 | 65 | 397,280 |
+| 8,192 | 47 | 385,024 |
+| 44 | 7,773 | 342,012 |
+| 1,024 | 326 | 333,824 |
+
+These are requested-size totals, not padded occupancy or ownership/lifetime
+attribution. Full 16-group output is in the reused
+`gameplay-vulkan-audit-retry-realloc-heap-audit.err.log`. New Game/NYC and public
+free execution are confirmed; 16 queued failure records were drained after the
+intentional stop, exit -1, elapsed 19.15 seconds. No guest fault or compiled
+mismatch before stopping, but neither the audit nor gameplay span completes.
+No valid FPS, native image or interactive handoff. Startup restored; all owned
+build/test/game processes ended. Allocator experiments remain opt-in.
+
+NEXT: confirm the command-buffer caller and inspect the category-12 allocator's
+ownership/lifetime boundary. Do not change placement policy again on this data
+alone. The 298,384-byte singleton failure in default moving mode remains open,
+as does the primary 30 FPS objective and substantial VU execution work.
+
 ## Ownership Dispatch Checkpoint (18:20 UTC)
 
 Retail ELF program-header mapping was used to read the table at `0x6fcbe0`:

@@ -1,4 +1,4 @@
-param()
+param([switch]$Diagnostics)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -40,6 +40,7 @@ foreach ($case in $cases) {
     if ($case.Fast) { $start.Environment['PS2X_BYPASS_XMEN_BRANCH_HOOKS'] = '1' }
     if ($case.BestFit) { $start.Environment['PS2X_GUEST_BUMP_BEST_FIT'] = '1' }
     if ($case.InPlace) { $start.Environment['PS2X_GUEST_BUMP_REALLOC'] = '1' }
+    if ($Diagnostics) { $start.Environment['PS2X_GUEST_BUMP_DIAGNOSTICS'] = '1' }
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $start
     $started = $false
@@ -51,12 +52,23 @@ foreach ($case in $cases) {
         $stdout = $process.StandardOutput.ReadToEndAsync()
         $stderr = $process.StandardError.ReadToEndAsync()
         if (!$process.WaitForExit(60000)) { throw "Heap test timed out: $($case.Filter)" }
-        $label = "FAST=$($case.Fast) BEST_FIT=$($case.BestFit) IN_PLACE=$($case.InPlace) FILTER=$($case.Filter)"
+        $label = "DIAGNOSTICS=$([bool]$Diagnostics) FAST=$($case.Fast) BEST_FIT=$($case.BestFit) IN_PLACE=$($case.InPlace) FILTER=$($case.Filter)"
         "$label EXIT=$($process.ExitCode)`n$($stdout.Result)`n$($stderr.Result)" |
             Add-Content -LiteralPath $log
         if ($process.ExitCode -ne 0 -or $stdout.Result -notmatch 'Total Tests: 1\b' -or
             $stdout.Result -notmatch 'Passed: 1\b' -or $stdout.Result -notmatch 'Failed: 0\b') {
             throw "Heap test failed or did not execute: $label; see $log"
+        }
+        if ($Diagnostics -and $case.Filter -eq 'public allocator dispatch' -and
+            $stderr.Result -notmatch '\[heap:failed-call\] source=0x800000 target=0x200e10\b') {
+            throw "Heap failure attribution missing: $label"
+        }
+        if (!$Diagnostics -and $stderr.Result -match '\[heap:(failed-call|live-size)\]') {
+            throw 'Disabled failure attribution emitted diagnostic records.'
+        }
+        if ([regex]::Matches($stderr.Result, '\[heap:live-size\]').Count -gt 16 -or
+            [regex]::Matches($stderr.Result, '\[heap:failed-call\]').Count -gt 1) {
+            throw 'Heap failure attribution exceeded its output bound.'
         }
         "PASS $label"
     } finally {
