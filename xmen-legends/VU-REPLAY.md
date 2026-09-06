@@ -4,6 +4,71 @@ The bring-up runtime has an opt-in, process-local VU1 recorder. Use it to check
 and time interpreter changes against actual game work without repeating startup.
 This is not a replacement for first-level gameplay validation.
 
+## Packed Product Sticky Flags
+
+`cb58d43` evaluates the four product lanes together when native VU arithmetic
+is compiled with MSVC x64/AVX2. Operands are already normalized; products are
+widened before multiplication, then classified for zero/sign/underflow/overflow
+and reduced over the destination mask. Broadcast, Q/I, vector and cross-product
+operand selection follows the existing scalar path. Current-result arithmetic,
+flag queuing, pipeline deadlines and the scalar interpreter are unchanged.
+Other builds retain the existing scalar implementation.
+
+The standalone regression checks 12,800 input/mask/rounding combinations,
+including signed zero, minimum/maximum values and randomized finite operands.
+Volatile widened inputs prevent the /fp:fast scalar test oracle from narrowing
+its multiplication. Both nearest and toward-zero modes are covered. Existing
+native arithmetic boundary replays compare full serialized state against the
+unchanged interpreter; both game captures remain exact at normal/1/8/16/64-cycle
+budgets. Final test image `0EB3EFC0B0D15F3E32161E939F0E03D644CCE86B2E7E0359708646A2739AB2D3`
+passes 142/142 VU tests and all ten capture/budget checks.
+
+Seven alternating uninstrumented comparisons:
+
+| Capture | Repeats | Baseline ms | Packed ms | Reduction | Wins |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original | 1024 | 1974.443 | 1817.065 | 7.971% | 7/7 |
+| Spread | 2048 | 1499.442 | 1448.099 | 3.424% | 7/7 |
+
+Comparator slot now holds accepted `1229e5f`, SHA-256
+`B4C96193B519A08B3E2F7584DC44C7EB3D7B068D6E90EF57C8D1FDC923B82D40`,
+not older `A7070757...`. Timed candidate was `704D93632F731C96207F063D0D8987B349D696346D6C1E272ED9627435D07015`;
+the subsequent test-only rounding expansion produced the final image above.
+Disassembly of the timed helper (timestamp `0x6a9cedd9`, RVA `0xd0f90`) shows
+`vcvtps2pd` before `vmulpd`, followed by packed double comparisons and lane-mask
+reduction. These are VU-only timings, not game FPS improvements.
+
+This native-specialized path does not exist in current upstream main, so it
+is not submitted as an unused helper or a dependent grab-bag PR. A general
+interpreter adaptation would need its own normalization, correctness and
+performance checks. Existing PR #252 remains the standalone pending-clear change.
+
+### Game Integration Checkpoint
+
+The linked candidate SHA-256 is
+`77736D945AF593A6BE4DF2380863D3D3184D7C9035712F2F9CF3EDF6E4441280`.
+The initial integration attempt did not reach the measurement window and logged
+an invalid guest PC `0x4c004000` after present 640. The user reported closing the
+window and requested a restart. That observation does not establish the cause
+of the logged guest fault; keep it as an unresolved interruption-time finding,
+not proof of either an arithmetic regression or a clean shutdown.
+
+The requested rerun completed at 2026-09-06T04:49:25Z with exit 0 and vsync 1400.
+The New Game handler, NYC level package, 785,009,483 native block pairs, and both
+timing markers were verified. Presents 1152 and 1280 arrived at 178.8528643 and
+206.4986906 seconds: 128 frames in 27.6458263 seconds, approximately **4.63 FPS**.
+This is shared-host timing, not a controlled whole-game speedup claim against
+the earlier 4.38 FPS run. Phase/coverage profiling and host input were disabled.
+The invalid-address failure did not recur, and startup scripts were restored.
+
+The current runtime-owned present-1280 dump was inspected: NYC geometry and
+Wolverine render, but black props, missing foliage, the solid red player marker,
+and malformed/white HUD elements remain. This was a timed integration check,
+not a fresh interactive movement/combat validation. The test process has exited;
+the gameplay goal remains incomplete. Next work should prioritize responsiveness
+and reliable player control, with the interruption-time fault retained for
+investigation if it recurs. No SFD work is required for this checkpoint.
+
 ## September 6 Arithmetic Rejection And Profile
 
 The exact FMAC helper-inline experiment (`3b728bb`) passed all 140 VU tests
