@@ -4,9 +4,9 @@ The bring-up runtime has an opt-in, process-local VU1 recorder. Use it to check
 and time interpreter changes against actual game work without repeating startup.
 This is not a replacement for first-level gameplay validation.
 
-## Pending Native Store Optimization
+## Native Store Optimization
 
-The latest test build is a checkpoint, not an accepted gameplay integration.
+The final store implementation is PS2Recomp `ade0d08`.
 SHA-256 `E9F3850029A44174E1075B8F31B61748230FF98E21073FC41D950909BCA8E711`
 passes 144/144 VU tests, both private recordings at normal/1/8/16/64-cycle
 budgets, and `tests/test-vu-native-store-trace.ps1` in both filter modes.
@@ -23,12 +23,60 @@ use a 16-byte copy, while masked stores preserve untouched lanes.
 The earlier scalar-write candidate `9AF11E51...` measured original medians
 1656.766 / 1588.925 ms (4.095% lower, 7/7 paired wins), and spread medians
 1361.817 / 1333.030 ms (2.114% lower, 6/7). These are not measurements of the
-final full-width-copy refinement. Repeat both seven-round comparisons against
+final full-width-copy refinement. Final comparisons use
 `ps2x_tests.flag-pack-base.exe`, SHA-256
 `4D876140E14717E5E2A8D20E99B752BEFBB5C4DB8338F93C253FAA7DF5FF5022`,
-before accepting this change. The game candidate is still `BF9DED00...` below.
-The fixed execution profiles remain tied to the older `784D74F1...` image;
-their addresses must not be interpreted with the current link map.
+as their baseline. The final full-width-copy candidate retains exact results
+and coverage, and wins all seven alternating pairs on both recordings:
+
+| Capture | Repeats | Baseline ms | Candidate ms | Reduction | Wins |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original | 1024 | 1656.341 | 1614.567 | 2.522% | 7/7 |
+| Spread | 2048 | 1370.188 | 1342.890 | 1.992% | 7/7 |
+
+Shared-host timing remains approximate; these are VU-only measurements, not
+whole-game speedups. The fixed comparison JSON contains spread results. The
+matching PE/map timestamp is `0x6a9cf915`. Across 106 unique direct-store bodies,
+disassembly finds no `queueStore` calls. Full-mask SQI examples at RVAs
+`0x2e94b0` and `0x2e9680` use one `vmovups` store and occupy 80 bytes each,
+versus 96 bytes and four scalar writes in the initial candidate.
+
+The candidate game links as SHA-256
+`1600B44639E00AD71C3E877F5957FADBA1BE0C2FB2CAE00A6A214B09E5F6CFEE`,
+163,420,672 bytes, PE32+ x64 timestamp `0x6a9cfa8a`. The BelowNormal link
+completed with the existing duplicate raylib-symbol warnings; complete PE
+section bounds were checked before the guarded first-level run.
+
+At 2026-09-06T05:34:34Z, the unprofiled game check exited 0 at vsync 1400,
+passed New Game/NYC/native-block gates, and restored startup. It executed
+788,701,403 native block pairs. Presents 1152/1280 arrived at
+173.7567724/199.8239492 seconds: 128 frames in 26.0671768 seconds, **4.91039 FPS**.
+The matching runtime-owned present-1280 image still shows textured NYC and
+Wolverine, black props, missing foliage, a red player disk and malformed HUD.
+No new manual input/combat or visual-fidelity claim follows from this run.
+The saved primary and staged game binaries remain unchanged.
+
+Refreshed execution-only profiles match the final test image/map timestamp
+`0x6a9cf915`, with three 2048-repeat runs per recording. Original has 814 total
+samples, five external and 809 mapped; spread has 328, four external and 324
+mapped. Every run retains exact replay results with zero sampling drops or
+failures. Instruction execution accounts for 28.18% / 24.07% of in-module
+samples, block bodies/guards 22.87% / 17.59%, other VU work 22.13% / 30.86%,
+FMAC helpers 13.10% / 12.35%, retirement/advance 10.26% / 11.11%.
+These are offline exclusive sampled-IP shares, not gameplay wall-time shares.
+The final `run` body at RVA `0x2c4370` has 90 combined samples and 8,160 bytes;
+sampled sites include VF save/restore, decoded-pair copying and ACC queue setup.
+
+A separate game run with phase timing enabled completes at 05:39 UTC, exit 0,
+vsync 1400, all workload gates verified and startup restored. The 59 complete
+same-thread windows spanning ticks 1102-1397 total 61,433.304 ms. Exclusive
+VU time is 35,163.886 ms (57.239%), GS 18,382.923 ms (29.923%), other guest
+3,836.094 ms (6.244%), transfers 2,699.289 ms (4.394%), VU reset 569.074 ms
+(0.926%), events 456.418 ms, scheduler 271.598 ms and waits 0.098 ms. All
+exclusive categories account for 61,379.380 ms, leaving 53.924 ms outside
+those categories. Nested phases are subtracted from their
+parents, avoiding double counting. This confirms VU execution as the main
+remaining gameplay cost, but it is not an unprofiled FPS measurement.
 
 ## Packed Result Normalization
 
