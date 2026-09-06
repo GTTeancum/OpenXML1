@@ -4,6 +4,79 @@ The bring-up runtime has an opt-in, process-local VU1 recorder. Use it to check
 and time interpreter changes against actual game work without repeating startup.
 This is not a replacement for first-level gameplay validation.
 
+## Residual Pair Profiling
+
+The optional `PS2X_ENABLE_VU_PAIR_PROFILE` CMake switch adds diagnostics only to
+the VU core and replay source files. It defaults to OFF; ordinary builds have
+no per-pair collection hook. Build with the usual BelowNormal wrapper:
+
+```powershell
+& ./xmen-legends/build-below-normal.ps1 -ConfigureCache @('PS2X_ENABLE_VU_PAIR_PROFILE:BOOL=ON')
+& ./xmen-legends/build-below-normal.ps1 -Target ps2x_tests
+```
+
+Use the replay setup below, enable `PS2X_VU_REPLAY_PAIRS=1` and
+`PS2X_VU_REPLAY_BLOCKS=1`, and set `PS2X_VU_REPLAY_RESIDUAL_EXPORT` to an absolute
+CSV path inside the ignored `disc` directory. The CSV contains decimal
+`pc,lower,upper,native,interpreted` fields. **Keep it private:** these are retail
+instruction words. A normal-budget export must leave
+`PS2X_VU_REPLAY_SLICE_CYCLES` unset. Neither upper nor pair one-cycle export may
+be enabled with this diagnostic; conflicting requests fail explicitly.
+
+Collection observes the first replay pass at the same cycle budget as normal
+execution. It counts only instructions actually issued outside successful
+compiled blocks, after dependency waits. A pair's PC and both words form its
+key, so different microprograms at the same address are not merged. The scoped
+collector excludes warm repetitions and other VU owners; 4,096 unique keys is
+the hard storage limit, and overflow fails verification rather than silently
+truncating the profile. Warm replay still checks exact state, data, and packets.
+The export test reconciles cold native/interpreted counts against the complete
+execution counters, subtracting compiled-block pairs.
+
+With 64 private pairs and the unchanged 16-private-block weighted selection:
+
+| Capture | Residual PC/word keys | Native residual pairs | Interpreted pairs |
+| --- | ---: | ---: | ---: |
+| Original, normal budget | 322 | 6,578 | 1,265 |
+| Spread, normal budget | 389 | 1,976 | 3,993 |
+| Original, one-cycle budget | 425 | 30,895 | 8,598 |
+| Spread, one-cycle budget | 486 | 9,663 | 5,719 |
+
+These are cold-pass counts. The one-cycle results illustrate why tracing by
+shrinking budgets is not a faithful measure of normal block fallback.
+The instrumented image `5C5E7D0039CE3970A889B67F2E66B95BCC5B5BBEC6B24B0511EAFB1F49D75E93`
+passes all 133 VU tests and both recordings at normal and 1/8/16/64-cycle budgets,
+including counter reconciliation. Conflicting export modes are rejected.
+
+Aggregating by instruction words and giving each capture equal normalized
+weight predicts that a 64-word selection could cover 6,831 original and 3,753
+spread residual pairs, compared with 6,578 and 1,976 today. That would replace
+42 currently selected words. This is **not yet an implemented selection or
+measured speedup**. Keep block provenance, weights, and selection unchanged;
+validate actual coverage and exact output, then compare repeated timings on
+both captures before considering a gameplay build.
+
+The preceding 64-to-128 private-pair experiment was rejected: seven alternating
+comparisons measured 2516.006 / 2592.948 ms on original and 2046.555 / 2120.754 ms
+on spread (3.058% and 3.626% slower, one win of seven each). All then-current
+131 tests and both sliced replays passed, but normal interpreted counts only
+fell from 2,530 to 1,100 on original and 7,986 to 7,260 on spread across the two
+passes. Block coverage did not change. The game was never relinked with 128.
+The comparison slot `ps2x_tests.flag-pack-base.exe` now holds accepted `955b393`,
+SHA-256 `7DDD7C0294EEE2B785AE8CC3E9475AB07EF76F24855F056782C3329561CEE4BA`.
+Older identities elsewhere in these notes describe historical comparisons.
+
+After profiling, restore `PS2X_ENABLE_VU_PAIR_PROFILE:BOOL=OFF` and rebuild the
+test target before timing. Do not compare an instrumented image against an
+uninstrumented baseline or infer whole-game FPS from these instruction counts.
+
+The final restored normal build is
+`2F9FA03552A04BC007AE7B376F676ABDFD2208ED8D3473AAA7D7EBCEDDCEC6B7`.
+It passes all 133 VU tests and both captures at normal and 1/8/16/64-cycle
+budgets, with unchanged pair/block counts. A residual-export request is
+explicitly rejected when profiling is not compiled in. All three gameplay
+executables remain unchanged.
+
 ## Capture
 
 Set `PS2X_VU_REPLAY_CAPTURE` to an absolute path inside the ignored extracted-disc
