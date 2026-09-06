@@ -52,7 +52,7 @@ bool runtimeBridgeTests()
     const auto &out = result.output;
     if (out.state.vf[2][0] != 1 || out.state.q != 0.5f || out.state.p != 0.25f ||
         out.elapsed < 4 || out.state.cycles != 100 + out.elapsed || out.state.top != 37 || out.state.itop != 12 ||
-        out.statusMask != 0xe3 || out.macMask != 0xff || (out.state.status & ~out.statusMask) ||
+        out.statusMask != 0xcf3 || out.macMask != 0xff || (out.state.status & ~out.statusMask) ||
         (out.state.mac & ~out.macMask) || out.data != data ||
         std::memcmp(&input.state, &original.state, sizeof(input.state)) || input.vfWrites != original.vfWrites ||
         input.flags != original.flags || input.vfReady != original.vfReady || input.vfLatest != original.vfLatest) return false;

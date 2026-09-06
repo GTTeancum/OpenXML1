@@ -6,7 +6,7 @@
 
 namespace
 {
-constexpr uint32_t statusMask = 0xe3, macMask = 0xff;
+constexpr uint32_t statusMask = 0xcf3, macMask = 0xff;
 
 uint32_t stickyBits(uint32_t status)
 {
@@ -151,10 +151,11 @@ VUCompiledState::Output PlayVuRuntimeBridge::exportState(const VUCompiledState::
     const CompiledVuSession::Result &result)
 {
     const auto &s = result.state;
-    if (!result.executed || s.nHasException != MIPS_EXCEPTION_VU_EBIT ||
+    if (!result.executed || !result.scalarFlagsValid || s.nHasException != MIPS_EXCEPTION_VU_EBIT ||
         !result.drainedCycle || result.drainedCycle > input.budget ||
         input.cycle > std::numeric_limits<uint64_t>::max() - result.drainedCycle ||
-        result.drainedCycle != compiledVuDrainCycle(s, result.transferEnd) ||
+        result.drainedCycle != std::max(compiledVuDrainCycle(s, result.transferEnd), result.scalarEnd) ||
+        (result.scalarStatus & ~0xc30u) ||
         result.packets.size() != result.completionCycles.size() ||
         s.nPC >= 16384 || (s.nPC & 7))
         throw std::runtime_error("Incomplete compiled result cannot be exported");
@@ -175,7 +176,7 @@ VUCompiledState::Output PlayVuRuntimeBridge::exportState(const VUCompiledState::
     v.clip = latestFlag(s.pipeClip, s.nCOP2CF, result.drainedCycle) & 0xffffff;
     const auto sticky = latestFlag(s.pipeSticky, s.nCOP2SF, result.drainedCycle);
     v.status = ((v.mac & 0xf) ? 1u : 0u) | ((v.mac & 0xf0) ? 2u : 0u) |
-        ((sticky & 0xf) ? 0x40u : 0u) | ((sticky & 0xf0) ? 0x80u : 0u) | (s.nCOP2DF ? 0x20u : 0u);
+        ((sticky & 0xf) ? 0x40u : 0u) | ((sticky & 0xf0) ? 0x80u : 0u) | (result.scalarStatus & 0xc30u);
     output.elapsed = result.drainedCycle;
     output.statusMask = statusMask;
     output.macMask = macMask;
@@ -198,7 +199,8 @@ PlayVuRuntimeBridge::Result PlayVuRuntimeBridge::evaluate(const VUCompiledState:
     try
     {
         const auto imported = importState(input);
-        const auto compiled = session.run(code, data, imported, input.budget, input.state.top, input.state.itop);
+        const auto scalar = importScalarFlags(input);
+        const auto compiled = session.run(code, data, imported, input.budget, input.state.top, input.state.itop, &scalar);
         if (!compiled.executed) throw std::runtime_error(compiled.reason);
         result.output = exportState(input, compiled);
         result.evaluated = true;
@@ -209,4 +211,19 @@ PlayVuRuntimeBridge::Result PlayVuRuntimeBridge::evaluate(const VUCompiledState:
         result.reason = e.what();
     }
     return result;
+}
+
+ScalarFlags::State PlayVuRuntimeBridge::importScalarFlags(const VUCompiledState::Input &input)
+{
+    ScalarFlags::State state{};
+    state.status = input.state.status & 0xc30;
+    size_t count = 0;
+    for (const auto &e : input.flags)
+        if (e.valid && e.writesSticky)
+        {
+            if (e.ready <= input.cycle || e.ready > input.cycle + 3)
+                throw std::runtime_error("Unsupported incoming FSSET deadline");
+            state.events[count++] = {e.ready - input.cycle, e.status & 0xc00, true, true};
+        }
+    return state;
 }

@@ -576,6 +576,14 @@ int replayDiagnostic(const char *path)
         std::fflush(stdout);
         const MIPSSTATE initial = s;
         const auto runtimeInput = typedInput(before, budget);
+        const auto initialScalar = PlayVuRuntimeBridge::importScalarFlags(runtimeInput);
+        ScalarFlags directScalar;
+        directScalar.reset(initialScalar);
+        vm->m_cpu.m_vuStatusObserver = [&](CMIPS *context, uint32 opcode, uint32 cycle, uint32 value) {
+            if (!timelineError.empty()) return value;
+            try { return directScalar.observe(context, opcode, cycle, value); }
+            catch (const std::exception &e) { timelineError = e.what(); return value; }
+        };
         const auto typedInitial = PlayVuRuntimeBridge::importState(runtimeInput);
         if (std::memcmp(&typedInitial, &initial, sizeof(initial)))
             throw std::runtime_error("Typed runtime import diverged from recorded-state importer");
@@ -602,7 +610,7 @@ int replayDiagnostic(const char *path)
         std::memcpy(bridgeCode.data(), code.data(), code.size());
         std::memcpy(bridgeData.data(), data.data(), data.size());
         const auto detached = detachedSession.run(bridgeCode, bridgeData, initial, budget,
-            static_cast<uint32_t>(at(before, 639)), static_cast<uint32_t>(at(before, 643)));
+            static_cast<uint32_t>(at(before, 639)), static_cast<uint32_t>(at(before, 643)), &initialScalar);
         const bool detachedMatches = detached.executed &&
             !std::memcmp(&detached.state, &coldFinal, sizeof(coldFinal)) &&
             !std::memcmp(detached.data.data(), coldData.data(), coldData.size()) &&
@@ -618,8 +626,9 @@ int replayDiagnostic(const char *path)
             !std::memcmp(runtimeOutput.state.acc, &s.nCOP2A, sizeof(runtimeOutput.state.acc)) &&
             !std::memcmp(&runtimeOutput.state.q, &drained.q, 4) && !std::memcmp(&runtimeOutput.state.p, &drained.p, 4) &&
             runtimeOutput.elapsed == drained.cycle && runtimeOutput.state.cycles == runtimeInput.cycle + drained.cycle &&
-            runtimeOutput.state.mac == drained.mac && runtimeOutput.state.clip == drained.clip && runtimeOutput.state.status == drained.status &&
-            runtimeOutput.statusMask == DrainedControl::statusMask && runtimeOutput.macMask == DrainedControl::macMask &&
+            runtimeOutput.state.mac == drained.mac && runtimeOutput.state.clip == drained.clip &&
+            (runtimeOutput.state.status & 0xc3) == (drained.status & 0xc3) &&
+            runtimeOutput.statusMask == 0xcf3 && runtimeOutput.macMask == DrainedControl::macMask &&
             runtimeOutput.data == detached.data && runtimeOutput.packets.size() == detached.packets.size();
         if (!exportMatches) throw std::runtime_error("Typed runtime export diverged from completed-state diagnostic");
         for (size_t i = 0; i < runtimeOutput.packets.size(); ++i)
@@ -663,6 +672,10 @@ int replayDiagnostic(const char *path)
         const uint64_t expectedEnd = at(after, 625, 8) - at(before, 625, 8);
         const auto expectedMac = static_cast<uint32_t>(at(after, 613));
         const auto expectedStatus = static_cast<uint32_t>(at(after, 621));
+        const auto actualScalar = directScalar.finish(std::max(drained.cycle, directScalar.deadline()));
+        if (actualScalar != detached.scalarStatus) throw std::runtime_error("Detached scalar status diverged");
+        std::printf("[play-vu:scalar-status] case=%u match=%u flags=%03x/%03x coverage=cf3\n", current,
+            unsigned((expectedStatus & 0xc30) == actualScalar), actualScalar, expectedStatus & 0xc30);
         const bool controlMatches = drained.cycle == expectedEnd && drained.q == at(after, 593) &&
             drained.p == at(after, 597) && drained.mac == (expectedMac & DrainedControl::macMask) &&
             drained.clip == at(after, 617) && drained.status == (expectedStatus & DrainedControl::statusMask);
@@ -683,6 +696,7 @@ int replayDiagnostic(const char *path)
             actualPackets.clear();
             callbackError.clear();
             timeline.reset();
+            directScalar.reset(initialScalar);
             timelineError.clear();
             const auto start = std::chrono::steady_clock::now();
             vm->m_executor.Execute(2 * 1048576);

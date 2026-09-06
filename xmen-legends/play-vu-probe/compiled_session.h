@@ -1,5 +1,6 @@
 #pragma once
 #include "MIPS.h"
+#include "scalar_flags.h"
 #include <array>
 #include <cstdint>
 #include <memory>
@@ -21,6 +22,9 @@ public:
         std::vector<uint64_t> completionCycles;
         uint64_t transferEnd = 0;
         uint64_t drainedCycle = 0;
+        uint32_t scalarStatus = 0;
+        uint64_t scalarEnd = 0;
+        bool scalarFlagsValid = false;
     };
     CompiledVuSession();
     ~CompiledVuSession();
@@ -28,7 +32,8 @@ public:
     CompiledVuSession &operator=(const CompiledVuSession &) = delete;
     Result run(const std::array<uint8_t, 16384> &code,
         const std::array<uint8_t, 16384> &data, const MIPSSTATE &state,
-        uint32_t budget, uint32_t top = 0, uint32_t itop = 0);
+        uint32_t budget, uint32_t top = 0, uint32_t itop = 0,
+        const ScalarFlags::State *scalarState = nullptr);
 private:
     struct Impl;
     std::unique_ptr<Impl> impl;

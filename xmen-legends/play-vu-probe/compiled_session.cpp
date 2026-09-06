@@ -39,6 +39,7 @@ struct CompiledVuSession::Impl
     CMA_VU architecture{16383};
     CVuExecutor executor{cpu, 16384};
     TransferTimeline timeline{data.data()};
+    ScalarFlags scalarFlags;
     bool codeLoaded = false;
     uint32_t top = 0, itop = 0;
     std::string error;
@@ -80,6 +81,11 @@ struct CompiledVuSession::Impl
             }
             catch (const std::exception &e) { error = e.what(); return 0u; }
         };
+        cpu.m_vuStatusObserver = [this](CMIPS *context, uint32 opcode, uint32 cycle, uint32 value) {
+            if (!error.empty()) return value;
+            try { return scalarFlags.observe(context, opcode, cycle, value); }
+            catch (const std::exception &e) { error = e.what(); return value; }
+        };
     }
 };
 
@@ -101,7 +107,7 @@ uint64_t compiledVuDrainCycle(const MIPSSTATE &s, uint64_t transferEnd)
 
 CompiledVuSession::Result CompiledVuSession::run(const std::array<uint8_t, 16384> &code,
     const std::array<uint8_t, 16384> &data, const MIPSSTATE &state, uint32_t budget,
-    uint32_t top, uint32_t itop)
+    uint32_t top, uint32_t itop, const ScalarFlags::State *scalarState)
 {
     Result result;
     if (budget <= 64 || budget > 1048576 || state.pipeTime || state.nHasException ||
@@ -126,12 +132,16 @@ CompiledVuSession::Result CompiledVuSession::run(const std::array<uint8_t, 16384
         vm.itop = itop;
         vm.error.clear();
         vm.timeline.reset();
+        ScalarFlags::State initialScalar{};
+        initialScalar.status = state.nCOP2DF ? 0x20 : 0;
+        vm.scalarFlags.reset(scalarState ? *scalarState : initialScalar);
         vm.executor.Execute(static_cast<int>(budget * 2));
         if (!vm.error.empty()) throw std::runtime_error(vm.error);
         if (vm.cpu.m_State.nHasException != MIPS_EXCEPTION_VU_EBIT)
             throw std::runtime_error("Compiled drain did not reach E-bit termination");
         vm.timeline.finish(vm.cpu.m_State.pipeTime);
-        const auto drainedCycle = compiledVuDrainCycle(vm.cpu.m_State, vm.timeline.time);
+        const auto scalarEnd = vm.scalarFlags.deadline();
+        const auto drainedCycle = std::max(compiledVuDrainCycle(vm.cpu.m_State, vm.timeline.time), scalarEnd);
         if (drainedCycle > budget) throw std::runtime_error("Compiled drain exceeded elapsed-cycle budget");
         result.state = vm.cpu.m_State;
         result.data = vm.data;
@@ -139,6 +149,9 @@ CompiledVuSession::Result CompiledVuSession::run(const std::array<uint8_t, 16384
         result.completionCycles = vm.timeline.completionCycles;
         result.transferEnd = vm.timeline.time;
         result.drainedCycle = drainedCycle;
+        result.scalarStatus = vm.scalarFlags.finish(drainedCycle);
+        result.scalarEnd = scalarEnd;
+        result.scalarFlagsValid = true;
         result.executed = true;
     }
     catch (const std::exception &e)

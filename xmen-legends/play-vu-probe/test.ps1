@@ -52,6 +52,10 @@ try {
     if (!$output.Contains('[play-vu:typed-bridge-test] passed=1 pending-import=1 staged-export=1 partial-flags=1 runtime-accepted=0')) {
         throw 'Typed runtime bridge regressions did not pass.'
     }
+    if (([regex]::Matches($output, '\[play-vu:scalar-flags\] case=\d+ passed=1')).Count -ne 13 -or
+        !$output.Contains('[play-vu:scalar-flag-contracts] passed=1 same-cycle-order=1 pending-tail=1 late-budget-rejection=1')) {
+        throw 'Timed scalar flag regressions did not pass.'
+    }
     if (([regex]::Matches($output, '\[play-vu:wait-test\] mode=\d+ passed=1')).Count -ne 7) {
         throw 'Compiled XGKICK wait regressions did not pass.'
     }

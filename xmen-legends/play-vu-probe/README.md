@@ -7,6 +7,64 @@ PS2Recomp state header, but does not link its runtime, read the ISO, create a ga
 window, or enable a replacement engine.
 There is no gameplay FPS claim or interactive handoff yet.
 
+## Timed Scalar Status
+
+The local bridge now tracks invalid-operation/divide-by-zero status and their
+sticky bits (`0xc30`) independently of Play!'s legacy boolean division flag.
+An optional, compile-time-installed status callback observes DIV, SQRT, RSQRT,
+FSSET, FSAND and FSOR. Absence of the callback retains the original Play! path.
+Changing callback presence requires resetting the compiled-code cache. The patch
+is included in the existing `play-vu-memory-observer.patch`; it is no longer a
+memory-only patch. No PS2Recomp commit or pull request is required for this local
+experiment, and no game runtime is linked or enabled.
+
+The bounded queue retires scalar flags with Q, defers sticky resets by four
+cycles, preserves incoming sticky state and pending FSSET events, and applies
+FSSET before FDIV at an equal completion cycle. Reads merge the retired scalar
+bits before FSAND/FSOR apply their immediate operand. End-of-program draining
+includes pending scalar-status deadlines in the budget. Errors are caught inside
+the callback and reject the detached execution without publishing output.
+
+Behavior was checked against the [PCSX2 VU interpreter reference](https://github.com/PCSX2/pcsx2/blob/master/pcsx2/VUops.cpp):
+DIV zero/zero is invalid, negative square-root operands set invalid, and RSQRT
+zero/zero sets both invalid and division-by-zero. Only status behavior is changed
+here, not Q's numeric implementation. PS2Recomp's existing RSQRT zero/zero handling
+differs from that reference and still needs a separate fidelity decision. PCSX2
+was inspected, not linked or copied into this implementation.
+
+Thirteen public cases verify both sides of the 7/13-cycle visibility boundary,
+FSAND/FSOR, delayed FSSET, signed zeros, normalized denormals and negative roots.
+The no-callback baseline demonstrably fails: zero/zero reports `0x020` immediately
+instead of remaining clear until the result retires with `0x410`. Additional
+checks cover same-cycle retirement ordering, an incoming sticky-reset tail after
+E-bit completion and rejecting that tail when it exceeds the execution budget.
+All prior public tests, including 21 unmodified upstream tests, also pass.
+
+Final local image:
+`E327761FDA2417E359622919BE06F627671CDAC161E905D8A6CA708339DFB646`.
+All 22 eligible recordings match the new scalar-status bits with zero mismatches;
+combined typed outputs remain repeatable over 256 warm calls. STATUS coverage is
+now `0xcf3`, MAC remains `0x00ff`, and runtime-accepted remains zero. FMAC overflow/
+underflow, full sticky/reset interactions, general VI/store timing and existing
+numeric differences are not solved by this change. Next address those semantics,
+not another conversion wrapper or an inactive game build.
+
+Three sequential timing comparisons on the existing 256-repeat setup:
+
+| Recording | Round | Baseline All ms | Baseline Eligible ms | Typed Call ms |
+| --- | ---: | ---: | ---: | ---: |
+| Original | 1 | 393.512 | 314.822 | 57.805686 |
+| Original | 2 | 388.948 | 311.269 | 58.397386 |
+| Original | 3 | 399.766 | 319.092 | 57.742886 |
+| Spread | 1 | 163.490 | 82.907 | 20.485192 |
+| Spread | 2 | 162.462 | 80.857 | 20.537092 |
+| Spread | 3 | 164.514 | 81.451 | 20.570892 |
+
+The added work retains about 5.45x/3.97x eligible median ratios against the same
+baseline image `77E6FDB3...`, not a gameplay speedup. Timer scope and exclusions
+are unchanged from the typed bridge section below. The game executable remains
+unchanged, all owned tests/builds are closed and no captures were generated.
+
 ## Typed Runtime Bridge
 
 `play_vu_runtime_bridge` now translates `VUCompiledState::Input` directly into a
@@ -26,13 +84,14 @@ including rejection of negative zero and NaN even with fast floating-point build
 The API assumes serialized ownership of the interpreter and its code/data memory;
 the state token is not a concurrent memory transaction. No execution hook is set.
 
-**Current outputs are not acceptable for game execution:** STATUS coverage remains
-`0x0e3`, MAC coverage `0x00ff`. Unknown bits are not copied from the expected replay
+**Current outputs are not acceptable for game execution:** STATUS coverage is now
+`0xcf3` as described above, MAC coverage `0x00ff`. Unknown bits are not copied from the expected replay
 or fabricated. General VI/store timing and existing arithmetic/state differences
 also remain unresolved. The strict commit path therefore rejects every current
 compiled output. Next work must address these semantics, not add another wrapper
 or relink the game merely to expose an inactive bridge.
 
+The earlier typed-bridge checkpoint below predates timed scalar status.
 Public bridge regressions cover pending values, stable flag ordering, scalar and
 branch state, immutable inputs, staged output, malformed-entry rejection and
 recovery. Both recordings verify exact typed import against the independent byte

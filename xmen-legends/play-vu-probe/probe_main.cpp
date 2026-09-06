@@ -97,6 +97,7 @@ int main(int argc, const char **argv)
     if (!pendingImportTests()) return 8;
     if (!compiledSessionTests()) return 9;
     if (!runtimeBridgeTests()) return 10;
+    if (!scalarFlagTests()) return 11;
     if (argc == 2)
     {
         try { return replayDiagnostic(argv[1]); }
