@@ -4,6 +4,83 @@ September 6, 2026. Work is local only; no pushes or PRs. Movement was confirmed
 by the user on an earlier build; attacking was not tested there. The performance
 target remains 30 FPS. No result below is an interactive handoff.
 
+## Ownership Dispatch Checkpoint (18:20 UTC)
+
+Retail ELF program-header mapping was used to read the table at `0x6fcbe0`:
+slots `0xd4/0xe4/0xe8/0x104/0x14c/0x150/0x1b4` contain
+`0x231eb0/0x232020/0x232040/0x2336f0/0x233800/0x233710/0x233ed0`.
+Disassembly confirms:
+
+- Public free `0x200f40` and aliases `0x200f90/0x201080` query owner lookup
+  `0x203f90` before calling slot `0x104`; `0x201090` follows the same owner path
+  through `0x200fe0`. Host-tracked buffers must be released before that lookup.
+- `0x2151b0` forwards a1 to the allocator's free slot, while `0x2336f0` forwards
+  it to shared slot `0x1b4` with a2 set to **-1** (`0x2336f4`).
+- Shared implementation `0x233ed0` branches on that sentinel at `0x234034..38`.
+  Its prior compatibility hook incorrectly freed any owned a1, regardless of
+  a2. Positive sizes now resize; only -1 selects its release path. The existing
+  helper's zero-size policy is retained, not claimed as exact retail semantics.
+- The unaligned public realloc entry `0x200e10` also queries native ownership;
+  it now handles known compatibility blocks like the existing aligned entries.
+
+All seven public/inner free entry points use host ownership only for exact tracked
+addresses. Unknown pointers continue to the guest implementation. Direct/indirect
+calls and tail jumps preserve their respective continuations. Two formerly
+diagnostic-only addresses (`0x2151b0`, `0x2336f0`) were removed from the optimized
+dispatcher's exclusion list because they now perform cleanup.
+
+The new dispatch regression also caught a macro-precedence bug: passing
+`virtualCall ? 5 : 4` to `GPR_U32` makes its unparenthesized register-zero test
+return zero on virtual calls. The allocator now uses `getRegU32` for that choice,
+as does the new public-free argument selection. No global macro/header rewrite.
+
+Final test image `AE058BCADED7913DC9EE78EDC9D0C9186714CCFB3530BF1E626DECEEA7198284`
+passes all **27 fresh-process checks** through `tests/test-compatibility-heap.ps1`:
+three allocator tests across normal/fast dispatch, first/best fit, and moving/
+in-place realloc, plus three existing normal-heap checks. Dispatch coverage
+includes 28 owned free branch/entry combinations, seven foreign-pointer cases,
+both allocation calling conventions, positive shared-slot resize and -1 release.
+Initial tests caught the new macro call-site error and fast-path exclusions;
+they were corrected before the final passing matrix. An initial test compilation
+also needed the existing register accessor instead of a macro with `&ctx`.
+Fixed evidence: `heap-ownership-checks.log`. Benchmark gates pass.
+
+Candidate `4B16C52B0D89740B92912F5F9527B2051537B4DA24F7EAB6A0559AB3404F7B5A`
+contains the ownership fixes, with both allocator experiments OFF by default.
+Two first-fit real-level runs (compiled VU + retry, Vulkan, heap diagnostics,
+compiled audit) reach New Game/NYC but still stop on allocation failure:
+
+| Realloc mode | Failed request | Alignment | Frontier | Tail | Free total | Largest hole | Live allocations |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Moving (default) | 298,384 | 4 | 24,997,888 | 167,936 | 253,264 | 108,912 | 60,113 |
+| In-place (opt-in) | 32,768 | 16 | 25,151,296 | 14,528 | 1,590,224 | 32,560 | 53,331 |
+
+The moving run records at least 40,961 public releases / 2,892,100 cumulative
+requested bytes; the in-place run records 36,865 / 2,591,600. These counters prove
+the new path executes. They are NOT simultaneous extra headroom or proof that
+every one of those releases previously leaked; some native paths can reach the
+already existing compatibility free hook. Neither run completes its audit or
+produces valid FPS. Nine/sixteen queued allocation failures were drained after
+intentional termination, exit -1; no guest fault or arithmetic mismatch was
+reported before the stops. Elapsed 30.91/16.09 seconds is not an FPS result.
+
+Current logs reuse `gameplay-vulkan-audit-retry-heap-audit.*` and
+`gameplay-vulkan-audit-retry-realloc-heap-audit.*`; their prior-candidate contents
+are replaced. Historical numbers below are recorded observations, not claims
+that those fixed paths still hold the historical run. No new image or input.
+Both game processes ended and startup was restored.
+
+NEXT: obtain the exact caller of the failed 32 KiB request and allocation-lifetime
+attribution at failure. Static inspection identified additional real dispatch
+bugs, but has not identified that caller. Add bounded call attribution with the
+next meaningful runtime change, rather than rotating placement policies. The
+native heap boundary remains protected, the full FPS objective is unmet, and
+there is no interactive handoff. All source changes remain local.
+
+Local PS2Recomp checkpoint: `cfaf3af`. Cleanup found no additional stale files;
+active candidate/test images and fixed evidence were retained. No owned build,
+game or test process remains running.
+
 ## Reallocation Checkpoint (18:04 UTC)
 
 Three compatibility realloc routes now use a shared owned-allocation helper.

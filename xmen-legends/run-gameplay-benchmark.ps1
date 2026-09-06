@@ -122,6 +122,8 @@ $compiledCalls = 0L
 $compiledRetryCalls = 0L
 $bestFitActive = $false
 $reallocCalls = 0L
+$publicFreeCalls = 0L
+$publicFreeBytes = 0L
 $heapFailures = 0L
 $bilinearSamples = 0L
 $preparedTextureActive = $false
@@ -175,6 +177,10 @@ try {
                 if ($line -match '^\[vu:compiled-retry\] accepted=(\d+)') { $compiledRetryCalls = [long]$Matches[1] }
                 if ($line -eq '[heap:best-fit] active=1') { $bestFitActive = $true }
                 if ($line -match '^\[heap:realloc-in-place\] accepted=(\d+)') { $reallocCalls = [long]$Matches[1] }
+                if ($line -match '^\[heap:public-free\] accepted=(\d+) bytes=(\d+)') {
+                    $publicFreeCalls = [long]$Matches[1]
+                    $publicFreeBytes = [long]$Matches[2]
+                }
                 if ($line.StartsWith('[heap:allocation-failed]')) {
                     ++$heapFailures
                     if ($HeapDiagnostics -and !$process.HasExited) {
@@ -244,6 +250,7 @@ try {
         CompiledRetry = [bool]$CompiledRetry; CompiledRetryCallsLowerBound = $compiledRetryCalls
         BestFitHeap = [bool]$BestFitHeap; BestFitActive = $bestFitActive
         InPlaceRealloc = [bool]$InPlaceRealloc; InPlaceReallocCallsLowerBound = $reallocCalls
+        PublicFreeCallsLowerBound = $publicFreeCalls; PublicFreeBytesLowerBound = $publicFreeBytes
         HeapDiagnostics = [bool]$HeapDiagnostics; HeapFailureLines = $heapFailures
         VulkanGs = [bool]$VulkanGs; VulkanActive = $vulkanActive
         VulkanPresents = $vulkanPresents; VulkanSubmits = $vulkanSubmits; VulkanNonblack = $vulkanNonblack
