@@ -4,6 +4,60 @@ September 6, 2026. Work is local only; no pushes or PRs. Movement was confirmed
 by the user on an earlier build; attacking was not tested there. The performance
 target remains 30 FPS. No result below is an interactive handoff.
 
+## Reallocation Checkpoint (18:04 UTC)
+
+Three compatibility realloc routes now use a shared owned-allocation helper.
+The inner wrappers and null realloc slot previously freed the original block
+even if allocating its replacement failed. Failure now retains that block and
+its contents. Zero-size owned realloc frees it and returns zero; foreign guest
+allocations retain their existing copy-only path and are not freed by this heap.
+
+`PS2X_GUEST_BUMP_REALLOC` enables in-place shrinking, growth within existing
+padding, and growth into an adjacent free extent. It is OFF by default. Fallback
+still allocates/copies/frees on success. No live objects are compacted, no arena
+boundary changes, and no guest call is bypassed. In-place growth clears newly
+exposed bytes; shrinking returns the unused padded tail to the coalesced free
+list. The benchmark's `-InPlaceRealloc` switch requires actual in-place execution
+evidence, not just an enabled flag.
+
+Test image `D094FC539746064CD17ABA51A8B01A139426020014C97FF388A8308BC73E3CE7`
+passes eight fresh-process runs: realloc and fragmentation tests under all four
+combinations of first/best fit and moving/in-place realloc. These cover retained
+data, cleared extension, requested size, null/zero size, adjacent extent splitting,
+out-of-memory/overflow ownership preservation and foreign-address rejection.
+Three existing normal guest-heap, memalign and allocator-stub checks also pass.
+Evidence: fixed `heap-realloc-checks.log`. Benchmark gate tests pass.
+
+Candidate `FAAD524CF88FB7917A3BA58B0C99EA41C4C658CC68A19705DE5C94709B1E6427`
+was linked in the existing slot, with the corrected New Game trigger unchanged.
+Both bounded runs enable compiled VU + retry, Vulkan, realloc, heap diagnostics
+and the compiled arithmetic audit. Both reach New Game and NYC, then stop on
+allocation failure. Neither completes the audit or provides valid FPS:
+
+| Policy with in-place realloc | First failed request | Alignment | Frontier | Tail | Free total | Largest hole | Live allocations |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| First-fit | 32,768 | 16 | 25,154,768 | 11,056 | 1,525,552 | 32,560 | 53,641 |
+| Best-fit | 32,768 | 16 | 25,153,824 | 12,000 | 1,485,872 | 32,560 | 53,543 |
+
+Each run drained 16 queued failure records after the runner requested termination.
+Exit -1 is that deliberate diagnostic stop. No guest fault or VU mismatch was
+reported before stopping; this is not a full audit pass. Elapsed times 20.04 and
+20.24 seconds are time to failure, not performance improvements. Relative to
+the previous candidates there is more fragmented free space, but different
+failure points prevent a like-for-like memory-saving claim. Neither experimental
+policy is promoted. No new image or interactive handoff was made, and startup
+was restored after both runs.
+
+Local PS2Recomp commit: `4cf8284`. All owned builds and tests ended. Cleanup
+removed one stale generated file and retained the active binaries/evidence.
+No push or PR was made.
+
+Fixed evidence: `gameplay-vulkan-audit-retry-realloc-heap-audit.*` and
+`gameplay-vulkan-audit-retry-best-fit-realloc-heap-audit.*`. Next: identify the
+ownership/call path of these 32 KiB requests and the lifetime of the live blocks;
+do not keep rotating placement policies or expand into the native custom heap.
+The remaining sections record the preceding investigations, not newer results.
+
 ## Observed Pressure
 
 Candidate `7F5AE058415EFEB2812512F708DE7B2E85F8801E9556BB06E360E6F5AA298408`

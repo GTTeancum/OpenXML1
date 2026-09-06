@@ -28,6 +28,8 @@ $CompiledVu = $false
 $CompiledRetry = $false
 $compiledRetryCalls = 0L
 $BestFitHeap = $false
+$InPlaceRealloc = $false
+$reallocCalls = 0L
 $HeapDiagnostics = $false
 $bestFitActive = $false
 $heapFailures = 0L
@@ -45,6 +47,11 @@ $vulkanPresents = 0L
 $vulkanSubmits = 0L
 $vulkanNonblack = 0L
 if (!(& $check)) { throw 'Healthy workload rejected.' }
+$InPlaceRealloc = $true
+if (& $check) { throw 'In-place realloc accepted without execution evidence.' }
+$reallocCalls = 1L
+if (!(& $check)) { throw 'Executed in-place realloc rejected.' }
+$InPlaceRealloc = $false
 $BestFitHeap = $true
 if (& $check) { throw 'Best-fit mode accepted without execution evidence.' }
 $bestFitActive = $true

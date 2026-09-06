@@ -8,6 +8,7 @@ param(
     [switch]$CompiledVu,
     [switch]$CompiledRetry,
     [switch]$BestFitHeap,
+    [switch]$InPlaceRealloc,
     [switch]$HeapDiagnostics,
     [switch]$AuditCompiledVu,
     [switch]$AuditBilinear,
@@ -65,6 +66,7 @@ if ($CompiledRetry) {
     $stem += '-retry'
 }
 if ($BestFitHeap) { $stem += '-best-fit' }
+if ($InPlaceRealloc) { $stem += '-realloc' }
 if ($HeapDiagnostics) { $stem += '-heap-audit' }
 $outLog = Join-Path $build "$stem.out.log"
 $errLog = Join-Path $build "$stem.err.log"
@@ -89,6 +91,7 @@ $start.Environment['PS2X_RUN_VSYNC_LIMIT'] = '1400'
 if ($VulkanGs) { $start.Environment['PS2X_GS_PLAY_VULKAN'] = '1' }
 if ($CompiledRetry) { $start.Environment['PS2X_VU_COMPILED_RETRY'] = '1' }
 if ($BestFitHeap) { $start.Environment['PS2X_GUEST_BUMP_BEST_FIT'] = '1' }
+if ($InPlaceRealloc) { $start.Environment['PS2X_GUEST_BUMP_REALLOC'] = '1' }
 if ($HeapDiagnostics) { $start.Environment['PS2X_GUEST_BUMP_DIAGNOSTICS'] = '1' }
 if ($AuditCompiledVu -and !$CompiledVu) { throw 'AuditCompiledVu requires CompiledVu' }
 if ($AuditPreparedTexture -and !$PreparedTexture) { throw 'AuditPreparedTexture requires PreparedTexture' }
@@ -118,6 +121,7 @@ $blockPairs = 0L
 $compiledCalls = 0L
 $compiledRetryCalls = 0L
 $bestFitActive = $false
+$reallocCalls = 0L
 $heapFailures = 0L
 $bilinearSamples = 0L
 $preparedTextureActive = $false
@@ -170,6 +174,7 @@ try {
                 if ($line -match '^\[vu:compiled\] accepted=(\d+)') { $compiledCalls = [long]$Matches[1] }
                 if ($line -match '^\[vu:compiled-retry\] accepted=(\d+)') { $compiledRetryCalls = [long]$Matches[1] }
                 if ($line -eq '[heap:best-fit] active=1') { $bestFitActive = $true }
+                if ($line -match '^\[heap:realloc-in-place\] accepted=(\d+)') { $reallocCalls = [long]$Matches[1] }
                 if ($line.StartsWith('[heap:allocation-failed]')) {
                     ++$heapFailures
                     if ($HeapDiagnostics -and !$process.HasExited) {
@@ -219,6 +224,7 @@ try {
     } else { $null }
     $completed = $process.ExitCode -eq 0 -and $guestFaultLines -eq 0 -and
         $heapFailures -eq 0 -and (!$BestFitHeap -or $bestFitActive) -and
+        (!$InPlaceRealloc -or $reallocCalls -gt 0) -and
         (!$VulkanGs -or ($vulkanActive -and $vulkanPresents -ge 1152 -and $vulkanSubmits -gt 0 -and $vulkanNonblack -gt 0)) -and
         (!$CompiledVu -or $compiledCalls -gt 0) -and
         (!$CompiledRetry -or ($CompiledVu -and $compiledRetryCalls -gt 0)) -and
@@ -237,6 +243,7 @@ try {
         CompiledVu = [bool]$CompiledVu; CompiledCallsLowerBound = $compiledCalls
         CompiledRetry = [bool]$CompiledRetry; CompiledRetryCallsLowerBound = $compiledRetryCalls
         BestFitHeap = [bool]$BestFitHeap; BestFitActive = $bestFitActive
+        InPlaceRealloc = [bool]$InPlaceRealloc; InPlaceReallocCallsLowerBound = $reallocCalls
         HeapDiagnostics = [bool]$HeapDiagnostics; HeapFailureLines = $heapFailures
         VulkanGs = [bool]$VulkanGs; VulkanActive = $vulkanActive
         VulkanPresents = $vulkanPresents; VulkanSubmits = $vulkanSubmits; VulkanNonblack = $vulkanNonblack
