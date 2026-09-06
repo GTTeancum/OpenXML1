@@ -1,0 +1,112 @@
+diff --git a/Source/MIPS.h b/Source/MIPS.h
+index fc28a8f..cc54263 100644
+--- a/Source/MIPS.h
++++ b/Source/MIPS.h
+@@ -172,6 +172,8 @@ public:
+ 	void** m_pageLookup = nullptr;
+ 
+ 	std::function<void(CMIPS*)> m_emptyBlockHandler;
++	// Install before compiling VU blocks; observers must not change guest state.
++	std::function<void(CMIPS*, uint32, uint32, uint32)> m_vuMemoryObserver;
+ 
+ 	CMIPSArchitecture* m_pArch = nullptr;
+ 	CMIPSCoprocessor* m_pCOP[4];
+diff --git a/Source/ee/VuBasicBlock.cpp b/Source/ee/VuBasicBlock.cpp
+index a1ca3ca..c18f02f 100644
+--- a/Source/ee/VuBasicBlock.cpp
++++ b/Source/ee/VuBasicBlock.cpp
+@@ -3,6 +3,26 @@
+ #include "offsetof_def.h"
+ #include "MemoryUtils.h"
+ #include "Vpu.h"
++#include <cstring>
++
++namespace
++{
++void ObserveVuMemory(CMIPS* context, uint32 pc, uint32 cycle, uint32 phase)
++{
++	if(context->m_vuMemoryObserver) context->m_vuMemoryObserver(context, pc, cycle, phase);
++}
++
++void EmitVuMemoryObserver(CMipsJitter* jitter, uint32 pc, uint32 relativeCycle, uint32 phase)
++{
++	jitter->PushCtx();
++	jitter->PushCst(pc);
++	jitter->PushRel(offsetof(CMIPS, m_State.pipeTime));
++	jitter->PushCst(relativeCycle);
++	jitter->Add();
++	jitter->PushCst(phase);
++	jitter->Call(reinterpret_cast<void*>(&ObserveVuMemory), 4, Jitter::CJitter::RETURN_VALUE_NONE);
++}
++}
+ 
+ CVuBasicBlock::CVuBasicBlock(CMIPS& context, uint32 begin, uint32 end, BLOCK_CATEGORY category)
+     : CBasicBlock(context, begin, end, category)
+@@ -72,6 +92,16 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+ 		assert(hiOps.readP == false);
+ 
+ 		bool loIsXgKick = (opcodeLo & ~(0x1F << 11)) == 0x800006FC;
++		bool observeStore = false;
++		const bool observeLower = m_context.m_vuMemoryObserver && !(opcodeHi & VUShared::VU_UPPEROP_BIT_I);
++		if(observeLower)
++		{
++			char mnemonic[32]{};
++			arch->GetInstructionMnemonic(&m_context, addressLo, opcodeLo, mnemonic, sizeof(mnemonic));
++			observeStore = !std::strcmp(mnemonic, "SQ") || !std::strcmp(mnemonic, "SQI") ||
++			               !std::strcmp(mnemonic, "SQD") || !std::strcmp(mnemonic, "ISW") ||
++			               !std::strcmp(mnemonic, "ISWR");
++		}
+ 
+ 		if(extraPipeTimeIndex < 3)
+ 		{
+@@ -251,7 +281,10 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+ 			clearPendingXgKick();
+ 		}
+ 
++		if(observeStore) EmitVuMemoryObserver(jitter, addressLo, relativePipeTime, 0);
+ 		arch->CompileInstruction(addressLo, jitter, &m_context, addressLo - m_begin);
++		if(observeStore) EmitVuMemoryObserver(jitter, addressLo, relativePipeTime + 1, 1);
++		if(observeLower && loIsXgKick) EmitVuMemoryObserver(jitter, addressLo, relativePipeTime, 2);
+ 
+ 		if(address == integerBranchDelayInfo.useRegAddress)
+ 		{
+@@ -335,6 +368,8 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+ 				//We need to compile the instruction at the branch target because it will be executed
+ 				//before the branch is taken
+ 				uint32 branchTgtAddress = branchOpcodeAddr + VUShared::GetBranch(branchOpcodeLo & 0x7FF) + 8;
++				if(m_context.m_vuMemoryObserver)
++					throw std::runtime_error("VU memory observer does not support nested branch delay slots");
+ 				arch->CompileInstruction(branchTgtAddress, jitter, &m_context, address - m_begin);
+ 			}
+ 		}
+@@ -357,6 +392,8 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+ 					//If we haven't taken the jump, execute the instruction after the delay slot
+ 					uint32 nextOpcodeAddr = address + 8;
+ 					uint32 nextOpcodeLo = m_context.m_pMemoryMap->GetInstruction(nextOpcodeAddr);
++					if(m_context.m_vuMemoryObserver)
++						throw std::runtime_error("VU memory observer does not support conditional E-bit delay slots");
+ 					arch->CompileInstruction(nextOpcodeAddr, jitter, &m_context, nextOpcodeAddr - m_begin);
+ 				}
+ 				jitter->EndIf();
+@@ -382,6 +419,8 @@ void CVuBasicBlock::CompileRange(CMipsJitter* jitter)
+ 		jitter->PullRel(offsetof(CMIPS, m_State.pipeTime));
+ 	}
+ 
++	if(m_context.m_vuMemoryObserver) EmitVuMemoryObserver(jitter, m_end - 4, 0, 3);
++
+ 	for(int32 i = extraPipeTimeIndex; i < 3; i++)
+ 	{
+ 		//Clear unused writes
+diff --git a/Source/ee/VuExecutor.cpp b/Source/ee/VuExecutor.cpp
+index 72e80fc..9c484c6 100644
+--- a/Source/ee/VuExecutor.cpp
++++ b/Source/ee/VuExecutor.cpp
+@@ -60,7 +60,7 @@ BasicBlockPtr CVuExecutor::BlockFactory(CMIPS& context, uint32 begin, uint32 end
+ 			}
+ 		}
+ 		//Check if we have a block that has the same contents but not the same range. Reuse the code of that block if that's the case.
+-		if(beginBlockIterator != endBlockIterator)
++		if(beginBlockIterator != endBlockIterator && !m_context.m_vuMemoryObserver)
+ 		{
+ 			auto result = std::make_shared<CVuBasicBlock>(context, begin, end, m_blockCategory);
+ 			result->CopyFunctionFrom(beginBlockIterator->second);

@@ -30,6 +30,9 @@ try {
     if (!$output.Contains('[play-vu:synthetic-abi] xmm-corrupt-mask=0x0 output-errors=0')) {
         throw 'Public synthetic Windows register-preservation regression did not pass.'
     }
+    if (([regex]::Matches($output, '\[play-vu:transfer-test\] mode=\d+ passed=1')).Count -ne 8) {
+        throw 'Compiled transfer-timing regressions did not pass.'
+    }
     if ($ReplayPath) {
         if (!$output.Contains('[play-vu:replay-summary]') -or
             !$output.Contains('repeatable=1 compatibility-accepted=0')) {

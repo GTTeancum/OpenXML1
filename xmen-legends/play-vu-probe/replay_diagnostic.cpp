@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include "replay_diagnostic.h"
+#include "transfer_timeline.h"
 #include "TestVm.h"
 #include <algorithm>
 #include <array>
@@ -52,7 +53,8 @@ uint64_t at(const Bytes &bytes, size_t offset, size_t count = 4)
 bool quiescent(const Bytes &state)
 {
     if (state.size() != 4682 || state[0] != 1 || state[2271] != 0 || state[647] != 0 ||
-        state[633] != 0 || state[634] != 0 || state[637] != 0 || state[638] != 0 ||
+        state[633] != 0 || state[634] != 0 || state[635] != 0 || state[636] != 0 ||
+        state[637] != 0 || state[638] != 0 ||
         state[4678] != 0 || state[4679] != 1 ||
         state[4680] != 0 || state[4681] != 0)
         return false;
@@ -171,6 +173,19 @@ int replayDiagnostic(const char *path)
         }
         std::vector<Bytes> actualPackets, expectedPackets;
         std::string callbackError;
+        TransferTimeline timeline(vm->m_vuMem);
+        std::string timelineError;
+        vm->m_cpu.m_vuMemoryObserver = [&](CMIPS *cpu, uint32 pc, uint32 cycle, uint32 phase) {
+            if (!timelineError.empty()) return;
+            try {
+                ++timeline.events;
+                if (phase == 2) timeline.kick(cpu->m_State.xgkickAddress, cycle);
+                else timeline.advance(cycle);
+            } catch (const std::exception &e) {
+                timelineError = std::string(e.what()) + " pc=" + std::to_string(pc) +
+                    " cycle=" + std::to_string(cycle) + " phase=" + std::to_string(phase);
+            }
+        };
         vm->m_cpu.m_pMemoryMap->InsertReadMap(0x8400u, 0x8423u,
             [&](uint32_t address, uint32_t) -> uint32_t {
                 if (address == 0x8400u) return static_cast<uint32_t>(at(before, 639));
@@ -186,9 +201,13 @@ int replayDiagnostic(const char *path)
                 return 0u;
             }, 1u);
         Reader gifs{expectedGifs};
+        std::vector<uint64_t> expectedCompletionCycles;
         while (gifs.offset < expectedGifs.size())
         {
-            gifs.integer(8); // Timing is explicitly not validated by this diagnostic.
+            const auto cycle = gifs.integer(8);
+            const auto initialCycle = at(before, 4640, 8);
+            if (cycle < initialCycle) throw std::runtime_error("Invalid GIF completion time");
+            expectedCompletionCycles.push_back(cycle - initialCycle);
             expectedPackets.push_back(gifs.blob());
         }
         std::printf("[play-vu:replay] case=%u start=0x%x unsupported-status=0x%x diagnostic-only=1\n",
@@ -206,9 +225,13 @@ int replayDiagnostic(const char *path)
                 corruptMask |= 1u << reg;
         std::printf("[play-vu:windows-abi] xmm6-through-xmm15-corrupt-mask=0x%x\n", corruptMask);
         if (corruptMask) throw std::runtime_error("JIT clobbered Windows nonvolatile SIMD registers");
+        if (!timelineError.empty()) throw std::runtime_error(timelineError);
+        timeline.finish(s.pipeTime);
         const MIPSSTATE coldFinal = s;
         const Bytes coldData(vm->m_vuMem, vm->m_vuMem + 16384);
         const auto coldPackets = actualPackets;
+        const auto coldStreamingPackets = timeline.packets;
+        const auto coldCompletionCycles = timeline.completionCycles;
         if (!callbackError.empty()) throw std::runtime_error(callbackError);
         if (s.nHasException != MIPS_EXCEPTION_VU_EBIT)
             throw std::runtime_error("Diagnostic did not terminate at E bit");
@@ -221,18 +244,43 @@ int replayDiagnostic(const char *path)
             std::memcpy(vm->m_vuMem, data.data(), data.size());
             actualPackets.clear();
             callbackError.clear();
+            timeline.reset();
+            timelineError.clear();
             const auto start = std::chrono::steady_clock::now();
             vm->m_executor.Execute(2 * 1048576);
+            if (!timelineError.empty()) throw std::runtime_error(timelineError);
+            timeline.finish(s.pipeTime);
             elapsedNs += std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now() - start).count();
             if (!callbackError.empty() || actualPackets != coldPackets ||
+                timeline.packets != coldStreamingPackets || timeline.completionCycles != coldCompletionCycles ||
                 std::memcmp(vm->m_vuMem, coldData.data(), coldData.size()) ||
                 std::memcmp(&s, &coldFinal, sizeof(s)))
                 throw std::runtime_error("Warm execution diverged from cold diagnostic");
         }
         std::printf("[play-vu:diagnostic-timing] case=%u repeats=%u execute-ms=%.6f "
-            "per-run-us=%.3f repeatable=1 compatibility-accepted=0\n",
+            "per-run-us=%.3f repeatable=1 compatibility-accepted=0 stream-observer=1\n",
             current, repeats, elapsedNs / 1.0e6, elapsedNs / (1.0e3 * repeats));
+        unsigned streamingBytes = 0, completionDiffs = 0;
+        for (size_t packet = 0; packet < std::min(timeline.packets.size(), expectedPackets.size()); ++packet)
+        {
+            const auto &actual = timeline.packets[packet];
+            const auto &expected = expectedPackets[packet];
+            for (size_t offset = 0; offset < std::min(actual.size(), expected.size()); ++offset)
+                streamingBytes += actual[offset] != expected[offset];
+            if (timeline.completionCycles[packet] != expectedCompletionCycles[packet])
+            {
+                ++completionDiffs;
+                std::printf("[play-vu:transfer-cycle-diff] packet=%zu actual=%llu expected=%llu\n", packet,
+                    static_cast<unsigned long long>(timeline.completionCycles[packet]),
+                    static_cast<unsigned long long>(expectedCompletionCycles[packet]));
+            }
+        }
+        std::printf("[play-vu:transfer-result] packets=%zu/%zu bytes-equal=%u shared-byte-diffs=%u "
+            "cycles-equal=%u completion-diffs=%u finish=%llu events=%u\n",
+            timeline.packets.size(), expectedPackets.size(), unsigned(timeline.packets == expectedPackets),
+            streamingBytes, unsigned(timeline.completionCycles == expectedCompletionCycles), completionDiffs,
+            static_cast<unsigned long long>(timeline.time), timeline.events);
         unsigned auxiliaryDiff = 0;
         const auto compareWord = [&](const char *name, uint32_t actual, size_t offset) {
             const auto expected = static_cast<uint32_t>(at(after, offset));
@@ -305,7 +353,7 @@ int replayDiagnostic(const char *path)
         }
         std::printf("[play-vu:diff-summary] memory-words=%u packet-bytes=%u\n", memoryWords, packetBytes);
         std::printf("[play-vu:replay-result] case=%u memory-byte-diffs=%u vf-word-diffs=%u vi-diffs=%u "
-            "packets=%zu/%zu packet-bytes-equal=%u cycles-unverified=1 pipe=%u pc=0x%x exception=0x%x error=%s\n",
+            "packets=%zu/%zu packet-bytes-equal=%u slice-timing-unverified=1 pipe=%u pc=0x%x exception=0x%x error=%s\n",
             current, memoryDiff, vfDiff, viDiff, actualPackets.size(), expectedPackets.size(),
             static_cast<unsigned>(actualPackets == expectedPackets), s.pipeTime, s.nPC, s.nHasException,
             callbackError.c_str());

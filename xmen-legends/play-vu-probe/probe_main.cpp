@@ -34,6 +34,7 @@
 
 extern "C" void playVuCheckRegisters(void (*function)(void *), void *context,
     const uint32_t *sentinel, uint32_t *actual);
+bool runTransferTests();
 
 static bool checkWindowsAbi()
 {
@@ -90,6 +91,7 @@ int main(int argc, const char **argv)
     std::fesetround(FE_TOWARDZERO);
     FpUtils::SetDenormalHandlingMode();
     if (!checkWindowsAbi()) return 6;
+    if (!runTransferTests()) return 7;
     if (argc == 2)
     {
         try { return replayDiagnostic(argv[1]); }
