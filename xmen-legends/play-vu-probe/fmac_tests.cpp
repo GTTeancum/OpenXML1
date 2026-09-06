@@ -20,7 +20,7 @@ static bool fmacVectorParity()
     CMIPS scalar{MEMORYMAP_ENDIAN_LSBF}, vector{MEMORYMAP_ENDIAN_LSBF};
     unsigned cases = 0;
     for (unsigned model = 0; model < 2; ++model)
-    for (unsigned sample = 0; sample < 17; ++sample)
+    for (unsigned sample = 0; sample < 65; ++sample)
     for (unsigned accumulator = 0; accumulator < 2; ++accumulator)
     for (unsigned function = 0; function < 0x30; ++function)
     for (unsigned mask = 0; mask < 16; ++mask)
@@ -32,7 +32,16 @@ static bool fmacVectorParity()
         const auto b = model ? selectFmacRuntimeFused(opcode) : selectFmac(opcode);
         if (bool(a) != bool(b)) return false;
         if (!a) continue;
-        const auto word = [&] { return sample ? next() : edges[next() % std::size(edges)]; };
+        const auto word = [&] {
+            if (sample >= 32) return (next() & 0x807fffffu) | ((95u + next() % 65u) << 23);
+            if (sample >= 17)
+            {
+                constexpr uint32 bounds[] = {0, 0x2f7fffff, 0x2f800000, 0x2f800001,
+                    0x4f7fffff, 0x4f800000, 0x4f800001, 0x3f800000, 0x3f800001, 0x3f7fffff};
+                return bounds[next() % std::size(bounds)] | (next() & 0x80000000u);
+            }
+            return sample ? next() : edges[next() % std::size(edges)];
+        };
         MIPSSTATE initial{};
         for (auto &reg : initial.nCOP2) for (auto &value : reg.nV) value = word();
         for (auto &value : initial.nCOP2A.nV) value = word();
@@ -49,7 +58,7 @@ static bool fmacVectorParity()
         }
         ++cases;
     }
-    std::printf("[play-vu:fmac-parity] passed=1 cases=%u avx2=%u fma=%u models=2 masks=1 aliases=1 vf0=1\n",
+    std::printf("[play-vu:fmac-parity] passed=1 cases=%u avx2=%u fma=%u models=2 masks=1 aliases=1 vf0=1 range-boundaries=1\n",
         cases,unsigned(fmacAvx2Available()),unsigned(fmacFmaAvailable()));
     return true;
 }

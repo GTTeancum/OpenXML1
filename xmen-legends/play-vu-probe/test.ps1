@@ -77,7 +77,8 @@ try {
         throw 'Independent MAC/STATUS regressions did not pass.'
     }
     if (([regex]::Matches($output, '\[play-vu:fmac-range\] case=\d+ passed=1')).Count -ne 6 -or
-        !$output.Contains('[play-vu:fmac-parity] passed=1 cases=39168') -or
+        !$output.Contains('[play-vu:fmac-parity] passed=1 cases=149760') -or
+        !$output.Contains('models=2 masks=1 aliases=1 vf0=1 range-boundaries=1') -or
         !$output.Contains('[play-vu:fmac-models] passed=1 cases=128 separate-default=1 fused-runtime=1 immutable-session=1')) {
         throw 'FMAC range/result regressions did not pass.'
     }

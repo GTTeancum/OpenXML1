@@ -5,7 +5,66 @@ VU test cases from [Play!](https://github.com/jpd002/Play-), plus isolated contr
 tests and an optional private VU-recording diagnostic. A typed bridge uses the
 PS2Recomp state header. The standalone probe does not read the ISO or create a
 game window; the optional runtime extension below now connects it to the game.
-Bounded first-level timing is recorded below; there is no interactive handoff yet.
+Bounded first-level timing is recorded below. The user subsequently confirmed
+movement on the performance candidate, but rejected its roughly 5 FPS; combat
+was not tested in that session. See the current TODO before launching anything.
+
+## Arithmetic Cost Checkpoint
+
+September 6 offline investigation: a matched-map sample of test image
+`63AA8AB341D24E9F36A2FCDF1ADFEE0E74D034AA4253A18D6CA71C66DE0EBD5A`
+on the original recording covered 145 warm execution samples, 26 outside the
+image (17 unresolved), zero sampling failures/drops. Individual compiled FMAC
+helpers, interpreter execution and memory-observation callbacks all appeared.
+This is directional evidence, not an exact whole-game cost breakdown. The map
+has since been rebuilt; do not attribute that old log through the current map.
+
+A guarded helper experiment avoided widened flag arithmetic for bounded normal
+operands, with the exact path retained for edge cases. It matched 149,760
+scalar/vector cases and both full private replay sets. Its isolated arithmetic
+loop improved 67.010 -> 52.750 ms with identical checksum `01ad7e00`, but this
+did not translate into useful replay gains. The first version was 8.5% slower
+on the original recording and 1.0% slower on spread. Allowing exact zero results
+for the fused model reduced that overhead, but five alternating 1,024-repeat
+pairs still gave only these noisy median changes:
+
+| Recording | Original helper | Guarded helper | Reduction |
+| --- | ---: | ---: | ---: |
+| Original | 687.305 ms | 670.326 ms | 2.47% |
+| Spread | 466.364 ms | 455.285 ms | 2.38% |
+
+The final experimental test image was
+`18FA6AF55FB1FE41C77A4BDC5861B51D34CF1B233B9ADBEB41867FF5FF1D2754`.
+Digests remained `75d4ff1e67bbbc4c` and `6c13c7a10069aeef`. Fixed
+`out/xmen-final3-build/vu-bounded-comparison.log` retains that comparison.
+The experiment, its selector APIs and environment switch were removed. Only
+the expanded scalar/vector boundary tests remain. No new game was linked,
+launched, packaged or offered for user testing; no FPS gain is claimed.
+
+Next investigate avoiding the per-instruction native helper calls themselves.
+The existing CodeGen API has packed add/subtract/multiply operations; the
+current multiply-add path uses separate `MD_MulS`/`MD_AddS`, not fused arithmetic.
+Do not silently replace the runtime's fused model with that path. A direct
+emitter must preserve masks, source aliases, result/status rounding, queued
+flags and exceptional-value behavior, with full replay/audit validation.
+This is the next experiment, not an implemented or verified speedup.
+
+The restored standalone image
+`3BCC93677C79C609E444A4DE5718B10458AC23D7FD9E9C507D7CC99A05A69164`
+passes the expanded 149,760 cases and the existing 21 upstream tests. The
+wrapper's expected case count was updated; an initial harness failure was its
+old hardcoded count, not an arithmetic failure. All checkpoints remain local.
+
+Restored runtime test image
+`07F696C3ABBCDCD8B6AA4E3A1A82955C5E8C22BD515BC53EA9F7B3F60B1269BF`
+passes 161/161 VU tests, both original records at full/1/8/16/64-cycle budgets,
+and all four saved failure records. Hybrid full-drain execution accepts 14/8
+original/spread cases; the short budgets retain the original engine. The EFU
+record also stays on the reference path; entry-wait/Q-call/FTOI records compile.
+The first full-suite launch used the executable directory and could not find
+`instructions.h`; rerunning from the PS2Recomp source root passes. Fixed
+`vu-restored-checks.log` holds that final successful run. The game candidate
+remains `23A73821...`; no new gameplay or FPS validation occurred here.
 
 ## Bulk Transfer Checkpoint
 
