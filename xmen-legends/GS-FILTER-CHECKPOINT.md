@@ -1,5 +1,36 @@
 # CPU Texture Checkpoints
 
+## Gameplay Verification
+
+September 6 follow-up, local PS2Recomp `4a4ad83`. Candidate SHA-256:
+`6020A9605E6C961CEF23FA88580E0AD3E2D236F08DB8D18380BB64BD17EFF3C0`.
+The runner now exposes `-PreparedTexture` and `-AuditPreparedTexture`, requires
+actual execution evidence, rejects audit failures, and excludes audits from FPS.
+The focused benchmark gate tests pass.
+
+- Combined VU/texture audit: at least 237,569 compiled calls and 751,828,993
+  texture samples matched, with no logged guest faults. FPS deliberately null.
+- Same executable, compiled VU enabled, sampler ON: 128 frames in 24.5484147
+  seconds, **5.214186 FPS**. Sampler OFF: 128 in 29.4933133 seconds,
+  **4.339967 FPS**. This is one shared-host pair, approximately 20.14% faster,
+  not a sustained guarantee or comparison against older builds' measurements.
+- All three runs reached New Game/NYC, both measurement markers and vsync 1400,
+  exited 0 and restored startup. Input was disabled for these automated runs.
+- Test image `841BC502...` again passes 90/91 GS tests both OFF and audited,
+  with only the historical CSR/IMR failure and unchanged palette/depth hashes.
+
+Fixed evidence slots in `PS2Recomp/out/xmen-final3-build`:
+`gameplay-texture-audit`, `gameplay-texture-rate`, `gameplay-compiled-rate`
+(`.json`, `.out.log`, `.err.log`). Primary and staged executables are unchanged.
+No graphics-fidelity improvement or new manual-control test is claimed.
+Movement is user-confirmed on the earlier `23A73821...` build; attacking remains
+untested there. Sustained 30 FPS remains unmet. No interactive handoff was made.
+
+The isolated GPU capability query passes the device features requested by the
+pinned Play! Vulkan renderer; this is not a rendering test. Next is an offscreen
+render/readback proof, then explicit VRAM/CLUT/transfer integration design.
+See `play-gs-probe/README.md`. All checkpoints remain local, with no pushes/PRs.
+
 ## Prepared Indexed Sampler
 
 September 6 local PS2Recomp checkpoint `8308463`. This is an opt-in performance
@@ -14,8 +45,7 @@ Pixel tracing keeps the original path.
 `PS2X_GS_VERIFY_TEXTURE` compares every prepared sample against the original
 sampler before publication, throwing on mismatch. It must be combined with
 the prepared-texture switch. Do not measure FPS with this audit enabled.
-The game benchmark runner does not yet expose or validate these new switches;
-add its audit-evidence/FPS-exclusion gates before using a new combined game build.
+The original offline checkpoint below predates the gameplay verification above.
 
 Final test-only image, after locking the reference checksums:
 `0E4A7F99CAB0C2881F34723DD8BF405B819B4ADC58D3CACF3B940E9152F2BE05`.

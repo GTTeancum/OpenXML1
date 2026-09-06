@@ -1,0 +1,5 @@
+set(VULKAN_HEADERS_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../.tools/Vulkan-Headers" CACHE PATH "Pinned Vulkan headers")
+require_revision("${VULKAN_HEADERS_ROOT}" ee2ec5fd83dafce291024683b50dc89219333076)
+add_executable(play_gs_capabilities gpu_capabilities.cpp)
+target_include_directories(play_gs_capabilities PRIVATE "${VULKAN_HEADERS_ROOT}/include")
+target_compile_definitions(play_gs_capabilities PRIVATE NOMINMAX VK_NO_PROTOTYPES)

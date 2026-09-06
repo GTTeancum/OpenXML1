@@ -27,6 +27,10 @@ $guestFaultLines = 0
 $CompiledVu = $false
 $AuditCompiledVu = $false
 $AuditBilinear = $false
+$PreparedTexture = $false
+$AuditPreparedTexture = $false
+$preparedTextureActive = $false
+$preparedTextureSamples = 0L
 $bilinearSamples = 0L
 $compiledCalls = 0L
 if (!(& $check)) { throw 'Healthy workload rejected.' }
@@ -46,6 +50,20 @@ $AuditCompiledVu = $false
 if (& $check) { throw 'Filter-only audit was accepted as an FPS measurement.' }
 $AuditBilinear = $false
 $bilinearSamples = 0L
+$PreparedTexture = $true
+if (& $completeCheck) { throw 'Prepared sampler accepted without execution evidence.' }
+$preparedTextureActive = $true
+if (!(& $check)) { throw 'Executed prepared sampler was rejected.' }
+$AuditPreparedTexture = $true
+if (& $completeCheck) { throw 'Prepared sampler audit accepted without compared sample evidence.' }
+$preparedTextureSamples = 1L
+if (!(& $completeCheck)) { throw 'Successful sampler audit rejected.' }
+if (& $check) { throw 'Sampler double-execution was accepted as FPS.' }
+$PreparedTexture = $false
+if (& $completeCheck) { throw 'Sampler audit accepted without enabled sampler.' }
+$AuditPreparedTexture = $false
+$preparedTextureActive = $false
+$preparedTextureSamples = 0L
 $CompiledVu = $false
 $compiledCalls = 0L
 $guestFaultLines = 1
@@ -77,6 +95,7 @@ foreach ($line in @(
     '[guest-branch:missing-target] kind=DirectJump',
     '[vu:compiled-audit-failed] accepted=100 reason=state differs',
     '[gs:bilinear-audit-failed] actual=00000001 expected=00000000',
+    '[gs:prepared-texture-audit-failed] actual=00000001 expected=00000000 psm=19',
     'Error during program execution: test failure'
 )) {
     if (!(& $recognize)) { throw "Guest fault not recognized: $line" }

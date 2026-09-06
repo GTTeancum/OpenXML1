@@ -140,7 +140,7 @@ $preservedProbePattern = if ($preservedProbeNumbers) {
 }
 $preservedFrames = '^gs-present-(1420|1450|1500)\.(ppm|png)$|^gs-present-vsync-'
 $staleMediaCutoff = [DateTime]::UtcNow.AddHours(-12)
-$generatedMediaExtensions = @('.bmp', '.jpeg', '.jpg', '.mp4', '.png', '.ppm', '.raw', '.wav')
+$generatedMediaExtensions = @('.bmp', '.jpeg', '.jpg', '.mp4', '.png', '.ppm', '.pgm', '.raw', '.wav')
 $obsoleteFiles = @()
 $obsoleteFiles += Get-ChildItem -LiteralPath $xmenRoot -File -Force |
     Where-Object {

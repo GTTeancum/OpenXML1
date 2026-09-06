@@ -8,6 +8,8 @@ param(
     [switch]$CompiledVu,
     [switch]$AuditCompiledVu,
     [switch]$AuditBilinear,
+    [switch]$PreparedTexture,
+    [switch]$AuditPreparedTexture,
     [ValidateRange(30, 1800)]
     [int]$TimeoutSeconds = 600
 )
@@ -47,7 +49,7 @@ try {
     }
 } finally { $archive.Dispose() }
 
-$stem = if ($AuditCompiledVu) { 'gameplay-compiled-audit' } elseif ($AuditBilinear) { 'gameplay-filter-audit' } elseif ($PhaseProfile -or $CoverageProfile -or $CpuRasterProfile) { 'gameplay-phase' } elseif ($CompiledVu) { 'gameplay-compiled-rate' } else { 'gameplay-rate' }
+$stem = if ($AuditPreparedTexture) { 'gameplay-texture-audit' } elseif ($AuditCompiledVu) { 'gameplay-compiled-audit' } elseif ($AuditBilinear) { 'gameplay-filter-audit' } elseif ($PhaseProfile -or $CoverageProfile -or $CpuRasterProfile) { 'gameplay-phase' } elseif ($PreparedTexture) { 'gameplay-texture-rate' } elseif ($CompiledVu) { 'gameplay-compiled-rate' } else { 'gameplay-rate' }
 $outLog = Join-Path $build "$stem.out.log"
 $errLog = Join-Path $build "$stem.err.log"
 $start = [Diagnostics.ProcessStartInfo]::new($exe)
@@ -69,6 +71,9 @@ foreach ($key in @('PS2X_DISABLE_HOST_INPUT', 'PS2X_XMEN_HOST_CLOCK',
 }
 $start.Environment['PS2X_RUN_VSYNC_LIMIT'] = '1400'
 if ($AuditCompiledVu -and !$CompiledVu) { throw 'AuditCompiledVu requires CompiledVu' }
+if ($AuditPreparedTexture -and !$PreparedTexture) { throw 'AuditPreparedTexture requires PreparedTexture' }
+if ($PreparedTexture) { $start.Environment['PS2X_GS_PREPARED_TEXTURE'] = '1' }
+if ($AuditPreparedTexture) { $start.Environment['PS2X_GS_VERIFY_TEXTURE'] = '1' }
 if ($CompiledVu) {
     $start.Environment['PS2X_VU_COMPILED'] = '1'
     $start.Environment['PS2X_VU_COMPILED_STATS'] = '1'
@@ -92,6 +97,8 @@ $markers = @{}
 $blockPairs = 0L
 $compiledCalls = 0L
 $bilinearSamples = 0L
+$preparedTextureActive = $false
+$preparedTextureSamples = 0L
 $reachedLimit = $false
 $newGameHandler = $false
 $levelPackage = $false
@@ -135,14 +142,17 @@ try {
                 if ($line -match '^\[vu:blocks\] stopped .* pairs=(\d+)') { $blockPairs = [long]$Matches[1] }
                 if ($line -match '^\[vu:compiled\] accepted=(\d+)') { $compiledCalls = [long]$Matches[1] }
                 if ($line -match '^\[gs:bilinear-audit\] samples=(\d+) mismatches=0') { $bilinearSamples = [long]$Matches[1] }
+                if ($line -eq '[gs:prepared-texture] active=1') { $preparedTextureActive = $true }
+                if ($line -match '^\[gs:prepared-texture-audit\] samples=(\d+) mismatches=0') { $preparedTextureSamples = [long]$Matches[1] }
                 if ($line -match '^\[xmen-new-?game-handler\]') { $newGameHandler = $true }
                 if ($line.Contains('path="maps/nyc/alison/nyc1_1_1.igb"')) { $levelPackage = $true }
-                if ($line -match '^\[(?:ee-thread:missing-pc|guest-branch:missing-target|vu:compiled-audit-failed|gs:bilinear-audit-failed)\]|^Error during program execution:') {
+                if ($line -match '^\[(?:ee-thread:missing-pc|guest-branch:missing-target|vu:compiled-audit-failed|gs:bilinear-audit-failed|gs:prepared-texture-audit-failed)\]|^Error during program execution:') {
                     ++$guestFaultLines
                     if ($null -eq $firstGuestFault) {
                         $firstGuestFault = $line.Substring(0, [Math]::Min(1024, $line.Length))
                     }
                     if ((($AuditCompiledVu -and $line.StartsWith('[vu:compiled-audit-failed]')) -or
+                        ($AuditPreparedTexture -and $line.StartsWith('[gs:prepared-texture-audit-failed]')) -or
                         ($AuditBilinear -and $line.StartsWith('[gs:bilinear-audit-failed]'))) -and !$process.HasExited) {
                         try { $process.Kill() }
                         catch [InvalidOperationException] { if (!$process.HasExited) { throw } }
@@ -168,10 +178,12 @@ try {
     $completed = $process.ExitCode -eq 0 -and $guestFaultLines -eq 0 -and
         (!$CompiledVu -or $compiledCalls -gt 0) -and
         (!$AuditBilinear -or $bilinearSamples -gt 0) -and
+        (!$PreparedTexture -or $preparedTextureActive) -and
+        (!$AuditPreparedTexture -or ($PreparedTexture -and $preparedTextureSamples -gt 0)) -and
         $reachedLimit -and $blockPairs -gt 0 -and
         $newGameHandler -and $levelPackage -and
         $markers.ContainsKey('1152') -and $markers.ContainsKey('1280')
-    $verified = $completed -and !$AuditCompiledVu -and !$AuditBilinear
+    $verified = $completed -and !$AuditCompiledVu -and !$AuditBilinear -and !$AuditPreparedTexture
     $report = [ordered]@{
         RecordedAtUtc = [DateTime]::UtcNow.ToString('o')
         Executable = $exe; Sha256 = $identity; PhaseProfile = [bool]$PhaseProfile
@@ -180,7 +192,9 @@ try {
         CompiledVu = [bool]$CompiledVu; CompiledCallsLowerBound = $compiledCalls
         AuditCompiledVu = [bool]$AuditCompiledVu
         AuditBilinear = [bool]$AuditBilinear; BilinearSamplesLowerBound = $bilinearSamples
-        AuditVerified = [bool]($completed -and ($AuditCompiledVu -or $AuditBilinear))
+        PreparedTexture = [bool]$PreparedTexture; PreparedTextureActive = $preparedTextureActive
+        AuditPreparedTexture = [bool]$AuditPreparedTexture; PreparedTextureSamplesLowerBound = $preparedTextureSamples
+        AuditVerified = [bool]($completed -and ($AuditCompiledVu -or $AuditBilinear -or $AuditPreparedTexture))
         Coverage = $coverage
         StartupMode = 'TitleGameplayFirst'; HostInput = $false
         ExitCode = $process.ExitCode; ReachedLimit = $reachedLimit; BlockPairs = $blockPairs
