@@ -11,6 +11,15 @@ was not tested in that session. See the current TODO before launching anything.
 
 ## Retained Block Cache
 
+Current bottleneck (September 6): the bounded budget profile measures 94.128 s
+in 12.6 million short VU1 slices, versus 36.660 s long fallback and 41.105 s
+successful compiled runs (inclusive times). The compiled drain path excludes
+budgets through 64 cycles. Extending exact short-slice acceleration is now the
+priority; increasing the VIF service budget would change program behavior.
+`run-gameplay-benchmark.ps1 -BudgetProfile` reports these categories and bounded
+hotspots; `-BridgeProfile` reports the seven existing conversion/execution stages.
+Both are explicitly excluded from FPS results. No new playable-build claim.
+
 `PS2X_VU_RETAIN_BLOCK_CACHE=1` opts into content-addressed compiled block reuse
 across microcode changes and unsupported EFU fallback. Active links are removed
 before a new program is installed. The default still discards cached programs.

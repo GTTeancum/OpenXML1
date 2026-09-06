@@ -28,6 +28,10 @@ $CompiledVu = $false
 $CompiledRetry = $false
 $RetainVuCache = $false
 $cacheHits = 0L
+$BridgeProfile = $false
+$bridgeStages = @{}
+$BudgetProfile = $false
+$budgetStages = @{}
 $compiledRetryCalls = 0L
 $BestFitHeap = $false
 $InPlaceRealloc = $false
@@ -51,6 +55,24 @@ $vulkanPresents = 0L
 $vulkanSubmits = 0L
 $vulkanNonblack = 0L
 if (!(& $check)) { throw 'Healthy workload rejected.' }
+$BridgeProfile = $true
+if (& $completeCheck) { throw 'Missing bridge profile accepted.' }
+foreach ($stage in @('capture','copy','import','scalar-import','execute','export','commit')) {
+    $bridgeStages[$stage] = @{ Calls=1L; Nanoseconds=1L }
+}
+if (!(& $completeCheck)) { throw 'Complete bridge profile rejected.' }
+if (& $check) { throw 'Bridge profile accepted as FPS.' }
+$bridgeStages['execute'].Calls = 0L
+if (& $completeCheck) { throw 'Unexecuted bridge stage accepted.' }
+$BridgeProfile = $false
+$BudgetProfile = $true
+if (& $completeCheck) { throw 'Missing budget profile accepted.' }
+foreach ($stage in @('short','long-reference','long-compiled')) {
+    $budgetStages[$stage] = @{ Calls=1L; Nanoseconds=1L }
+}
+if (!(& $completeCheck)) { throw 'Complete budget profile rejected.' }
+if (& $check) { throw 'Budget profile accepted as FPS.' }
+$BudgetProfile = $false
 $CaptureVu = $true
 if (& $check) { throw 'VU recording accepted as FPS.' }
 $CaptureVu = $false

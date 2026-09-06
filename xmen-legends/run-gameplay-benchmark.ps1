@@ -2,6 +2,8 @@ param(
     [ValidateSet('Primary', 'Staged', 'Candidate', 'Profile')]
     [string]$RuntimeVariant = 'Candidate',
     [switch]$PhaseProfile,
+    [switch]$BridgeProfile,
+    [switch]$BudgetProfile,
     [switch]$CoverageProfile,
     [switch]$CpuRasterProfile,
     [switch]$CaptureFrame,
@@ -75,6 +77,11 @@ if ($RetainVuCache) {
     if (!$CompiledVu) { throw 'RetainVuCache requires CompiledVu.' }
     $stem += '-cache'
 }
+if ($BridgeProfile) {
+    if (!$CompiledVu) { throw 'BridgeProfile requires CompiledVu.' }
+    $stem += '-bridge-profile'
+}
+if ($BudgetProfile) { $stem += '-budget-profile' }
 if ($BestFitHeap) { $stem += '-best-fit' }
 if ($InPlaceRealloc) { $stem += '-realloc' }
 if ($HeapDiagnostics) { $stem += '-heap-audit' }
@@ -102,6 +109,8 @@ $start.Environment['PS2X_RUN_VSYNC_LIMIT'] = '1400'
 if ($VulkanGs) { $start.Environment['PS2X_GS_PLAY_VULKAN'] = '1' }
 if ($CompiledRetry) { $start.Environment['PS2X_VU_COMPILED_RETRY'] = '1' }
 if ($RetainVuCache) { $start.Environment['PS2X_VU_RETAIN_BLOCK_CACHE'] = '1' }
+if ($BridgeProfile) { $start.Environment['PS2X_VU_BRIDGE_PROFILE'] = '1' }
+if ($BudgetProfile) { $start.Environment['PS2X_VU_BUDGET_PROFILE'] = '1' }
 if ($BestFitHeap) { $start.Environment['PS2X_GUEST_BUMP_BEST_FIT'] = '1' }
 if ($InPlaceRealloc) { $start.Environment['PS2X_GUEST_BUMP_REALLOC'] = '1' }
 if ($HeapDiagnostics) { $start.Environment['PS2X_GUEST_BUMP_DIAGNOSTICS'] = '1' }
@@ -139,6 +148,8 @@ $compiledCalls = 0L
 $compiledRetryCalls = 0L
 $captureComplete = $false
 $cacheHits = 0L
+$bridgeStages = @{}
+$budgetStages = @{}
 $bestFitActive = $false
 $reallocCalls = 0L
 $publicFreeCalls = 0L
@@ -200,6 +211,18 @@ try {
                 if ($line -match '^\[vu:blocks\] stopped .* pairs=(\d+)') { $blockPairs = [long]$Matches[1] }
                 if ($line -match '^\[vu:compiled\] accepted=(\d+)') { $compiledCalls = [long]$Matches[1] }
                 if ($line -match '^\[vu:compiled-cache\] compiled=\d+ hits=(\d+)') { $cacheHits = [long]$Matches[1] }
+                if ($line -match '^\[vu:bridge-profile\] stage=([a-z-]+) calls=(\d+) ns=(\d+)$') {
+                    $stage = $Matches[1]
+                    if (!$bridgeStages.ContainsKey($stage)) { $bridgeStages[$stage] = @{ Calls=0L; Nanoseconds=0L } }
+                    $bridgeStages[$stage].Calls += [long]$Matches[2]
+                    $bridgeStages[$stage].Nanoseconds += [long]$Matches[3]
+                }
+                if ($line -match '^\[vu:budget-profile\] kind=([a-z-]+) calls=(\d+) ns=(\d+)$') {
+                    $stage = $Matches[1]
+                    if (!$budgetStages.ContainsKey($stage)) { $budgetStages[$stage] = @{ Calls=0L; Nanoseconds=0L } }
+                    $budgetStages[$stage].Calls += [long]$Matches[2]
+                    $budgetStages[$stage].Nanoseconds += [long]$Matches[3]
+                }
                 if ($CaptureVu -and $line -match '^\[vu-replay:capture\] short=16 long=16 .* saved=1 ') {
                     $captureComplete = $true
                     if (!$process.HasExited) {
@@ -268,13 +291,15 @@ try {
         (!$CompiledVu -or $compiledCalls -gt 0) -and
         (!$CompiledRetry -or ($CompiledVu -and $compiledRetryCalls -gt 0)) -and
         (!$RetainVuCache -or ($CompiledVu -and $cacheHits -gt 0)) -and
+        (!$BridgeProfile -or ($bridgeStages.Count -eq 7 -and @($bridgeStages.Values | Where-Object { $_.Calls -le 0 }).Count -eq 0)) -and
+        (!$BudgetProfile -or ($budgetStages.Count -eq 3 -and $budgetStages['short'].Calls -gt 0)) -and
         (!$AuditBilinear -or $bilinearSamples -gt 0) -and
         (!$PreparedTexture -or $preparedTextureActive) -and
         (!$AuditPreparedTexture -or ($PreparedTexture -and $preparedTextureSamples -gt 0)) -and
         $reachedLimit -and $blockPairs -gt 0 -and
         $newGameHandler -and $levelPackage -and
         $markers.ContainsKey('1152') -and $markers.ContainsKey('1280')
-    $verified = $completed -and !$AuditCompiledVu -and !$AuditBilinear -and !$AuditPreparedTexture -and !$HeapDiagnostics -and !$HeapTrace -and !$CaptureVu
+    $verified = $completed -and !$AuditCompiledVu -and !$AuditBilinear -and !$AuditPreparedTexture -and !$HeapDiagnostics -and !$HeapTrace -and !$CaptureVu -and !$BridgeProfile -and !$BudgetProfile
     $report = [ordered]@{
         RecordedAtUtc = [DateTime]::UtcNow.ToString('o')
         Executable = $exe; Sha256 = $identity; PhaseProfile = [bool]$PhaseProfile
@@ -283,6 +308,8 @@ try {
         CompiledVu = [bool]$CompiledVu; CompiledCallsLowerBound = $compiledCalls
         CompiledRetry = [bool]$CompiledRetry; CompiledRetryCallsLowerBound = $compiledRetryCalls
         RetainVuCache = [bool]$RetainVuCache; CacheHitsLowerBound = $cacheHits
+        BridgeProfile = [bool]$BridgeProfile; BridgeStages = $bridgeStages
+        BudgetProfile = [bool]$BudgetProfile; BudgetStages = $budgetStages
         CaptureVu = [bool]$CaptureVu; CaptureVuStartTick = $CaptureVuStartTick; CaptureComplete = $captureComplete
         BestFitHeap = [bool]$BestFitHeap; BestFitActive = $bestFitActive
         InPlaceRealloc = [bool]$InPlaceRealloc; InPlaceReallocCallsLowerBound = $reallocCalls
@@ -325,6 +352,8 @@ try {
             Status='Incomplete'; Error=$_.Exception.Message; ElapsedSeconds=$watch.Elapsed.TotalSeconds
             CompiledCallsLowerBound=$compiledCalls; CompiledRetryCallsLowerBound=$compiledRetryCalls
             RetainVuCache=[bool]$RetainVuCache; CacheHitsLowerBound=$cacheHits
+            BridgeProfile=[bool]$BridgeProfile; BridgeStages=$bridgeStages
+            BudgetProfile=[bool]$BudgetProfile; BudgetStages=$budgetStages
             CaptureVu=[bool]$CaptureVu; CaptureVuStartTick=$CaptureVuStartTick; CaptureComplete=$captureComplete
             HeapFailureLines=$heapFailures; GuestFaultLines=$guestFaultLines; FirstGuestFault=$firstGuestFault
             NewGameHandler=$newGameHandler; LevelPackage=$levelPackage; Presents=$markers

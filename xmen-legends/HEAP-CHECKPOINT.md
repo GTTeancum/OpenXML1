@@ -4,7 +4,80 @@ September 6, 2026. Work is local only; no pushes or PRs. Movement was confirmed
 by the user on an earlier build; attacking was not tested there. The performance
 target remains 30 FPS. No result below is an interactive handoff.
 
-## Retained Compiled Blocks (Current Work)
+## Remaining Execution Cost (Current Work)
+
+Candidate `117EFB10...` completes the cached phase profile in 186.829 seconds,
+and the combined phase/bridge profile in 189.566 seconds. Both have zero logged
+heap/guest faults, restore startup and close their owned process. They are
+diagnostics, not FPS measurements. In the combined run, the busy thread's 165
+windows at ticks 566..1396 total 171,194.435 ms: VU exclusive 117,708.091 ms,
+GS 17,358.420 ms, guest 19,031.973 ms, transfers 11,468.270 ms. Thus VU still
+accounts for about 69%, but the old 96% breakdown is superseded.
+
+Whole-run bridge totals: execute 20.525770 s / 631,173 calls; commit 13.997934 s
+/ 488,590 calls; export 1.357072 s; copy 0.681458 s; import 0.397747 s; capture
+0.335319 s / 992,454 attempts; scalar import 0.041144 s. Commit includes graphics
+publication; these stage totals must NOT be added to overlapping phase times.
+Copy/conversion is too small to explain the missing performance. Successful
+compiled drains also do not account for most VU time. Investigate interpreter
+fallback and short slices rather than repeating arithmetic-helper micro-tuning.
+
+`-BridgeProfile` now exposes the existing runtime timer, requires all seven
+stages, preserves totals in JSON and explicitly excludes FPS. `-BudgetProfile`
+adds opt-in VU1-only short / long-reference / long-compiled elapsed totals and
+the top eight entry PCs for each of the two noncompiled classes. A successful
+retry includes its interpreted prefix in long-compiled time. Timings include
+nested graphics work. The output is capped at 19 lines per active thread;
+storage is fixed at 2 x 2,048 hotspot entries. Disabled mode emits nothing.
+All 163 VU tests pass with budget profiling enabled (test SHA256
+`97538CDF3DA3C3DBE8912A5E06086E1DF6370F219CB0B2A272065BB5F26B8FF9`); the current recording
+matches digest `e941ad49d2248a18` with profiling off/on. Benchmark gates pass.
+The candidate is unchanged; only the diagnostic slot was linked, SHA256
+`0C9343406288BC57425CC1242CE90C0BB86C6218F1F250CCA174F79703633F65`.
+The live budget profile completes at 227.854 seconds with zero logged heap/
+guest faults. The user observed about 4 FPS during this DIAGNOSTIC run; do not
+claim that instrumentation alone explains the difference from the earlier
+5.44334 FPS candidate result. No new performance candidate was packaged.
+
+Measured VU1 inclusive totals:
+
+| Path | Calls | Seconds |
+| --- | ---: | ---: |
+| Short (budget <= 64) | 12,566,378 | 94.128147 |
+| Long, reference fallback | 232,692 | 36.659568 |
+| Long, compiled success (including retry prefixes) | 528,316 | 41.104551 |
+
+Short slices dominate VU1 time, about 55% of its 171.892266-second inclusive
+total. Top short entry PCs: 0x80 (799,619 calls / 6.188478 s), 0x230 (162,652 /
+2.528774 s), 0x1788 (232,841 / 2.101593 s), 0x13d8 (203,164 / 1.928585 s).
+Top long-reference entries: 0x3278 (3,480 / 1.244446 s), 0x5b8 (3,532 /
+1.237617 s), 0x1a58 (3,516 / 1.226119 s). No single entry dominates, and PC
+histograms aggregate different microcode images; never specialize by PC alone.
+Full bounded hotspots and totals are in the fixed
+`gameplay-vulkan-rate-retry-cache-budget-profile-realloc.{err.log,json}`.
+The owned process closed and all startup entries were restored. Runtime
+profiling changes are checkpointed locally as `553350a`.
+
+NEXT PRIORITY: extend accelerated execution to the normal 64-cycle slices,
+preserving exact suspension/resumption and pending pipeline/transfer state.
+`ps2_runtime.cpp` deliberately issues MSCAL and nondraining service at 64 cycles;
+`ps2_vu1_core.cpp` only attempts compiled drains for budgets above 64. Do NOT
+replace the service budget with a full drain: VIF can change data between slices.
+Investigate bounded compiled blocks and full pending-state export/import against
+the existing VUR1 snapshots and 1/8/16/64-cycle replay tests. Full-drain-only
+optimizations, broad kernel-count increases, and copying micro-tuning cannot
+address most of this measured cost. Long fallback is the secondary target.
+No screenshots, input, handoff, push or PR. Goal remains unmet.
+
+The latest private recording executes zero existing AOT block recipes in its
+native replay (`vu-current-native.log`: 134,919 attempts, zero executed). This
+is a coverage gap, not proof that adding recipes would be faster. Earlier
+32-block and residual-selection experiments were slower; preserve their
+lessons. Current capture cases 23 and 31 contain ELENG at 0x1d68/0x20e0/0x2820,
+EATAN at 0x3660/0x36b8 and ERCPR at 0x39a0/0x3a68. These are static code-image
+observations, not evidence that every listed instruction executed.
+
+## Retained Compiled Blocks
 
 The current healthy-heap candidate's phase profile attributes 123,594.776 ms
 of 128,468.865 ms to VU exclusive time on its busy thread across 89 windows,
