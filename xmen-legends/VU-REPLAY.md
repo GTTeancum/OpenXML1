@@ -4,6 +4,48 @@ The bring-up runtime has an opt-in, process-local VU1 recorder. Use it to check
 and time interpreter changes against actual game work without repeating startup.
 This is not a replacement for first-level gameplay validation.
 
+## Interpreted Operand Reuse Rejected
+
+The September 5 follow-up tested passing `execUpper`'s normalized VF/ACC/Q/I
+snapshot to the dynamic FMAC flag helpers, as the native kernels already do.
+The attempted implementation also guarded widened flag arithmetic with MSVC
+precise floating-point semantics. Experimental test image
+`D43D66CB731564E506EA8EE485276A857E58CD9EA72596277BD13F0A33D8CC3E`
+passed 135 VU tests and both captures at normal and 1/8/16/64-cycle budgets.
+
+Seven alternating comparisons against accepted `053b1bc` test image
+`78076FBB69E84003A4C1C1B406C196413BFB43FAB8C7313992FC9DF74C91BFBB`:
+
+| Capture | Repeats | Baseline ms | Experiment ms | Reduction | Wins |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Original | 1024 | 3428.418 | 3556.435 | -3.734% | 1/7 |
+| Spread | 2048 | 2822.932 | 2732.752 | 3.195% | 2/7 |
+
+These shared-host timings were noisy. The positive spread median is not a
+consistent paired improvement: the experiment lost five of seven adjacent
+comparisons there and six of seven on the original capture. With no reliable
+benefit demonstrated, all three runtime source changes were removed. No game
+executable ever contained the experiment. The existing comparison executable
+slot now holds the accepted `78076F...` image; earlier identities are historical.
+
+The retained regression test independently checks 288 combinations: six
+MADD/scalar/cross-product/ACC forms, every lane mask, and three destination
+registers including either input. It checks numeric results, untouched lanes,
+MAC flags, and product sticky flags. No private instruction words were added.
+PS2Recomp `711d5d2` contains this test only. The restored-runtime image
+`A66D5E855A30F810A6AB45CC77FBEAB712D70FE69101EB1001A4E51ED523A6D7`
+passes all 135 VU tests, both captures at all five budgets, and the two existing
+budget-trace fixtures. The rebuild used BelowNormal, one worker, affinity 0xF,
+and the 2048 MiB compiler cap.
+
+The user-requested rerun of the unchanged `CE26EA1E...` game candidate completed
+at 2026-09-06 02:43 UTC, exiting 0 at vsync 1400 with New Game, NYC loading, and
+native blocks verified. Presents 1152/1280 arrived at 205.8493978 / 256.7630483
+seconds: **2.5141 FPS** over 128 frames, total elapsed 283.8631807 seconds.
+The wrapper restored the startup package. This supersedes the fixed
+`gameplay-rate.*` report, not the earlier native framebuffer inspection. No new
+gameplay image was requested and no host input was sent.
+
 ## Budget Trace Initialization
 
 PS2Recomp `053b1bc` removes two unconditional clears of the 2,432-byte local
