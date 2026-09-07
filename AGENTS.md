@@ -1,0 +1,3 @@
+# Model Escalation
+
+Continue with Sol High by default. Ask to switch to Astra when the same fundamental blocker survives three materially different, evidence-based approaches; when progress requires choosing between competing architectural designs spanning multiple subsystems; or when a minimized correctness failure remains unexplained after instrumentation and source comparison. State the evidence, the precise question Astra would tackle, and whether Astra is needed for consultation or implementation. Do not escalate for compilation time, repetitive implementation, ordinary debugging, or one failed experiment.
