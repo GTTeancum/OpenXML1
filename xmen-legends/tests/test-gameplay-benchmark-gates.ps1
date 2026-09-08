@@ -42,6 +42,7 @@ $HeapTrace = $false
 $CaptureVu = $false
 $bestFitActive = $false
 $heapFailures = 0L
+$renderSlotAllocationFailures = 0L
 $AuditCompiledVu = $false
 $AuditBilinear = $false
 $PreparedTexture = $false
@@ -130,6 +131,9 @@ if (!(& $completeCheck)) { throw 'Healthy heap diagnostic workload rejected.' }
 $heapFailures = 1L
 if (& $completeCheck) { throw 'Allocation failure accepted as healthy workload.' }
 $heapFailures = 0L
+$renderSlotAllocationFailures = 1L
+if (& $completeCheck) { throw 'Failed render-slot growth accepted as healthy workload.' }
+$renderSlotAllocationFailures = 0L
 $HeapDiagnostics = $false
 $BestFitHeap = $false
 $VulkanGs = $true

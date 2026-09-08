@@ -1,5 +1,16 @@
 # X-Men Legends PS2Recomp TODO
 
+## Astra Handoff (2026-09-08)
+
+- Synthetic fixed-tick movement now reproduces the user-visible freeze without host
+  input. The first causal failure is compatibility-heap exhaustion during a renderer
+  slot growth (`bytes=0xf60`), followed by a null clear and sometimes a bad virtual jump
+  at guest `0x1391DC`. Best-fit prevents the immediate bad jump but still freezes on a
+  repeated framebuffer after the same failed allocation. Rerun the bounded heap
+  diagnostic and resolve the missing ownership/lifetime invariant. Exact hashes,
+  commands, retained logs, rejected approaches, and guardrails are in
+  `HANDOFF-ASTRA.md`.
+
 ## Immediate Performance Target
 
 - VIF workload/FPS checkpoint (2026-09-08): the correct `TitleGameplayFirst` path with Vulkan GS, compiled VU/EFU/stream/batch, retained cache and in-place realloc now uses 32-byte compiled-stream blocks. The exact-behavior candidate reached NYC, zero guest/heap faults, and broad nonblack world output. A stationary 64-present window measured **23.7071 FPS**; automated movement at ticks 500-560 changed framebuffer hashes, passed seven full-world coverage samples, and measured **32.0439 FPS** over the final eight-frame movement interval. This clears the 20 FPS interim buffer and briefly reaches the 30 FPS target, but the movement sample is short and presentation still stops around tick 564 while guest/audio execution continues to tick 800. Do not call sustained playability complete. NEXT: clean candidate rebuild and interactive handoff with bounded logging; reproduce and fix the post-564 render stop from user input evidence.

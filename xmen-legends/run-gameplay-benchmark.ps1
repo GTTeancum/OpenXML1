@@ -273,6 +273,7 @@ $reallocCalls = 0L
 $publicFreeCalls = 0L
 $publicFreeBytes = 0L
 $heapFailures = 0L
+$renderSlotAllocationFailures = 0L
 $bilinearSamples = 0L
 $preparedTextureActive = $false
 $preparedTextureSamples = 0L
@@ -406,6 +407,9 @@ try {
                         catch [InvalidOperationException] { if (!$process.HasExited) { throw } }
                     }
                 }
+                if ($line -match '^\[xmen-render-slot-grow-return\].*\ballocationResult=0x0\b') {
+                    ++$renderSlotAllocationFailures
+                }
                 if ($line -match '^\[gs:bilinear-audit\] samples=(\d+) mismatches=0') { $bilinearSamples = [long]$Matches[1] }
                 if ($line -eq '[gs:prepared-texture] active=1') { $preparedTextureActive = $true }
                 if ($line -eq '[gs:play-vulkan] active=1') { $vulkanActive = $true }
@@ -503,7 +507,8 @@ try {
     $startupReached = $levelPackage -and
         ($StartupMovieMode -eq 'GameplayMapNoMovie' -or $newGameHandler)
     $completed = $process.ExitCode -eq 0 -and $guestFaultLines -eq 0 -and
-        $heapFailures -eq 0 -and (!$BestFitHeap -or $bestFitActive) -and
+        $heapFailures -eq 0 -and $renderSlotAllocationFailures -eq 0 -and
+        (!$BestFitHeap -or $bestFitActive) -and
         (!$InPlaceRealloc -or $reallocCalls -gt 0) -and
         (!$VulkanGs -or ($vulkanActive -and $vulkanPresents -ge $vulkanPresentationThreshold -and $vulkanSubmits -gt 0 -and $vulkanNonblack -gt 0)) -and
         (!$CompiledVu -or $compiledCalls -gt 0 -or
@@ -565,6 +570,7 @@ try {
         InPlaceRealloc = [bool]$InPlaceRealloc; InPlaceReallocCallsLowerBound = $reallocCalls
         PublicFreeCallsLowerBound = $publicFreeCalls; PublicFreeBytesLowerBound = $publicFreeBytes
         HeapDiagnostics = [bool]$HeapDiagnostics; HeapFailureLines = $heapFailures
+        RenderSlotAllocationFailures = $renderSlotAllocationFailures
         HeapTrace = [bool]$HeapTrace
         VulkanGs = [bool]$VulkanGs; VulkanActive = $vulkanActive
         VulkanPresents = $vulkanPresents; VulkanSubmits = $vulkanSubmits; VulkanNonblack = $vulkanNonblack
@@ -599,7 +605,8 @@ try {
     $report | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $reportPath
     $reportWritten = $true
     [pscustomobject]$report | Format-List
-    if (!$completed -and !($CaptureVu -and $captureComplete -and $guestFaultLines -eq 0 -and $heapFailures -eq 0)) {
+    if (!$completed -and !($CaptureVu -and $captureComplete -and $guestFaultLines -eq 0 -and
+            $heapFailures -eq 0 -and $renderSlotAllocationFailures -eq 0)) {
         throw 'Run did not complete the native-block workload; do not use it as a gameplay benchmark.'
     }
 } catch {
@@ -625,7 +632,8 @@ try {
             AutoCrossTicks=$AutoCrossTicks; AutoCrossSeen=$autoCrossSeen
             CaptureLatestInterval=$CaptureLatestInterval; PresentationHashes=$presentationHashes
             RunVsyncLimit=$RunVsyncLimit
-            HeapFailureLines=$heapFailures; GuestFaultLines=$guestFaultLines; FirstGuestFault=$firstGuestFault
+            HeapFailureLines=$heapFailures; RenderSlotAllocationFailures=$renderSlotAllocationFailures
+            GuestFaultLines=$guestFaultLines; FirstGuestFault=$firstGuestFault
             NewGameHandler=$newGameHandler; LevelPackage=$levelPackage; Presents=$markers
             WorkloadVerified=$false; AuditVerified=$false; Fps=$null; HostInput=$false
         } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $reportPath

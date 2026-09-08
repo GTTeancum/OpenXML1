@@ -23,6 +23,7 @@ function Assert-WorkspacePath {
 $obsoleteDirectories = @(
     (Join-Path $recomp 'out\xmen-build'),
     (Join-Path $recomp 'out\xmen-final2-build'),
+    (Join-Path $recomp 'out\c73d184-ref-build'),
     (Join-Path $recomp 'out\build'),
     (Join-Path $xmenRoot 'output'),
     (Join-Path $xmenRoot 'output_probe_315c20_v2'),
@@ -33,7 +34,8 @@ $obsoleteDirectories = @(
     (Join-Path $xmenRoot 'output_mapped'),
     (Join-Path $xmenRoot 'output_mapped_clean'),
     (Join-Path $xmenRoot 'logs'),
-    (Join-Path $xmenRoot '__pycache__')
+    (Join-Path $xmenRoot '__pycache__'),
+    (Join-Path $xmenRoot 'tests\__pycache__')
 )
 
 $removedDirectoryCount = 0
@@ -218,6 +220,8 @@ if (Test-Path -LiteralPath $activeRelease -PathType Container) {
         }
     $obsoleteFiles += Get-ChildItem -LiteralPath $activeRelease -File -Force |
         Where-Object { $_.Name -match '^interactive-session\.(out|err)\.log$' }
+    $obsoleteFiles += Get-ChildItem -LiteralPath $activeRelease -File -Force |
+        Where-Object { $_.Name -eq 'ps2_runtime.current-backup.lib' }
 }
 if (Test-Path -LiteralPath $activeBuild -PathType Container) {
     $obsoleteFiles += Get-ChildItem -LiteralPath $activeBuild -Recurse -File -Force |
@@ -236,6 +240,7 @@ foreach ($name in @(
     'ps2EntryRunner.candidate.exe',
     'ps2EntryRunner.profile.exe',
     'ps2EntryRunner.vu-stall-trace.exe',
+    'ps2EntryRunner.c73d184-ref.exe',
     'ps2x_tests.vu-baseline.exe',
     'ps2x_tests.vu-retire.exe',
     'vu_native_words.inc',
