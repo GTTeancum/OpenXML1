@@ -14,16 +14,16 @@ The active goal is basic first-level playability on PC: reliable campaign startu
 | Legal and memory-card flow | Renders and advances; final presentation/timing validation remains |
 | Startup Sofdec movies | File I/O, demux, MPEG/IPU submission, and ADX transport run; decoded video and audible movie playback remain broken |
 | 3D title scene | Complete title UI and Cerebro chamber render after a reversible movie bypass |
-| First campaign level | New York loads and renders; user testing confirms movement and basic combat, but frame rate is very low and rendering defects remain |
-| Playable release | Not yet |
+| First campaign level | New York loads and renders; automated movement now clears the 20 FPS interim buffer, but sustained manual play and render continuity remain under test |
+| Playable release | Not yet; presentation can still stop while simulation and audio continue |
 
 ## Current Status
 
-The performance candidate includes a resident title-bar counter (`X-Men Legends | ... FPS`). It counts fresh game-frame presentations rather than repeated host-window redraws. Automated benchmarks disable input. On September 6 the user confirmed movement with host controls and compiled VU enabled on the current candidate; combat was not tested on this build. The user's observed roughly 5 FPS remains unusable, despite movement working.
+The performance candidate includes a resident title-bar counter (`X-Men Legends | ... FPS`). It counts fresh game-frame presentations rather than repeated host-window redraws. Automated benchmarks disable normal host input and can inject a bounded left-stick movement window for validation.
 
-The latest candidate measured **6.05 FPS** with the opt-in compiled VU engine, versus the preceding candidate's 5.64 FPS observation. These are separate shared-host runs, not a controlled sustained-speed guarantee. The preceding same-executable comparison measured 5.64 FPS compiled on versus 4.77 FPS off. All remain far below the 30 FPS target, not a playable release. Profiling of that preceding build attributes about 47.6% of measured work to VU execution and 36.8% to graphics; CPU rasterization alone averages about 64 ms/frame. Both major costs need further reductions.
+The September 8 candidate uses Vulkan GS plus the compiled VU/EFU streaming path with 32-byte stream blocks. It measured **23.71 FPS** over a stationary 64-frame gameplay window. Two short automated movement checks measured **32.04 FPS** and **25.88 FPS** over eight changing frames, retained broad New York coverage, and logged no guest or heap faults. This clears the 20 FPS interim buffer but does not yet establish sustained 30 FPS playability. Presentation can still stop around tick 564 while guest execution and audio continue, so the current priority is reproducing and fixing that render stop under manual control.
 
-Local work now adds bulk timed VU packet transfers and packed four-channel texture filtering. The filter matches 2.6 million scalar-reference cases across four rounding modes; its isolated kernel is about five times faster, not five times the game FPS. The combined game candidate passed its audit with at least 258,049 compiled VU calls and 567 million filtered samples matching their references, with no logged guest faults. All remaining PS2Recomp commits stay local: no further pushes or pull requests are being made. Detailed evidence is in [the current checkpoint](xmen-legends/TODO.md), [filter validation](xmen-legends/GS-FILTER-CHECKPOINT.md) and [compiler validation notes](xmen-legends/play-vu-probe/README.md).
+Local work now adds bulk timed VU packet transfers, compiled streaming, packed four-channel texture filtering, and VIF1 packet-path reductions. A phase census found that repeated VU service dominates VIF transfer time; changing that scheduling cadence was tested and rejected because it altered graphics work. The accepted 32-byte stream-block configuration reduces the live workload without changing the one-service-per-UNPACK contract. All remaining PS2Recomp commits stay local: no further pushes or pull requests are being made. Detailed evidence is in [the current checkpoint](xmen-legends/TODO.md), [filter validation](xmen-legends/GS-FILTER-CHECKPOINT.md) and [compiler validation notes](xmen-legends/play-vu-probe/README.md).
 
 The game now executes far beyond initial boot and has reached each of these milestones in the native PC runtime:
 
@@ -202,7 +202,8 @@ User testing has confirmed movement and basic combat, albeit at very low speed. 
 - Sofdec SFD file reads and demux advance, but startup movies do not yet produce correct presented video frames.
 - The ADX header and compressed blocks traverse the movie audio ring correctly; audible SFD playback is not yet verified end to end.
 - Gameplay is reachable through the real New Game handler after bypassing startup movies. The complete world renders on the current clean build, while the direct `loadMap()` shortcut remains intentionally unsuitable because it skips campaign setup. HUD, material-lighting, effect, and blending defects remain.
-- Performance is diagnostic-build quality; timing and resource use have not been optimized for release.
+- Performance now clears 20 FPS in bounded first-level tests, but sustained 30 FPS and render continuity are not yet proven.
+- Presentation may stop after several seconds of gameplay while simulation and audio continue; the title-bar FPS after that point is not a gameplay measurement.
 - The current TOML contains workspace-specific absolute paths.
 
 ## Roadmap

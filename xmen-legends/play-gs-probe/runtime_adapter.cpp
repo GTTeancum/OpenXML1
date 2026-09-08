@@ -7,6 +7,7 @@
 #include <cstring>
 #include <cmath>
 #include <cstdio>
+#include <iterator>
 
 namespace
 {
@@ -31,7 +32,7 @@ namespace
         std::array<uint64_t, 128> values{};
         std::array<bool, 128> valid{};
         GSRasterDebugCounters counters{};
-        std::vector<PlayGs::Register> registers;
+        mutable std::vector<PlayGs::Register> registers;
 
         void State(std::vector<PlayGs::Register>& out, uint8_t address, uint64_t value)
         {
@@ -42,12 +43,22 @@ namespace
                 valid[address] = true;
             }
         }
-        void SnapshotUnlocked() const { renderer->Snapshot(vram); }
+        void FlushRegistersUnlocked() const
+        {
+            if(registers.empty()) return;
+            renderer->Write(registers.data(), registers.size());
+            registers.clear();
+        }
+        void SnapshotUnlocked() const
+        {
+            FlushRegistersUnlocked();
+            renderer->Snapshot(vram);
+        }
     public:
         explicit Backend(std::unique_ptr<GSRasterBackend> delegate) : cpu(std::move(delegate))
         {
             if(!cpu) throw std::invalid_argument("GPU backend requires a CPU display/transfer delegate");
-            registers.reserve(40);
+            registers.reserve(1 << 20);
         }
         void Initialize(uint8_t* memory, uint32_t size) override
         {
@@ -57,6 +68,7 @@ namespace
             cpu->Initialize(memory, size);
             renderer = std::make_unique<PlayGs::Renderer>();
             renderer->Import(memory);
+            registers.clear();
             valid.fill(false);
             counters = {};
         }
@@ -68,6 +80,7 @@ namespace
             renderer->Reset();
             renderer->Import(vram);
             cpu->Reset();
+            registers.clear();
             valid.fill(false);
         }
         void Submit(const GSPrimitiveBatch& batch) override
@@ -92,7 +105,6 @@ namespace
                     throw std::runtime_error("GPU vertex is outside GS register range");
             }
             auto& regs = registers;
-            regs.clear();
             State(regs, GS_REG_PRMODECONT, 1);
             State(regs, GS_REG_FRAME_1, c.frame.fbp | (uint64_t(c.frame.fbw) << 16) |
                 (uint64_t(c.frame.psm) << 24) | (uint64_t(c.frame.fbmsk) << 32));
@@ -130,7 +142,6 @@ namespace
                 regs.push_back({GS_REG_XYZ2, uint16_t(v.x * 16) | (uint64_t(uint16_t(v.y * 16)) << 16) |
                     (uint64_t(uint32_t(v.z)) << 32)});
             }
-            renderer->Write(regs.data(), regs.size());
             ++counters.submits;
             ++counters.primitiveSubmits[p.type];
             if(counters.submits == 1) std::fprintf(stderr, "[gs:play-vulkan] active=1\n");
@@ -139,8 +150,8 @@ namespace
         {
             RuntimeProfile::Scope profile(RuntimeProfile::Phase::Gs);
             std::lock_guard lock(mutex);
-            const PlayGs::Register regs[] = {{GS_REG_TEXCLUT, TexClut(texclut)}, {GS_REG_TEX0_1, Tex0(tex0, true)}};
-            renderer->Write(regs, 2);
+            registers.push_back({GS_REG_TEXCLUT, TexClut(texclut)});
+            registers.push_back({GS_REG_TEX0_1, Tex0(tex0, true)});
             valid[GS_REG_TEX0_1] = valid[GS_REG_TEXCLUT] = false;
         }
         void BeginTransfer(const GSTransferCommand& t) override
@@ -160,27 +171,31 @@ namespace
                     (uint64_t(p.dsay) << 48) | (uint64_t(p.dir) << 59)},
                 {GS_REG_TRXREG, t.trxreg.rrw | (uint64_t(t.trxreg.rrh) << 32)},
                 {GS_REG_TRXDIR, t.direction}};
-            renderer->Write(regs, 4);
+            registers.insert(registers.end(), std::begin(regs), std::end(regs));
         }
         void UploadImage(const uint8_t* data, uint32_t bytes) override
         {
             RuntimeProfile::Scope profile(RuntimeProfile::Phase::Gs);
             std::lock_guard lock(mutex);
             cpu->UploadImage(data, bytes);
+            FlushRegistersUnlocked();
             renderer->Upload(data, bytes);
         }
         void Flush() override
         {
             RuntimeProfile::Scope profile(RuntimeProfile::Phase::Gs);
             std::lock_guard lock(mutex);
-            if(renderer) renderer->Flush();
+            if(renderer)
+            {
+                FlushRegistersUnlocked();
+                renderer->Flush();
+            }
         }
         void TextureFlush() override
         {
             RuntimeProfile::Scope profile(RuntimeProfile::Phase::Gs);
             std::lock_guard lock(mutex);
-            const PlayGs::Register reg{GS_REG_TEXFLUSH, 0};
-            renderer->Write(&reg, 1);
+            registers.push_back({GS_REG_TEXFLUSH, 0});
         }
         void Sync(GSSyncReason) override { Flush(); }
         PresentationFrame Present(const GSPresentationRequest& request) override
@@ -235,6 +250,7 @@ namespace
             RuntimeProfile::Scope profile(RuntimeProfile::Phase::Gs);
             std::lock_guard lock(mutex);
             out.resize(RamSize);
+            FlushRegistersUnlocked();
             renderer->Snapshot(out.data());
         }
         GSTransferSnapshot GetTransferSnapshot() const override

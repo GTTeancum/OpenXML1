@@ -8,6 +8,7 @@ class TransferTimeline
 {
 public:
     explicit TransferTimeline(const uint8_t *memory) : memory(memory) {}
+    void setMemory(const uint8_t *value) { memory = value; }
     void reset();
     void advance(uint64_t cycle);
     void kick(uint32_t qword, uint64_t cycle);

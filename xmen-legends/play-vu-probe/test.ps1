@@ -21,7 +21,7 @@ $started = $false
 try {
     $started = $process.Start()
     if (!$started) { throw 'VU probe did not start.' }
-    $process.PriorityClass = 'Normal'
+    $process.PriorityClass = 'BelowNormal'
     $process.ProcessorAffinity = [IntPtr]0xF
     $stdout = $process.StandardOutput.ReadToEndAsync()
     $stderr = $process.StandardError.ReadToEndAsync()

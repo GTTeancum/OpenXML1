@@ -214,8 +214,10 @@ $activeRelease = Join-Path $activeBuild 'ps2xRuntime\Release'
 if (Test-Path -LiteralPath $activeRelease -PathType Container) {
     $obsoleteFiles += Get-ChildItem -LiteralPath $activeRelease -File -Force |
         Where-Object {
-            $_.Name -match '^ps2EntryRunner\.(pre|old|bak|probe).*\.exe$'
+            $_.Name -match '^ps2EntryRunner\..+\.exe$'
         }
+    $obsoleteFiles += Get-ChildItem -LiteralPath $activeRelease -File -Force |
+        Where-Object { $_.Name -match '^interactive-session\.(out|err)\.log$' }
 }
 if (Test-Path -LiteralPath $activeBuild -PathType Container) {
     $obsoleteFiles += Get-ChildItem -LiteralPath $activeBuild -Recurse -File -Force |
@@ -233,7 +235,7 @@ foreach ($name in @(
     'ps2EntryRunner.next.exe',
     'ps2EntryRunner.candidate.exe',
     'ps2EntryRunner.profile.exe',
-    'ps2EntryRunner.next.exe.exe',
+    'ps2EntryRunner.vu-stall-trace.exe',
     'ps2x_tests.vu-baseline.exe',
     'ps2x_tests.vu-retire.exe',
     'vu_native_words.inc',

@@ -64,6 +64,30 @@ static bool runBulkTransferTests()
             bulk.time != completion || bulk.completionCycles != std::vector<uint64_t>{completion}) return false;
         ++cases;
     }
+    {
+        constexpr unsigned source = 777;
+        constexpr unsigned loops = 5000;
+        constexpr size_t packetBytes = (loops + 1u) * 16u;
+        std::array<uint8_t, 16384> memory;
+        for (size_t i = 0; i < memory.size(); ++i)
+            memory[i] = static_cast<uint8_t>(i * 37u + 11u);
+        const uint64_t tag = loops | 0x8000ull | (3ull << 58) | (3ull << 60);
+        std::memcpy(memory.data() + source * 16u, &tag, sizeof(tag));
+        std::memset(memory.data() + source * 16u + sizeof(tag), 0, sizeof(tag));
+
+        TransferTimeline timeline(memory.data());
+        timeline.kick(source, 0);
+        timeline.finish(0);
+        const uint64_t completion = 1u + loops * 2u;
+        if (timeline.packets.size() != 1 ||
+            timeline.packets[0].size() != packetBytes ||
+            timeline.completionCycles != std::vector<uint64_t>{completion})
+            return false;
+        for (size_t i = 0; i < packetBytes; ++i)
+            if (timeline.packets[0][i] != memory[(source * 16u + i) & 16383u])
+                return false;
+        ++cases;
+    }
     std::printf("[play-vu:bulk-transfer] cases=%u passed=1\n", cases);
     return true;
 }

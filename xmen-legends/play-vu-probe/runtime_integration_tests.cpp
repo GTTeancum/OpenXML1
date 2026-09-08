@@ -155,6 +155,7 @@ void register_compiled_vu_producer_tests()
             const std::array<uint32_t, 4> first = {0x40000000, 0x40400000, 0x40800000, 0x40a00000};
             const std::array<uint32_t, 4> second = {0x3f800000, 0x40000000, 0x40400000, 0x40800000};
             constexpr uint32_t mfp3 = 0x81e3067c; // MFP.xyzw vf3,P
+            const bool compiledEfu = std::getenv("PS2X_VU_COMPILED_EFU") != nullptr;
             for (uint32_t function = 0x70; function <= 0x7d; ++function)
             {
                 if (function == 0x7b) continue;
@@ -187,6 +188,29 @@ void register_compiled_vu_producer_tests()
                     std::memcpy(&actual, &reference.vu.state().vf[3][lane], sizeof(actual));
                     t.IsTrue(actual == a.bits, "MFP observes first result while the second is pending");
                 }
+
+                Fixture fast, fullReference;
+                if (!fast.init() || !fullReference.init()) { t.Fail("Runtime fixtures initialize"); return; }
+                for (auto *fx : {&fast, &fullReference})
+                {
+                    std::memcpy(fx->vu.state().vf[1], first.data(), sizeof(first));
+                    std::memcpy(fx->vu.state().vf[2], second.data(), sizeof(second));
+                    fx->vu.state().p = -123.0f;
+                    fx->pair(0, opcode | (1u << 11));
+                    fx->pair(8, opcode | (2u << 11), upperNop | end);
+                    fx->pair(16, mfp3);
+                }
+                fullReference.start(budget);
+                const auto before = compiledVuCounters();
+                fast.start(0);
+                std::string reason;
+                const bool accepted = fast.compiled(reason);
+                if (!accepted) fast.resume(budget);
+                t.Equals(compiledVuCounters().accepted, before.accepted + unsigned(compiledEfu),
+                    compiledEfu ? "Overlapping EFUs use compiled engine: " + reason :
+                        "Overlapping EFUs retain fallback");
+                t.IsTrue(sameArchitecture(fast.vu.state(), fullReference.vu.state()),
+                    "Compiled overlap preserves P visibility and elapsed cycles");
             }
         });
 
@@ -468,7 +492,9 @@ void register_compiled_vu_producer_tests()
             { ScopedCompiledVuMode disabled(false); reference.start(budget); }
             const auto before = compiledVuCounters();
             { ScopedCompiledVuMode enabled(true); fast.start(budget); }
-            t.Equals(compiledVuCounters().accepted, before.accepted, "EFU workload remains on reference engine");
+            const bool efuEnabled = std::getenv("PS2X_VU_COMPILED_EFU") != nullptr;
+            t.Equals(compiledVuCounters().accepted, before.accepted + unsigned(efuEnabled),
+                efuEnabled ? "EFU workload uses compiled engine" : "EFU workload remains on reference engine");
             if (!sameArchitecture(fast.vu.state(), reference.vu.state()))
             {
                 const auto &a = fast.vu.state(); const auto &b = reference.vu.state();
@@ -722,6 +748,55 @@ void register_compiled_vu_producer_tests()
             float stored = 0;
             std::memcpy(&stored, fx.data + 128, 4);
             t.Equals(stored, 123.0f, "Committed memory proves why fallback would be unsafe");
+        });
+        tc.Run("ZZZ persistent compiled stream preserves live memory and incremental graphics", [](TestCase &t)
+        {
+            Fixture fast, reference;
+            if (!fast.init() || !reference.init()) { t.Fail("Fixtures initialize"); return; }
+            constexpr unsigned kickPair = 80;
+            constexpr unsigned endPair = 180;
+            const uint64_t packet[] = {0x1000000000008001ull, 0xe,
+                0xffffffff55667788ull, 0x60};
+            for (auto *fx : {&fast, &reference})
+            {
+                std::memcpy(fx->data + 64, packet, sizeof(packet));
+                fx->vu.state().vi[1] = 4;
+                fx->vu.state().vf[3][0] = 321.0f;
+                fx->pair(kickPair * 8, 0x80000efc);
+                fx->pair((kickPair + 1) * 8,
+                    (1u << 25) | (15u << 21) | (3u << 11) | 8u);
+                fx->pair(endPair * 8, lowerNop, upperNop | end);
+            }
+            _putenv_s("PS2X_VU_COMPILED_STREAM", "1");
+            {
+                ScopedCompiledVuMode disabled(false);
+                reference.start(64);
+                reference.resume(64);
+                t.IsTrue(reference.vu.isRunning(), "Reference remains active after packet slice");
+                t.Equals(reference.packets, 1u, "Reference publishes packet before program end");
+                while (reference.vu.isRunning()) reference.resume(64);
+            }
+            {
+                ScopedCompiledVuMode enabled(true);
+                const auto before = compiledVuCounters();
+                fast.start(64);
+                fast.resume(64);
+                t.IsTrue(fast.vu.isRunning(), "Compiled stream remains active after packet slice");
+                t.Equals(fast.packets, 1u, "Compiled stream publishes packet before program end");
+                unsigned slices = 2;
+                while (fast.vu.isRunning() && ++slices < 16) fast.resume(64);
+                t.IsTrue(!fast.vu.isRunning(), "Compiled stream reaches E-bit termination");
+                t.Equals(compiledVuCounters().accepted, before.accepted + 1,
+                    "Persistent stream completes through compiled execution");
+            }
+            _putenv_s("PS2X_VU_COMPILED_STREAM", "");
+            t.IsTrue(sameArchitecture(fast.vu.state(), reference.vu.state()),
+                "Persistent stream final architecture matches interpreter");
+            t.IsTrue(!std::memcmp(fast.data, reference.data, 16384),
+                "Persistent stream writes directly to live VU memory");
+            t.Equals(fast.packets, reference.packets, "Persistent stream publishes each packet once");
+            t.Equals(uint32_t(fast.memory.gs().siglblid), uint32_t(reference.memory.gs().siglblid),
+                "Persistent stream reaches the same GS state");
         });
     });
 }

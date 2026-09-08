@@ -456,6 +456,7 @@ bool pendingImportTests()
 int replayDiagnostic(const char *path)
 {
     CompiledVuSession detachedSession{CompiledVuSession::Arithmetic::RuntimeFused};
+    CompiledVuSession streamSession{CompiledVuSession::Arithmetic::RuntimeFused};
     PlayVuRuntimeBridge runtimeBridge;
     unsigned memoryTraceCase = 64;
     if (const char *value = std::getenv("PS2X_VU_REPLAY_MEMORY_TRACE_CASE"))
@@ -673,6 +674,97 @@ int replayDiagnostic(const char *path)
             std::printf("[play-vu:detached-difference] differing-words=%u\n", differences);
             throw std::runtime_error("Detached session diverged from direct compiled diagnostic");
         }
+        std::string streamReason;
+        if (!streamSession.beginStream(bridgeCode, bridgeData, initial,
+                static_cast<uint32_t>(at(before, 639)),
+                static_cast<uint32_t>(at(before, 643)), &initialScalar, &streamReason))
+            throw std::runtime_error("Compiled stream rejected replay entry: " + streamReason);
+        unsigned streamSlices = 0;
+        uint64_t streamMinAdvance = UINT64_MAX;
+        uint64_t streamMaxAdvance = 0;
+        std::vector<std::vector<uint8_t>> streamPackets;
+        std::vector<uint64_t> streamCompletionCycles;
+        CompiledVuSession::StreamSlice streamSlice;
+        do
+        {
+            streamSlice = streamSession.runStreamSlice(64);
+            if (!streamSlice.advanced)
+                throw std::runtime_error("Compiled stream rejected replay slice: " + streamSlice.reason);
+            const uint64_t sliceAdvance = streamSlice.endCycle - streamSlice.beginCycle;
+            streamMinAdvance = std::min(streamMinAdvance, sliceAdvance);
+            streamMaxAdvance = std::max(streamMaxAdvance, sliceAdvance);
+            streamPackets.insert(streamPackets.end(),
+                std::make_move_iterator(streamSlice.packets.begin()),
+                std::make_move_iterator(streamSlice.packets.end()));
+            streamCompletionCycles.insert(streamCompletionCycles.end(),
+                streamSlice.completionCycles.begin(), streamSlice.completionCycles.end());
+            if (++streamSlices > (budget + 63u) / 64u + 2u)
+                throw std::runtime_error("Compiled stream exceeded replay budget");
+        } while (!streamSlice.ended);
+        const auto streamed = streamSession.finishStream();
+        streamPackets.insert(streamPackets.end(), streamed.packets.begin(), streamed.packets.end());
+        streamCompletionCycles.insert(streamCompletionCycles.end(),
+            streamed.completionCycles.begin(), streamed.completionCycles.end());
+        auto streamedState = streamed.state;
+        auto detachedState = detached.state;
+        streamedState.cycleQuota = detachedState.cycleQuota = 0;
+        const bool streamMatches = streamed.executed &&
+            !std::memcmp(&streamedState, &detachedState, sizeof(detachedState)) &&
+            streamed.data == detached.data && streamPackets == detached.packets &&
+            streamCompletionCycles == detached.completionCycles &&
+            streamed.transferEnd == detached.transferEnd &&
+            streamed.drainedCycle == detached.drainedCycle &&
+            streamed.scalarStatus == detached.scalarStatus &&
+            streamed.scalarEnd == detached.scalarEnd && streamed.efuEnd == detached.efuEnd;
+        std::printf("[play-vu:stream-replay] case=%u match=%u slices=%u advance=%llu-%llu cycle=%llu/%llu "
+            "state=%u data=%u packets=%u reason=%s\n", current, unsigned(streamMatches),
+            streamSlices, static_cast<unsigned long long>(streamMinAdvance),
+            static_cast<unsigned long long>(streamMaxAdvance),
+            static_cast<unsigned long long>(streamed.drainedCycle),
+            static_cast<unsigned long long>(detached.drainedCycle),
+            unsigned(!std::memcmp(&streamedState, &detachedState, sizeof(detachedState))),
+            unsigned(streamed.data == detached.data), unsigned(streamPackets == detached.packets),
+            streamed.reason.c_str());
+        if (!streamMatches)
+            throw std::runtime_error("Compiled stream diverged from detached replay result");
+        constexpr unsigned streamRepeats = 256;
+        int64_t streamNs = 0;
+        for (unsigned repeat = 0; repeat < streamRepeats; ++repeat)
+        {
+            streamPackets.clear();
+            streamCompletionCycles.clear();
+            const auto begin = std::chrono::steady_clock::now();
+            if (!streamSession.beginStream(bridgeCode, bridgeData, initial,
+                    static_cast<uint32_t>(at(before, 639)),
+                    static_cast<uint32_t>(at(before, 643)), &initialScalar, &streamReason))
+                throw std::runtime_error("Compiled stream rejected warm replay entry: " + streamReason);
+            do
+            {
+                streamSlice = streamSession.runStreamSlice(64);
+                if (!streamSlice.advanced)
+                    throw std::runtime_error("Compiled stream rejected warm replay slice: " + streamSlice.reason);
+                streamPackets.insert(streamPackets.end(),
+                    std::make_move_iterator(streamSlice.packets.begin()),
+                    std::make_move_iterator(streamSlice.packets.end()));
+                streamCompletionCycles.insert(streamCompletionCycles.end(),
+                    streamSlice.completionCycles.begin(), streamSlice.completionCycles.end());
+            } while (!streamSlice.ended);
+            const auto warm = streamSession.finishStream();
+            streamPackets.insert(streamPackets.end(), warm.packets.begin(), warm.packets.end());
+            streamCompletionCycles.insert(streamCompletionCycles.end(),
+                warm.completionCycles.begin(), warm.completionCycles.end());
+            streamNs += std::chrono::duration_cast<std::chrono::nanoseconds>(
+                std::chrono::steady_clock::now() - begin).count();
+            auto warmState = warm.state;
+            warmState.cycleQuota = detachedState.cycleQuota = 0;
+            if (!warm.executed || std::memcmp(&warmState, &detachedState, sizeof(detachedState)) ||
+                warm.data != detached.data || streamPackets != detached.packets ||
+                streamCompletionCycles != detached.completionCycles)
+                throw std::runtime_error("Warm compiled stream diverged from detached replay result");
+        }
+        std::printf("[play-vu:stream-timing] case=%u repeats=%u complete-call-ms=%.6f mean-us=%.6f "
+            "slice-budget=64 repeatable=1 includes-import-export-copy-fp=1 runtime-commit-included=0\n",
+            current, streamRepeats, streamNs / 1.0e6, streamNs / (1.0e3 * streamRepeats));
         const auto drained = drainControl(s, timeline.time);
         const auto runtimeOutput = PlayVuRuntimeBridge::exportState(runtimeInput, detached);
         const bool exportMatches = !std::memcmp(runtimeOutput.state.vf, s.nCOP2, sizeof(runtimeOutput.state.vf)) &&

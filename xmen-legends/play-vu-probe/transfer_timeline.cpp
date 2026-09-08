@@ -3,6 +3,11 @@
 #include <cstring>
 #include <stdexcept>
 
+namespace
+{
+constexpr size_t kMaximumStagedBytes = 16u * 1024u * 1024u;
+}
+
 void TransferTimeline::reset()
 {
     active = false;
@@ -21,7 +26,8 @@ void TransferTimeline::advance(uint64_t cycle)
     if (cycle < time) throw std::runtime_error("VU memory events moved backward");
     while (active && nextRead <= cycle)
     {
-        if (packet.size() >= 65536) throw std::runtime_error("Timeline packet exceeds 64 KiB");
+        if (packet.size() >= kMaximumStagedBytes)
+            throw std::runtime_error("Timeline packet exceeds staging limit");
         const size_t offset = packet.size();
         // Memory is stable within this observation. Never read beyond the
         // ready cycle or a known GIFtag boundary; unknown tags are read alone.
@@ -49,7 +55,8 @@ void TransferTimeline::advance(uint64_t cycle)
             if (!registers) registers = 16;
             const uint32_t payload = format == 0 ? loops * registers * 16u :
                 format == 1 ? ((loops * registers + 1u) / 2u) * 16u : loops * 16u;
-            if (offset + 16u + payload > 65536u) throw std::runtime_error("Timeline GIF tag exceeds limit");
+            if (offset > kMaximumStagedBytes - 16u - payload)
+                throw std::runtime_error("Timeline GIF tag exceeds staging limit");
             tagEnd = static_cast<uint32_t>(offset + 16u + payload);
             eop = (tag & 0x8000u) != 0;
         }
@@ -58,8 +65,8 @@ void TransferTimeline::advance(uint64_t cycle)
             if (eop)
             {
                 if (packets.size() >= 1024) throw std::runtime_error("Too many timeline packets");
-                if (completedBytes + packet.size() > 1048576)
-                    throw std::runtime_error("Staged VU graphics exceed 1 MiB");
+                if (packet.size() > kMaximumStagedBytes - completedBytes)
+                    throw std::runtime_error("Staged VU graphics exceed staging limit");
                 completedBytes += packet.size();
                 packets.push_back(packet);
                 completionCycles.push_back(lastRead);

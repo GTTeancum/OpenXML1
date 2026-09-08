@@ -22,6 +22,7 @@ $reachedLimit = $true
 $blockPairs = 1
 $newGameHandler = $true
 $levelPackage = $true
+$startupReached = $true
 $markers = @{ '1152' = 1; '1280' = 2 }
 $guestFaultLines = 0
 $CompiledVu = $false
@@ -54,7 +55,42 @@ $vulkanActive = $false
 $vulkanPresents = 0L
 $vulkanSubmits = 0L
 $vulkanNonblack = 0L
+$AutoMoveAtTick = 0
+$autoMoveSeen = $false
+$CaptureLatestInterval = 0
+$presentationHashes = [Collections.Generic.List[object]]::new()
+$movementFresh = $true
+$worldCoverageRequired = $false
+$worldCoverageVerified = $true
+$nativeBlockEvidence = $true
+$timingEvidence = $true
+$SteadyCallTraceMinTick = 0
 if (!(& $check)) { throw 'Healthy workload rejected.' }
+$SteadyCallTraceMinTick = 500
+if (& $check) { throw 'Call tracing was accepted as an FPS measurement.' }
+$SteadyCallTraceMinTick = 0
+$AutoMoveAtTick = 1235
+$worldCoverageRequired = $true
+$worldCoverageVerified = $false
+if (& $completeCheck) { throw 'Movement workload accepted without injected input evidence.' }
+$autoMoveSeen = $true
+$movementFresh = $false
+if (& $completeCheck) { throw 'Movement workload accepted with a stale framebuffer.' }
+$movementFresh = $true
+if (& $completeCheck) { throw 'Movement workload accepted without world framebuffer coverage.' }
+$worldCoverageVerified = $true
+if (!(& $completeCheck)) { throw 'Fresh movement workload with world coverage rejected.' }
+$AutoMoveAtTick = 0
+$worldCoverageRequired = $false
+$worldCoverageVerified = $true
+$autoMoveSeen = $false
+$CaptureLatestInterval = 32
+if (& $completeCheck) { throw 'Frame-hash workload accepted without multiple captures.' }
+$presentationHashes.Add(@{ Index = 1152; Sha256 = 'a' })
+$presentationHashes.Add(@{ Index = 1184; Sha256 = 'b' })
+if (!(& $completeCheck)) { throw 'Frame-hash workload with multiple captures rejected.' }
+$CaptureLatestInterval = 0
+$presentationHashes.Clear()
 $BridgeProfile = $true
 if (& $completeCheck) { throw 'Missing bridge profile accepted.' }
 foreach ($stage in @('capture','copy','import','scalar-import','execute','export','commit')) {
@@ -160,15 +196,60 @@ $process.ExitCode = 1
 if (& $check) { throw 'A process failure was accepted.' }
 $process.ExitCode = 0
 $markers.Remove('1280')
+$timingEvidence = $false
 if (& $check) { throw 'An incomplete frame span was accepted.' }
 $markers['1280'] = 2
-foreach ($name in @('reachedLimit', 'newGameHandler', 'levelPackage')) {
+$timingEvidence = $true
+foreach ($name in @('reachedLimit', 'startupReached')) {
     Set-Variable -Name $name -Value $false
     if (& $check) { throw "Missing $name was accepted." }
     Set-Variable -Name $name -Value $true
 }
 $blockPairs = 0
+$nativeBlockEvidence = $false
 if (& $check) { throw 'Missing native block execution was accepted.' }
+
+. (Join-Path $PSScriptRoot '../framebuffer-metrics.ps1')
+$ppmPath = [IO.Path]::GetTempFileName()
+try {
+    $width = 80
+    $height = 56
+    $header = [Text.Encoding]::ASCII.GetBytes("P6`n# benchmark fixture`n$width $height`n255`n")
+    $pixels = [byte[]]::new($width * $height * 3)
+    for ($y = 8; $y -lt 48; ++$y) {
+        for ($x = 16; $x -lt 72; ++$x) {
+            $offset = 3 * ($y * $width + $x)
+            $pixels[$offset] = 32
+            $pixels[$offset + 1] = 64
+            $pixels[$offset + 2] = 96
+        }
+    }
+    $stream = [IO.File]::Open($ppmPath, [IO.FileMode]::Create, [IO.FileAccess]::Write)
+    try { $stream.Write($header); $stream.Write($pixels) } finally { $stream.Dispose() }
+    $metrics = Get-PpmFrameMetrics -Path $ppmPath -TileWidth 10 -TileHeight 7
+    if ($metrics.Width -ne 80 -or $metrics.Height -ne 56 -or
+        $metrics.NonblackPixels -ne 2240 -or $metrics.CentralNonblackPixels -ne 2240 -or
+        $metrics.OccupiedTiles -ne 42 -or $metrics.Bounds.Left -ne 16 -or
+        $metrics.Bounds.Top -ne 8 -or $metrics.Bounds.Right -ne 71 -or $metrics.Bounds.Bottom -ne 47) {
+        throw "Unexpected PPM metrics: $($metrics | ConvertTo-Json -Compress)"
+    }
+    if (!(Test-WorldFrameMetrics -Metrics $metrics -MinimumNonblackPixels 2000 `
+        -MinimumCentralPixels 2000 -MinimumOccupiedTiles 40)) {
+        throw 'Broad synthetic framebuffer failed its world-coverage gate.'
+    }
+    if (Test-WorldFrameMetrics -Metrics $metrics -MinimumNonblackPixels 3000 `
+        -MinimumCentralPixels 2000 -MinimumOccupiedTiles 40) {
+        throw 'Sparse synthetic framebuffer passed its world-coverage gate.'
+    }
+
+    [Array]::Fill($pixels, [byte]32)
+    $stream = [IO.File]::Open($ppmPath, [IO.FileMode]::Create, [IO.FileAccess]::Write)
+    try { $stream.Write($header); $stream.Write($pixels) } finally { $stream.Dispose() }
+    $fullMetrics = Get-PpmFrameMetrics -Path $ppmPath -TileWidth 10 -TileHeight 7
+    if ($fullMetrics.NonblackPixels -ne 4480 -or $fullMetrics.OccupiedTiles -ne 64) {
+        throw "Full framebuffer tile metrics used non-floor coordinates: $($fullMetrics | ConvertTo-Json -Compress)"
+    }
+} finally { Remove-Item -LiteralPath $ppmPath -Force -ErrorAction SilentlyContinue }
 
 $faultExpression = $ast.Find({ param($node)
     $node -is [System.Management.Automation.Language.BinaryExpressionAst] -and

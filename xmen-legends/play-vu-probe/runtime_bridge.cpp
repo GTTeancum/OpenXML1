@@ -36,7 +36,7 @@ MIPSSTATE PlayVuRuntimeBridge::importState(const VUCompiledState::Input &input)
 {
     const auto &v = input.state;
     constexpr uint32_t vf0[] = {0, 0, 0, 0x3f800000};
-    if (input.budget <= 64 || input.budget > 1048576 ||
+    if (input.budget <= 64 ||
         input.cycle > std::numeric_limits<uint64_t>::max() - input.budget || v.cycles != input.cycle ||
         v.pc >= 16384 || (v.pc & 7) || v.ebit || v.haltAfterDelaySlot || v.branchPending ||
         v.dBitEnabled || v.tBitEnabled || v.stoppedByD || v.stoppedByT ||
@@ -157,7 +157,8 @@ VUCompiledState::Output PlayVuRuntimeBridge::exportState(const VUCompiledState::
     if (!result.executed || !result.scalarFlagsValid || s.nHasException != MIPS_EXCEPTION_VU_EBIT ||
         !result.drainedCycle || result.drainedCycle > input.budget ||
         input.cycle > std::numeric_limits<uint64_t>::max() - result.drainedCycle ||
-        result.drainedCycle != std::max(compiledVuDrainCycle(s, result.transferEnd), result.scalarEnd) ||
+        result.drainedCycle != std::max({compiledVuDrainCycle(s, result.transferEnd),
+            result.scalarEnd, result.efuEnd}) ||
         (result.scalarStatus & ~0xc30u) ||
         result.packets.size() != result.completionCycles.size() ||
         s.nPC >= 16384 || (s.nPC & 7))
@@ -185,7 +186,8 @@ VUCompiledState::Output PlayVuRuntimeBridge::exportState(const VUCompiledState::
     output.elapsed = result.drainedCycle;
     output.statusMask = statusMask;
     output.macMask = macMask;
-    output.data = result.data;
+    output.dataIsLive = result.dataIsLive;
+    if (!output.dataIsLive) output.data = result.data;
     output.packets.reserve(result.packets.size());
     for (size_t i = 0; i < result.packets.size(); ++i)
     {

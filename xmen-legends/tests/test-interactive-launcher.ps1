@@ -32,17 +32,11 @@ $CompatibilityBranchHooks = $false
 $Diagnostics = $false
 $WhiteWireframe = $false
 $SuppressLateSprites = $false
-$guard = $ast.Find({ param($node)
-    $node -is [System.Management.Automation.Language.IfStatementAst] -and
-    $node.Clauses[0].Item1.Extent.Text -eq '$CompiledVu -and $RuntimeVariant -ne ''Candidate'''
-}, $true)
-if (!$guard) { throw 'Missing audited-candidate guard.' }
-$CompiledVu = $true
-$RuntimeVariant = 'Primary'
-$rejected = $false
-try { & ([scriptblock]::Create($guard.Extent.Text)) } catch { $rejected = $true }
-if (!$rejected) { throw 'Compiled engine accepted on an unaudited runtime selection.' }
-$RuntimeVariant = 'Candidate'
+$optimizedRuntime = $true
+$CompiledVu = $false
+$CompiledStreamBlockBytes = 32
+$CompiledStreamBatch = $true
+$Vu1ServiceTraceMinTick = 0
 $names = @('PS2X_DISABLE_HOST_INPUT', 'PS2X_RUN_VSYNC_LIMIT', 'PS2X_VU_COMPILED_AUDIT',
     'PS2X_GS_VERIFY_BILINEAR', 'PS2X_AUTOMOVE_LEFT_STICK_AT_TICK')
 $saved = @{}
@@ -51,17 +45,19 @@ try {
         $saved[$name] = [Environment]::GetEnvironmentVariable($name)
         [Environment]::SetEnvironmentVariable($name, '1')
     }
-    foreach ($CompiledVu in @($false, $true)) {
-        . $configure
-        foreach ($name in $names) {
-            if ($startInfo.Environment.ContainsKey($name)) { throw "Inherited probe setting survived: $name" }
-        }
-        if ($startInfo.Environment.ContainsKey('PS2X_VU_COMPILED') -ne $CompiledVu) { throw 'Compiled VU selection lost.' }
-        foreach ($name in @('PS2X_VU_NATIVE_PAIRS', 'PS2X_VU_NATIVE_BLOCKS', 'PS2X_XMEN_START_FIRST_LEVEL')) {
-            if ($startInfo.Environment[$name] -ne '1') { throw "Missing candidate gameplay option: $name" }
-        }
-        if (!$startInfo.CreateNoWindow -or $startInfo.UseShellExecute) { throw 'Launcher must hide its console.' }
+    . $configure
+    foreach ($name in $names) {
+        if ($startInfo.Environment.ContainsKey($name)) { throw "Inherited probe setting survived: $name" }
     }
+    foreach ($name in @('PS2X_VU_NATIVE_PAIRS', 'PS2X_VU_NATIVE_BLOCKS', 'PS2X_VU_COMPILED',
+        'PS2X_VU_COMPILED_STREAM', 'PS2X_VU_COMPILED_STREAM_BATCH',
+        'PS2X_GS_PLAY_VULKAN', 'PS2X_XMEN_START_FIRST_LEVEL')) {
+        if ($startInfo.Environment[$name] -ne '1') { throw "Missing candidate gameplay option: $name" }
+    }
+    if ($startInfo.Environment['PS2X_VU_COMPILED_STREAM_BLOCK_BYTES'] -ne '32') {
+        throw 'Interactive stream block limit is not the verified value.'
+    }
+    if (!$startInfo.CreateNoWindow -or $startInfo.UseShellExecute) { throw 'Launcher must hide its console.' }
 } finally {
     foreach ($name in $names) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
 }
@@ -72,8 +68,9 @@ $function = $ast.Find({ param($node)
 }, $true)
 . ([scriptblock]::Create($function.Extent.Text))
 $status = @{ Running = $true; HostInput = $true; CompiledVu = $true
-    NewGameHandler = $false; LevelPackage = $false; LastPresent = 0L
-    CompiledCallsLowerBound = 0L; GuestFaultLines = 0; FirstGuestFault = $null; ReadyForInput = $false }
+    DirectMapStart = $false; NewGameHandler = $false; LevelPackage = $false; LastPresent = 0L
+    CompiledCallsLowerBound = 0L; CompiledStreamCompletedLowerBound = 0L
+    GuestFaultLines = 0; FirstGuestFault = $null; ReadyForInput = $false }
 foreach ($line in @('[xmen-newgame-handler] invoked',
     '[open] path="maps/nyc/alison/nyc1_1_1.igb"', '[gs:present] index=1152 tick=1300 has=0')) {
     Update-InteractiveStatus $status $line
@@ -93,4 +90,10 @@ if ($status.ReadyForInput) { throw 'Exited runtime marked ready.' }
 $status.Running = $true
 Update-InteractiveStatus $status 'Error during program execution: sample fault'
 if ($status.ReadyForInput -or $status.GuestFaultLines -ne 1) { throw 'Faulting runtime marked ready.' }
+$directMapStatus = @{ Running = $true; HostInput = $true; CompiledVu = $false
+    DirectMapStart = $true; NewGameHandler = $false; LevelPackage = $true; LastPresent = 512L
+    CompiledCallsLowerBound = 0L; CompiledStreamCompletedLowerBound = 0L
+    GuestFaultLines = 0; FirstGuestFault = $null; ReadyForInput = $false }
+Update-InteractiveStatus $directMapStatus '[gs:present] index=512 tick=700 has=1'
+if ($directMapStatus.ReadyForInput) { throw 'Direct-map diagnostic route was accepted as playable.' }
 'PASS interactive launcher: inherited probes removed, compiled VU retained, readiness gates verified; no processes launched.'

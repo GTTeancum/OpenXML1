@@ -101,12 +101,17 @@ def ps2_csm1_upload_clut(clut_data: bytes) -> bytes:
     return bytes(upload)
 
 
-def ps2_gs_csm1_upload_clut(clut_data: bytes) -> bytes:
-    """Convert IGB alpha to GS alpha, then arrange a CSM1 host upload."""
+def ps2_gs_linear_clut(clut_data: bytes) -> bytes:
+    """Convert standard IGB alpha to the GS 0x80-is-opaque scale."""
     gs_clut = bytearray(clut_data)
     for alpha in range(3, len(gs_clut), 4):
         gs_clut[alpha] = (gs_clut[alpha] + 1) // 2
-    return ps2_csm1_upload_clut(bytes(gs_clut))
+    return bytes(gs_clut)
+
+
+def ps2_gs_csm1_upload_clut(clut_data: bytes) -> bytes:
+    """Convert IGB alpha to GS alpha, then arrange a CSM1 host upload."""
+    return ps2_csm1_upload_clut(ps2_gs_linear_clut(clut_data))
 
 
 class GeometryCollector:
@@ -344,9 +349,17 @@ def main() -> int:
                 pixel_data = image.pixel_data or b""
                 clut_data = image.clut_data or b""
                 csm1_upload_clut = ps2_csm1_upload_clut(clut_data)
+                gs_linear_clut = ps2_gs_linear_clut(clut_data)
                 gs_csm1_upload_clut = ps2_gs_csm1_upload_clut(clut_data)
                 decoded = image_convert.convert_image_to_rgba(image) or b""
                 indices = Counter(pixel_data[: image.width * image.height])
+                clut_rgba = [
+                    list(clut_data[offset : offset + 4])
+                    for offset in range(0, len(clut_data) - 3, 4)
+                ]
+                clut_alpha = Counter(entry[3] for entry in clut_rgba)
+                decoded_alpha = Counter(decoded[3::4])
+                common_indices = indices.most_common(16)
                 texture_details[image.source_obj.index] = {
                     "image_object_index": image.source_obj.index,
                     "name": image.name,
@@ -365,6 +378,11 @@ def main() -> int:
                     "csm1_upload_clut_sha256": hashlib.sha256(
                         csm1_upload_clut
                     ).hexdigest(),
+                    "gs_linear_clut_bytes": len(gs_linear_clut),
+                    "gs_linear_clut_fnv1a64": fnv1a64(gs_linear_clut),
+                    "gs_linear_clut_sha256": hashlib.sha256(
+                        gs_linear_clut
+                    ).hexdigest(),
                     "gs_csm1_upload_clut_bytes": len(gs_csm1_upload_clut),
                     "gs_csm1_upload_clut_fnv1a64": fnv1a64(gs_csm1_upload_clut),
                     "gs_csm1_upload_clut_sha256": hashlib.sha256(
@@ -373,8 +391,21 @@ def main() -> int:
                     "decoded_rgba_bytes": len(decoded),
                     "decoded_rgba_fnv1a64": fnv1a64(decoded),
                     "decoded_rgba_sha256": hashlib.sha256(decoded).hexdigest(),
+                    "clut_head_rgba": clut_rgba[:16],
+                    "clut_alpha_counts": sorted(clut_alpha.items()),
+                    "decoded_alpha_counts": sorted(decoded_alpha.items()),
                     "unique_indices": len(indices),
-                    "most_common_indices": indices.most_common(16),
+                    "most_common_indices": common_indices,
+                    "most_common_index_rgba": [
+                        {
+                            "index": index,
+                            "count": count,
+                            "rgba": clut_rgba[index]
+                            if index < len(clut_rgba)
+                            else None,
+                        }
+                        for index, count in common_indices
+                    ],
                 }
 
         row = {

@@ -2,8 +2,10 @@
 #include "MIPS.h"
 #include "scalar_flags.h"
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -34,12 +36,31 @@ public:
         uint64_t drainedCycle = 0;
         uint32_t scalarStatus = 0;
         uint64_t scalarEnd = 0;
+        uint64_t efuEnd = 0;
         bool scalarFlagsValid = false;
+        bool dataIsLive = false;
+    };
+    struct StreamSlice
+    {
+        bool advanced = false;
+        bool ended = false;
+        std::string reason;
+        uint64_t beginCycle = 0;
+        uint64_t endCycle = 0;
+        uint32_t beginPc = 0;
+        uint32_t endPc = 0;
+        int32_t quotaRemaining = 0;
+        std::vector<std::vector<uint8_t>> packets;
+        std::vector<uint64_t> completionCycles;
+        std::vector<uint64_t> blockEnds;
+        std::vector<uint32_t> blockPcs;
+        std::vector<uint32_t> blockStatePcs;
     };
     explicit CompiledVuSession(Arithmetic = Arithmetic::Separate, Emission = Emission::Environment,
         Cache = Cache::Environment);
     uint64_t directInstructionsCompiled() const;
     CacheStatistics cacheStatistics() const;
+    void setStreamMaximumBlockSize(uint32_t bytes);
     ~CompiledVuSession();
     CompiledVuSession(const CompiledVuSession &) = delete;
     CompiledVuSession &operator=(const CompiledVuSession &) = delete;
@@ -49,7 +70,25 @@ public:
         const std::array<uint8_t, 16384> &data, const MIPSSTATE &state,
         uint32_t budget, uint32_t top = 0, uint32_t itop = 0,
         const ScalarFlags::State *scalarState = nullptr);
+    bool beginStream(const std::array<uint8_t, 16384> &code,
+        const std::array<uint8_t, 16384> &data, const MIPSSTATE &state,
+        uint32_t top = 0, uint32_t itop = 0,
+        const ScalarFlags::State *scalarState = nullptr, std::string *reason = nullptr);
+    bool beginStreamLive(const std::array<uint8_t, 16384> &code,
+        uint8_t *data, size_t dataSize, const MIPSSTATE &state,
+        uint32_t top = 0, uint32_t itop = 0,
+        const ScalarFlags::State *scalarState = nullptr, std::string *reason = nullptr,
+        std::optional<uint64_t> codeGeneration = std::nullopt);
+    void setStreamRegisters(uint32_t top, uint32_t itop);
+    StreamSlice runStreamSlice(uint32_t budget, bool collectBlockTrace = true);
+    Result finishStream();
+    void cancelStream();
 private:
+    bool beginStreamInternal(const std::array<uint8_t, 16384> &code,
+        const std::array<uint8_t, 16384> *ownedData, uint8_t *liveData,
+        const MIPSSTATE &state, uint32_t top, uint32_t itop,
+        const ScalarFlags::State *scalarState, std::string *reason,
+        std::optional<uint64_t> codeGeneration);
     struct Impl;
     std::unique_ptr<Impl> impl;
 };
