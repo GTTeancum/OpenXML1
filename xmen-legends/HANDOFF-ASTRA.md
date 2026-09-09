@@ -1,5 +1,10 @@
 # X-Men Legends PS2Recomp Handoff
 
+September 9 continuation: see [ASTRA-PLAYABILITY.md](ASTRA-PLAYABILITY.md) for the
+user-confirmed freeze, corrected executable configuration, first-failure trace,
+and current owner/partition experiments. The historical reference below does not
+actually activate Vulkan; do not treat its requested flags as backend proof.
+
 ## Objective
 
 Reach sustained, controllable first-level gameplay at 30 FPS with fresh full-world

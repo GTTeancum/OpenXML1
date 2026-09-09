@@ -37,6 +37,7 @@ param(
     [switch]$InPlaceRealloc,
     [switch]$HeapDiagnostics,
     [switch]$HeapTrace,
+    [switch]$ReservedHeap,
     [switch]$AuditCompiledVu,
     [switch]$AuditBilinear,
     [switch]$PreparedTexture,
@@ -143,6 +144,7 @@ if ($BudgetProfile) { $stem += '-budget-profile' }
 if ($BestFitHeap) { $stem += '-best-fit' }
 if ($InPlaceRealloc) { $stem += '-realloc' }
 if ($HeapDiagnostics) { $stem += '-heap-audit' }
+if ($ReservedHeap) { $stem += '-reserved-heap' }
 if ($CaptureVu) { $stem += '-vu-capture' }
 if ($AutoMoveAtTick -gt 0) { $stem += '-move' }
 if ($CaptureLatestInterval -gt 0) { $stem += '-frame-hashes' }
@@ -193,7 +195,12 @@ if ($BudgetProfile) { $start.Environment['PS2X_VU_BUDGET_PROFILE'] = '1' }
 if ($BestFitHeap) { $start.Environment['PS2X_GUEST_BUMP_BEST_FIT'] = '1' }
 if ($InPlaceRealloc) { $start.Environment['PS2X_GUEST_BUMP_REALLOC'] = '1' }
 if ($HeapDiagnostics) { $start.Environment['PS2X_GUEST_BUMP_DIAGNOSTICS'] = '1' }
-if ($HeapTrace) { $start.Environment['PS2X_GUEST_HEAP_TRACE'] = Join-Path $build 'gameplay-heap-trace.bin' }
+if ($ReservedHeap) { $start.Environment['PS2X_XMEN_RESERVED_HEAP'] = '1' }
+if ($HeapTrace) {
+    $start.Environment['PS2X_GUEST_HEAP_TRACE'] = Join-Path $build 'gameplay-heap-trace.bin'
+    $start.Environment['PS2X_GUEST_HEAP_FAILURE_SNAPSHOT'] = Join-Path $build 'gameplay-heap-failure.rdram'
+    Remove-Item -LiteralPath $start.Environment['PS2X_GUEST_HEAP_FAILURE_SNAPSHOT'] -ErrorAction SilentlyContinue
+}
 if ($AuditCompiledVu -and !$CompiledVu) { throw 'AuditCompiledVu requires CompiledVu' }
 if ($AuditPreparedTexture -and !$PreparedTexture) { throw 'AuditPreparedTexture requires PreparedTexture' }
 if ($PreparedTexture) { $start.Environment['PS2X_GS_PREPARED_TEXTURE'] = '1' }
@@ -572,6 +579,7 @@ try {
         HeapDiagnostics = [bool]$HeapDiagnostics; HeapFailureLines = $heapFailures
         RenderSlotAllocationFailures = $renderSlotAllocationFailures
         HeapTrace = [bool]$HeapTrace
+        ReservedHeap = [bool]$ReservedHeap
         VulkanGs = [bool]$VulkanGs; VulkanActive = $vulkanActive
         VulkanPresents = $vulkanPresents; VulkanSubmits = $vulkanSubmits; VulkanNonblack = $vulkanNonblack
         AuditCompiledVu = [bool]$AuditCompiledVu

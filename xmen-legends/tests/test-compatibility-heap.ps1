@@ -14,6 +14,7 @@ $cases = @(
         foreach ($bestFit in @($false, $true)) {
             foreach ($inPlace in @($false, $true)) {
                 foreach ($filter in @('public allocator dispatch',
+                    'allocator identity survives',
                     'reallocation preserves ownership', 'best fit preserves a large',
                     'free frontier joins untouched tail', 'reuse free frontier before exhaustion',
                     'split free extent retains address order', 'bump alignment gap remains reusable')) {
